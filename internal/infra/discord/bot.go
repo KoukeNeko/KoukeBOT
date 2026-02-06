@@ -9,8 +9,9 @@ import (
 
 // Bot wraps a discordgo.Session with lifecycle management.
 type Bot struct {
-	session   *discordgo.Session
-	personaID string // which persona this bot instance serves
+	session    *discordgo.Session
+	personaID  string   // active persona for this bot instance
+	commandIDs []string // registered slash command IDs (for cleanup)
 }
 
 // NewBot creates a Discord bot session (does not open the connection yet).
@@ -36,9 +37,40 @@ func (b *Bot) Session() *discordgo.Session {
 	return b.session
 }
 
-// PersonaID returns the persona this bot serves.
+// PersonaID returns the active persona.
 func (b *Bot) PersonaID() string {
 	return b.personaID
+}
+
+// SetPersonaID switches the active persona.
+func (b *Bot) SetPersonaID(id string) {
+	b.personaID = id
+}
+
+// RegisterCommands registers slash commands globally.
+func (b *Bot) RegisterCommands(commands []*discordgo.ApplicationCommand) error {
+	appID := b.session.State.User.ID
+
+	for _, cmd := range commands {
+		registered, err := b.session.ApplicationCommandCreate(appID, "", cmd)
+		if err != nil {
+			return fmt.Errorf("register command %q: %w", cmd.Name, err)
+		}
+		b.commandIDs = append(b.commandIDs, registered.ID)
+		log.Printf("registered slash command: /%s", cmd.Name)
+	}
+
+	return nil
+}
+
+// UnregisterCommands removes all registered slash commands.
+func (b *Bot) UnregisterCommands() {
+	appID := b.session.State.User.ID
+	for _, cmdID := range b.commandIDs {
+		if err := b.session.ApplicationCommandDelete(appID, "", cmdID); err != nil {
+			log.Printf("failed to unregister command %s: %v", cmdID, err)
+		}
+	}
 }
 
 // Start opens the websocket connection to Discord.

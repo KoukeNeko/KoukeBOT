@@ -75,7 +75,7 @@ func run() error {
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if discordToken != "" {
-		if err := startDiscordBot(discordToken, personaService, chatService); err != nil {
+		if err := startDiscordBot(discordToken, personaService, chatService, convStore); err != nil {
 			return fmt.Errorf("start discord bot: %w", err)
 		}
 	} else {
@@ -96,7 +96,7 @@ func run() error {
 	return nil
 }
 
-func startDiscordBot(token string, personaService *app.PersonaService, chatService *app.ChatService) error {
+func startDiscordBot(token string, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository) error {
 	// Use the first loaded persona as the default
 	var personaID string
 	for id := range personaService.GetAll() {
@@ -113,11 +113,20 @@ func startDiscordBot(token string, personaService *app.PersonaService, chatServi
 		return err
 	}
 
+	// Register message handler (responds to @mentions and DMs)
 	handler := discordhandler.NewHandler(bot, chatService)
 	handler.Register()
 
+	// Connection must be open before registering slash commands
+	// (RegisterCommands needs session.State.User.ID)
 	if err := bot.Start(); err != nil {
 		return err
+	}
+
+	// Register slash commands: /persona, /reset, /status, /reload
+	slashCmds := discordhandler.NewSlashCommands(bot, personaService, chatService, convStore)
+	if err := slashCmds.Register(); err != nil {
+		return fmt.Errorf("register slash commands: %w", err)
 	}
 
 	log.Printf("discord bot serving persona: %s", personaID)
