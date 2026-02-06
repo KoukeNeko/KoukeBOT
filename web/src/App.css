@@ -415,42 +415,21 @@ section h3 {
   color: #ffb74d;
 }
 
-/* ===== Anchor Textarea ===== */
-.anchor-textarea {
-  width: 100%;
-  background: #0f0f1a;
-  color: #e0e0e0;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  padding: 0.75rem;
-  font-size: 0.85rem;
-  font-family: inherit;
-  line-height: 1.5;
-  resize: vertical;
-  transition: border-color 0.15s;
-}
-
-.anchor-textarea:focus {
-  outline: none;
-  border-color: rgba(100, 108, 255, 0.4);
-}
-
-/* ===== Lore Editor ===== */
-.lore-editor {
-  width: 100%;
-  background: #0f0f1a;
-  color: #e0e0e0;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+/* ===== Monaco Editor Containers ===== */
+.editor-container {
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
-  padding: 1rem;
-  font-size: 0.82rem;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  line-height: 1.6;
-  resize: vertical;
-  transition: border-color 0.15s;
+  overflow: hidden;
 }
 
-.lore-editor:focus {
-  outline: none;
-  border-color: rgba(100, 108, 255, 0.4);
+.editor-container:focus-within {
+  border-color: rgba(100, 108, 255, 0.3);
+}
+
+.editor-sm {
+  height: 150px;
+}
+
+.editor-lg {
+  height: 500px;
 }

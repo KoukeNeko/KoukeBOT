@@ -1,7 +1,20 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import Editor from '@monaco-editor/react'
 import { getPersona, updatePersona } from '../api'
 import type { PersonaDetail as PersonaDetailType, Anchor } from '../types'
+
+const MONACO_THEME = 'vs-dark'
+const EDITOR_OPTIONS = {
+  minimap: { enabled: false },
+  fontSize: 13,
+  lineNumbers: 'on' as const,
+  scrollBeyondLastLine: false,
+  wordWrap: 'on' as const,
+  padding: { top: 12, bottom: 12 },
+  renderLineHighlight: 'gutter' as const,
+  automaticLayout: true,
+}
 
 export default function PersonaDetail() {
   const { id } = useParams<{ id: string }>()
@@ -42,9 +55,9 @@ export default function PersonaDetail() {
     markDirty()
   }
 
-  const updateLore = (value: string) => {
+  const updateLore = (value: string | undefined) => {
     if (!persona) return
-    setPersona({ ...persona, lore: value })
+    setPersona({ ...persona, lore: value ?? '' })
     markDirty()
   }
 
@@ -246,21 +259,27 @@ export default function PersonaDetail() {
               <div className="anchor-content">
                 <div>
                   <h4>User Input</h4>
-                  <textarea
-                    className="anchor-textarea"
-                    value={a.user_input}
-                    onChange={(e) => updateAnchor(i, 'user_input', e.target.value)}
-                    rows={4}
-                  />
+                  <div className="editor-container editor-sm">
+                    <Editor
+                      theme={MONACO_THEME}
+                      language="plaintext"
+                      value={a.user_input}
+                      onChange={(v) => updateAnchor(i, 'user_input', v ?? '')}
+                      options={{ ...EDITOR_OPTIONS, lineNumbers: 'off' }}
+                    />
+                  </div>
                 </div>
                 <div>
                   <h4>Bot Response</h4>
-                  <textarea
-                    className="anchor-textarea"
-                    value={a.bot_response}
-                    onChange={(e) => updateAnchor(i, 'bot_response', e.target.value)}
-                    rows={4}
-                  />
+                  <div className="editor-container editor-sm">
+                    <Editor
+                      theme={MONACO_THEME}
+                      language="plaintext"
+                      value={a.bot_response}
+                      onChange={(v) => updateAnchor(i, 'bot_response', v ?? '')}
+                      options={{ ...EDITOR_OPTIONS, lineNumbers: 'off' }}
+                    />
+                  </div>
                 </div>
               </div>
               <button onClick={() => removeAnchor(i)} style={{ alignSelf: 'flex-end', color: '#f44', fontSize: '0.8rem' }}>
@@ -274,12 +293,15 @@ export default function PersonaDetail() {
       {/* Lore */}
       <section>
         <h3>Lore</h3>
-        <textarea
-          className="lore-editor"
-          value={lore}
-          onChange={(e) => updateLore(e.target.value)}
-          rows={20}
-        />
+        <div className="editor-container editor-lg">
+          <Editor
+            theme={MONACO_THEME}
+            language="markdown"
+            value={lore}
+            onChange={updateLore}
+            options={EDITOR_OPTIONS}
+          />
+        </div>
       </section>
     </div>
   )
