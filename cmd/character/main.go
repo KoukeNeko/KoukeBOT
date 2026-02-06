@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
@@ -19,6 +21,7 @@ import (
 
 const (
 	personasDir  = "configs/personas"
+	settingsPath = "data/settings.json"
 	defaultModel = "gemini-2.5-pro-preview-06-05"
 	defaultPort  = "8080"
 )
@@ -33,22 +36,14 @@ func run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	geminiKey := os.Getenv("GEMINI_API_KEY")
-	if geminiKey == "" {
-		return fmt.Errorf("GEMINI_API_KEY environment variable is required")
-	}
-
-	discordToken := os.Getenv("DISCORD_TOKEN")
-
-	model := os.Getenv("GEMINI_MODEL")
-	if model == "" {
-		model = defaultModel
-	}
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = defaultPort
 	}
+
+	// Load persisted settings, then overlay with env vars
+	settingsStore := config.NewSettingsStore(settingsPath)
+	settings := resolveSettings(settingsStore)
 
 	// Load personas
 	personaService, err := app.NewPersonaService(personasDir)
@@ -61,21 +56,35 @@ func run() error {
 		log.Printf("  - %s (%s)", p.Config.Meta.Name, id)
 	}
 
-	// Init LLM provider
-	provider, err := llm.NewGeminiAPIProvider(ctx, geminiKey, model)
-	if err != nil {
-		return fmt.Errorf("init gemini provider: %w", err)
+	// Init LLM provider (optional — can be configured later via Web UI)
+	providerManager := app.NewProviderManager(nil)
+
+	if settings.GeminiAPIKey != "" {
+		model := settings.GeminiModel
+		if model == "" {
+			model = defaultModel
+		}
+
+		provider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, model)
+		if err != nil {
+			log.Printf("WARNING: failed to init Gemini provider: %v", err)
+			log.Println("  → configure a valid API key at http://localhost:" + port + "/settings")
+		} else {
+			providerManager.Update(provider)
+			log.Printf("LLM provider: %s (model: %s)", provider.ModelInfo().ProviderName, model)
+		}
+	} else {
+		log.Println("GEMINI_API_KEY not set — configure it at http://localhost:" + port + "/settings")
 	}
-	log.Printf("LLM provider: %s (model: %s)", provider.ModelInfo().ProviderName, model)
 
 	// Init core services
 	convStore := store.NewMemoryStore()
 	assembler := app.NewContextAssembler()
-	chatService := app.NewChatService(provider, assembler, convStore, personaService.GetAll())
+	chatService := app.NewChatService(providerManager, assembler, convStore, personaService.GetAll())
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
-	if discordToken != "" {
-		if err := startDiscordBot(discordToken, personaService, chatService, convStore); err != nil {
+	if settings.DiscordToken != "" {
+		if err := startDiscordBot(settings.DiscordToken, personaService, chatService, convStore); err != nil {
 			return fmt.Errorf("start discord bot: %w", err)
 		}
 	} else {
@@ -83,7 +92,7 @@ func run() error {
 	}
 
 	// Start HTTP API server
-	startAPIServer(port, personaService, chatService)
+	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager)
 
 	log.Printf("character bot ready — API on :%s", port)
 
@@ -94,6 +103,27 @@ func run() error {
 	log.Println("shutting down...")
 	cancel()
 	return nil
+}
+
+// resolveSettings loads persisted settings and overlays with environment variables.
+// Env vars take precedence over the JSON file.
+func resolveSettings(settingsStore *config.SettingsStore) config.Settings {
+	settings, err := settingsStore.Load()
+	if err != nil {
+		log.Printf("WARNING: failed to load settings: %v", err)
+	}
+
+	if envKey := os.Getenv("GEMINI_API_KEY"); envKey != "" {
+		settings.GeminiAPIKey = envKey
+	}
+	if envModel := os.Getenv("GEMINI_MODEL"); envModel != "" {
+		settings.GeminiModel = envModel
+	}
+	if envToken := os.Getenv("DISCORD_TOKEN"); envToken != "" {
+		settings.DiscordToken = envToken
+	}
+
+	return settings
 }
 
 func startDiscordBot(token string, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository) error {
@@ -133,13 +163,41 @@ func startDiscordBot(token string, personaService *app.PersonaService, chatServi
 	return nil
 }
 
-func startAPIServer(port string, personaService *app.PersonaService, chatService *app.ChatService) {
-	router := api.NewRouter(personaService, chatService)
+func startAPIServer(
+	ctx context.Context,
+	port string,
+	personaService *app.PersonaService,
+	chatService *app.ChatService,
+	settingsStore *config.SettingsStore,
+	providerManager *app.ProviderManager,
+) {
+	// Serve React frontend from web/dist if it exists
+	webDir := filepath.Join("web", "dist")
+	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, ctx)
+	mux := http.NewServeMux()
+
+	// API routes first
+	mux.Handle("/api/", router.Handler())
+
+	// Static files for the web frontend
+	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
+		fs := http.FileServer(http.Dir(webDir))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// SPA fallback: serve index.html for non-file paths
+			path := filepath.Join(webDir, r.URL.Path)
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+				return
+			}
+			fs.ServeHTTP(w, r)
+		})
+		log.Printf("serving web frontend from %s", webDir)
+	}
 
 	go func() {
 		addr := ":" + port
-		log.Printf("HTTP API listening on %s", addr)
-		if err := http.ListenAndServe(addr, router.Handler()); err != nil && err != http.ErrServerClosed {
+		log.Printf("HTTP listening on %s", addr)
+		if err := http.ListenAndServe(addr, mux); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server error: %v", err)
 		}
 	}()

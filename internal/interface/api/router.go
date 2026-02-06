@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 )
 
 // Router sets up the HTTP API routes.
@@ -14,8 +16,14 @@ type Router struct {
 	handlers *Handlers
 }
 
-func NewRouter(personaService *app.PersonaService, chatService *app.ChatService) *Router {
-	handlers := NewHandlers(personaService, chatService)
+func NewRouter(
+	personaService *app.PersonaService,
+	chatService *app.ChatService,
+	settingsStore *config.SettingsStore,
+	providerManager *app.ProviderManager,
+	ctx context.Context,
+) *Router {
+	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, ctx)
 	mux := http.NewServeMux()
 
 	r := &Router{mux: mux, handlers: handlers}
@@ -31,6 +39,11 @@ func (r *Router) registerRoutes() {
 
 	// Chat endpoint (for web-based testing)
 	r.mux.HandleFunc("POST /api/chat", r.handlers.Chat)
+
+	// Settings
+	r.mux.HandleFunc("GET /api/settings", r.handlers.GetSettings)
+	r.mux.HandleFunc("PUT /api/settings", r.handlers.UpdateSettings)
+	r.mux.HandleFunc("GET /api/settings/status", r.handlers.GetProviderStatus)
 
 	// Health
 	r.mux.HandleFunc("GET /api/health", r.handlers.Health)

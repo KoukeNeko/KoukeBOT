@@ -1,0 +1,63 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// Settings holds the runtime-configurable values.
+type Settings struct {
+	GeminiAPIKey string `json:"gemini_api_key"`
+	GeminiModel  string `json:"gemini_model"`
+	DiscordToken string `json:"discord_token"`
+}
+
+// SettingsStore reads and writes settings to a JSON file.
+type SettingsStore struct {
+	mu   sync.RWMutex
+	path string
+}
+
+func NewSettingsStore(path string) *SettingsStore {
+	return &SettingsStore{path: path}
+}
+
+// Load reads settings from disk. Returns zero-value Settings if the file does not exist.
+func (s *SettingsStore) Load() (Settings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	data, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Settings{}, nil
+	}
+	if err != nil {
+		return Settings{}, err
+	}
+
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return Settings{}, err
+	}
+	return settings, nil
+}
+
+// Save writes settings to disk, creating the parent directory if needed.
+func (s *SettingsStore) Save(settings Settings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(s.path, data, 0o600)
+}

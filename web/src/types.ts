@@ -40,3 +40,15 @@ export interface GenerationConfig {
 export interface ChatResponse {
   response: string
 }
+
+export interface SettingsData {
+  gemini_api_key: string
+  gemini_model: string
+  discord_token: string
+}
+
+export interface ProviderStatus {
+  configured: boolean
+  provider_name: string
+  model: string
+}

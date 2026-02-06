@@ -1,8 +1,8 @@
 :root {
   font-family: Inter, system-ui, -apple-system, sans-serif;
   line-height: 1.5;
-  color: #e0e0e0;
-  background-color: #0f0f1a;
+  color: #d0d0e8;
+  background-color: #0c0c18;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -21,9 +21,11 @@ body {
 }
 
 a {
-  color: #646cff;
+  color: #8a8aff;
 }
 
 h2 {
   margin: 0 0 0.5rem;
+  font-weight: 700;
+  color: #e8e8ff;
 }

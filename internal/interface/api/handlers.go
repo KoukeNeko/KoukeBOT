@@ -1,24 +1,40 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 // Handlers implements the REST API endpoints.
 type Handlers struct {
-	personaService *app.PersonaService
-	chatService    *app.ChatService
+	personaService  *app.PersonaService
+	chatService     *app.ChatService
+	settingsStore   *config.SettingsStore
+	providerManager *app.ProviderManager
+	ctx             context.Context
 }
 
-func NewHandlers(personaService *app.PersonaService, chatService *app.ChatService) *Handlers {
+func NewHandlers(
+	personaService *app.PersonaService,
+	chatService *app.ChatService,
+	settingsStore *config.SettingsStore,
+	providerManager *app.ProviderManager,
+	ctx context.Context,
+) *Handlers {
 	return &Handlers{
-		personaService: personaService,
-		chatService:    chatService,
+		personaService:  personaService,
+		chatService:     chatService,
+		settingsStore:   settingsStore,
+		providerManager: providerManager,
+		ctx:             ctx,
 	}
 }
 
@@ -149,4 +165,109 @@ func toSummary(p *domain.PersonaModule) PersonaSummary {
 
 func formatInt(n int) string {
 	return fmt.Sprintf("%d", n)
+}
+
+// --- Settings endpoints ---
+
+type SettingsResponse struct {
+	GeminiAPIKey string `json:"gemini_api_key"`
+	GeminiModel  string `json:"gemini_model"`
+	DiscordToken string `json:"discord_token"`
+}
+
+type SettingsUpdateRequest struct {
+	GeminiAPIKey string `json:"gemini_api_key"`
+	GeminiModel  string `json:"gemini_model"`
+	DiscordToken string `json:"discord_token"`
+}
+
+type ProviderStatusResponse struct {
+	Configured   bool   `json:"configured"`
+	ProviderName string `json:"provider_name"`
+	Model        string `json:"model"`
+}
+
+func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.settingsStore.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load settings: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, SettingsResponse{
+		GeminiAPIKey: maskKey(settings.GeminiAPIKey),
+		GeminiModel:  settings.GeminiModel,
+		DiscordToken: maskKey(settings.DiscordToken),
+	})
+}
+
+func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var req SettingsUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// Load existing settings to preserve unchanged masked fields
+	existing, err := h.settingsStore.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load settings: "+err.Error())
+		return
+	}
+
+	// Only update fields that are not masked placeholders
+	if req.GeminiAPIKey != "" && !isMasked(req.GeminiAPIKey) {
+		existing.GeminiAPIKey = req.GeminiAPIKey
+	}
+	if req.GeminiModel != "" {
+		existing.GeminiModel = req.GeminiModel
+	}
+	if req.DiscordToken != "" && !isMasked(req.DiscordToken) {
+		existing.DiscordToken = req.DiscordToken
+	}
+
+	if err := h.settingsStore.Save(existing); err != nil {
+		writeError(w, http.StatusInternalServerError, "save settings: "+err.Error())
+		return
+	}
+
+	// Hot-swap the LLM provider if API key is available
+	if existing.GeminiAPIKey != "" {
+		model := existing.GeminiModel
+		if model == "" {
+			model = "gemini-2.5-pro-preview-06-05"
+		}
+
+		provider, err := llm.NewGeminiAPIProvider(h.ctx, existing.GeminiAPIKey, model)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid API key: "+err.Error())
+			return
+		}
+		h.providerManager.Update(provider)
+		log.Printf("provider hot-swapped: %s (model: %s)", provider.ModelInfo().ProviderName, model)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+func (h *Handlers) GetProviderStatus(w http.ResponseWriter, r *http.Request) {
+	info := h.providerManager.ModelInfo()
+	writeJSON(w, http.StatusOK, ProviderStatusResponse{
+		Configured:   h.providerManager.IsConfigured(),
+		ProviderName: info.ProviderName,
+		Model:        info.ProviderName, // ModelInfo doesn't expose model name separately
+	})
+}
+
+// maskKey shows only the last 4 characters of a secret, e.g. "***...abcd".
+func maskKey(key string) string {
+	if len(key) <= 4 {
+		return key
+	}
+	return "***..." + key[len(key)-4:]
+}
+
+// isMasked checks if a value looks like a masked placeholder from GetSettings.
+func isMasked(val string) bool {
+	return len(val) > 3 && val[:3] == "***"
 }

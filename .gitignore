@@ -23,10 +23,11 @@ vendor/
 *.swo
 *~
 
-# Environment
+# Environment & runtime data
 .env
 .env.local
 .env.*.local
+data/
 
 # Node (web/)
 web/node_modules/
