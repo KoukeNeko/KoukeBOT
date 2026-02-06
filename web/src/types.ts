@@ -16,6 +16,7 @@ export interface PersonaDetail {
     version: string
     author: string
   }
+  system_template: string
   lore: string
   anchors: Anchor[]
   generation: GenerationConfig

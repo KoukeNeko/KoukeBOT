@@ -61,8 +61,17 @@ export default function PersonaDetail() {
     markDirty()
   }
 
-  const updateVariable = (key: string, value: string) => {
+  const updateSystemTemplate = (value: string | undefined) => {
     if (!persona) return
+    setPersona({ ...persona, system_template: value ?? '' })
+    markDirty()
+  }
+
+  const updateVariable = (key: string, raw: string) => {
+    if (!persona) return
+    // Preserve numeric types for YAML roundtrip
+    const num = Number(raw)
+    const value: unknown = raw !== '' && !isNaN(num) ? num : raw
     setPersona({ ...persona, variables: { ...persona.variables, [key]: value } })
     markDirty()
   }
@@ -129,7 +138,7 @@ export default function PersonaDetail() {
   if (error) return <p className="error">Error: {error}</p>
   if (!persona) return <p>Not found.</p>
 
-  const { meta, generation, anchors, variables, lore } = persona
+  const { meta, generation, anchors, variables, lore, system_template } = persona
 
   return (
     <div>
@@ -287,6 +296,23 @@ export default function PersonaDetail() {
             </div>
           </details>
         ))}
+      </section>
+
+      {/* System Template */}
+      <section>
+        <h3>System Template</h3>
+        <p className="hint" style={{ marginBottom: '0.5rem', color: '#666' }}>
+          Available placeholders: <code>{'{{.Lore}}'}</code>, <code>{'{{.Anchors}}'}</code>
+        </p>
+        <div className="editor-container editor-lg">
+          <Editor
+            theme={MONACO_THEME}
+            language="yaml"
+            value={system_template}
+            onChange={updateSystemTemplate}
+            options={EDITOR_OPTIONS}
+          />
+        </div>
       </section>
 
       {/* Lore */}

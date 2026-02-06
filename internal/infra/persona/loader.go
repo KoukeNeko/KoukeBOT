@@ -1,6 +1,7 @@
 package persona
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -123,11 +124,7 @@ func SavePersona(baseDir, id string, module *domain.PersonaModule) error {
 }
 
 func saveConfig(path string, cfg *domain.PersonaConfig) error {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	return os.WriteFile(path, data, 0o644)
+	return writeYAMLPreservingComments(path, cfg)
 }
 
 func saveLore(path, lore string) error {
@@ -136,9 +133,86 @@ func saveLore(path, lore string) error {
 
 func saveAnchors(path string, anchors []domain.Anchor) error {
 	file := domain.AnchorFile{Anchors: anchors}
-	data, err := yaml.Marshal(&file)
+	return writeYAMLPreservingComments(path, &file)
+}
+
+// writeYAMLPreservingComments marshals v to YAML while preserving
+// comments from the existing file at path.
+func writeYAMLPreservingComments(path string, v any) error {
+	newData, err := yaml.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("marshal anchors: %w", err)
+		return fmt.Errorf("marshal: %w", err)
 	}
-	return os.WriteFile(path, data, 0o644)
+
+	existingData, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return os.WriteFile(path, newData, 0o644)
+	}
+
+	var oldDoc, newDoc yaml.Node
+	if err := yaml.Unmarshal(existingData, &oldDoc); err != nil {
+		return os.WriteFile(path, newData, 0o644)
+	}
+	if err := yaml.Unmarshal(newData, &newDoc); err != nil {
+		return os.WriteFile(path, newData, 0o644)
+	}
+
+	mergeComments(&oldDoc, &newDoc)
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&newDoc); err != nil {
+		return fmt.Errorf("encode: %w", err)
+	}
+	enc.Close()
+
+	return os.WriteFile(path, buf.Bytes(), 0o644)
+}
+
+// mergeComments recursively copies HeadComment, LineComment, FootComment
+// from src to dst nodes with matching keys.
+func mergeComments(src, dst *yaml.Node) {
+	if src == nil || dst == nil {
+		return
+	}
+
+	dst.HeadComment = src.HeadComment
+	dst.LineComment = src.LineComment
+	dst.FootComment = src.FootComment
+
+	if src.Kind != dst.Kind {
+		return
+	}
+
+	switch src.Kind {
+	case yaml.DocumentNode:
+		for i := 0; i < len(src.Content) && i < len(dst.Content); i++ {
+			mergeComments(src.Content[i], dst.Content[i])
+		}
+	case yaml.MappingNode:
+		srcMap := buildNodeMap(src)
+		for i := 0; i+1 < len(dst.Content); i += 2 {
+			key := dst.Content[i].Value
+			if pair, ok := srcMap[key]; ok {
+				mergeComments(pair[0], dst.Content[i])   // key node
+				mergeComments(pair[1], dst.Content[i+1]) // value node
+			}
+		}
+	case yaml.SequenceNode:
+		for i := 0; i < len(src.Content) && i < len(dst.Content); i++ {
+			mergeComments(src.Content[i], dst.Content[i])
+		}
+	}
+}
+
+func buildNodeMap(mapping *yaml.Node) map[string][2]*yaml.Node {
+	m := make(map[string][2]*yaml.Node, len(mapping.Content)/2)
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		m[mapping.Content[i].Value] = [2]*yaml.Node{
+			mapping.Content[i],
+			mapping.Content[i+1],
+		}
+	}
+	return m
 }

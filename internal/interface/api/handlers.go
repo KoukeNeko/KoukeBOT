@@ -54,11 +54,12 @@ type PersonaSummary struct {
 
 // PersonaDetail is the full API representation of a persona.
 type PersonaDetail struct {
-	Meta       domain.PersonaMeta      `json:"meta"`
-	Lore       string                  `json:"lore"`
-	Anchors    []domain.Anchor         `json:"anchors"`
-	Generation domain.GenerationConfig `json:"generation"`
-	Variables  map[string]any          `json:"variables"`
+	Meta           domain.PersonaMeta      `json:"meta"`
+	SystemTemplate string                  `json:"system_template"`
+	Lore           string                  `json:"lore"`
+	Anchors        []domain.Anchor         `json:"anchors"`
+	Generation     domain.GenerationConfig `json:"generation"`
+	Variables      map[string]any          `json:"variables"`
 }
 
 func (h *Handlers) ListPersonas(w http.ResponseWriter, r *http.Request) {
@@ -82,11 +83,12 @@ func (h *Handlers) GetPersona(w http.ResponseWriter, r *http.Request) {
 
 	// Return full detail using explicit DTO
 	detail := PersonaDetail{
-		Meta:       persona.Config.Meta,
-		Lore:       persona.Lore,
-		Anchors:    persona.Anchors,
-		Generation: persona.Config.Generation,
-		Variables:  persona.Config.Variables,
+		Meta:           persona.Config.Meta,
+		SystemTemplate: persona.Config.SystemTemplate,
+		Lore:           persona.Lore,
+		Anchors:        persona.Anchors,
+		Generation:     persona.Config.Generation,
+		Variables:      persona.Config.Variables,
 	}
 
 	writeJSON(w, http.StatusOK, detail)
@@ -94,8 +96,7 @@ func (h *Handlers) GetPersona(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) UpdatePersona(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	existing, ok := h.personaService.Get(id)
-	if !ok {
+	if _, ok := h.personaService.Get(id); !ok {
 		writeError(w, http.StatusNotFound, "persona not found: "+id)
 		return
 	}
@@ -106,11 +107,10 @@ func (h *Handlers) UpdatePersona(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Preserve the original system_template — not editable from the web UI
 	updated := &domain.PersonaModule{
 		Config: domain.PersonaConfig{
 			Meta:           req.Meta,
-			SystemTemplate: existing.Config.SystemTemplate,
+			SystemTemplate: req.SystemTemplate,
 			Generation:     req.Generation,
 			Variables:      req.Variables,
 		},
