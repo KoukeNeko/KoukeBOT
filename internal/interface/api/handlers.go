@@ -20,6 +20,7 @@ type Handlers struct {
 	chatService     *app.ChatService
 	settingsStore   *config.SettingsStore
 	providerManager *app.ProviderManager
+	oauthFlow       *llm.GeminiOAuthFlow
 	ctx             context.Context
 }
 
@@ -28,6 +29,7 @@ func NewHandlers(
 	chatService *app.ChatService,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	oauthFlow *llm.GeminiOAuthFlow,
 	ctx context.Context,
 ) *Handlers {
 	return &Handlers{
@@ -35,6 +37,7 @@ func NewHandlers(
 		chatService:     chatService,
 		settingsStore:   settingsStore,
 		providerManager: providerManager,
+		oauthFlow:       oauthFlow,
 		ctx:             ctx,
 	}
 }
@@ -319,4 +322,118 @@ func maskKey(key string) string {
 // isMasked checks if a value looks like a masked placeholder from GetSettings.
 func isMasked(val string) bool {
 	return len(val) > 3 && val[:3] == "***"
+}
+
+// --- OAuth endpoints ---
+
+type OAuthDetectResponse struct {
+	Found    bool   `json:"found"`
+	ClientID string `json:"client_id,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+func (h *Handlers) OAuthDetect(w http.ResponseWriter, r *http.Request) {
+	creds, err := llm.DetectGeminiCLI()
+	if err != nil {
+		writeJSON(w, http.StatusOK, OAuthDetectResponse{Found: false, Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, OAuthDetectResponse{Found: true, ClientID: creds.ClientID})
+}
+
+type OAuthStartRequest struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+type OAuthStartResponse struct {
+	AuthURL string `json:"auth_url"`
+}
+
+func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
+	var req OAuthStartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// If no credentials provided, try auto-detect.
+	clientID := req.ClientID
+	clientSecret := req.ClientSecret
+	if clientID == "" {
+		creds, err := llm.DetectGeminiCLI()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Gemini CLI not found and no credentials provided: "+err.Error())
+			return
+		}
+		clientID = creds.ClientID
+		clientSecret = creds.ClientSecret
+	}
+
+	authURL, err := h.oauthFlow.StartFlow(clientID, clientSecret)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "start OAuth flow: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, OAuthStartResponse{AuthURL: authURL})
+}
+
+func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	if code == "" {
+		http.Error(w, "missing authorization code", http.StatusBadRequest)
+		return
+	}
+
+	tokenData, err := h.oauthFlow.HandleCallback(h.ctx, code, state)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `<!doctype html><html><body><h2>OAuth Failed</h2><p>%s</p></body></html>`, err.Error())
+		return
+	}
+
+	// Hot-swap the provider.
+	model := "gemini-2.5-pro-preview-06-05"
+	if s, loadErr := h.settingsStore.Load(); loadErr == nil && s.GeminiModel != "" {
+		model = s.GeminiModel
+	}
+
+	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `<!doctype html><html><body><h2>Provider Creation Failed</h2><p>%s</p></body></html>`, err.Error())
+		return
+	}
+	h.providerManager.Update(provider)
+	log.Printf("provider hot-swapped: gemini-oauth (project: %s)", tokenData.ProjectID)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8"/></head>`+
+		`<body><h2>Gemini OAuth Complete</h2>`+
+		`<p>You can close this window and return to KoukeBOT.</p>`+
+		`<script>window.close()</script></body></html>`)
+}
+
+type OAuthStatusResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	ProjectID     string `json:"project_id,omitempty"`
+	Email         string `json:"email,omitempty"`
+}
+
+func (h *Handlers) OAuthStatus(w http.ResponseWriter, r *http.Request) {
+	data, err := h.oauthFlow.GetStatus()
+	if err != nil || data == nil {
+		writeJSON(w, http.StatusOK, OAuthStatusResponse{Authenticated: false})
+		return
+	}
+	writeJSON(w, http.StatusOK, OAuthStatusResponse{
+		Authenticated: data.AccessToken != "",
+		ProjectID:     data.ProjectID,
+		Email:         data.Email,
+	})
 }

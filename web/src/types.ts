@@ -53,3 +53,19 @@ export interface ProviderStatus {
   provider_name: string
   model: string
 }
+
+export interface OAuthDetectResult {
+  found: boolean
+  client_id?: string
+  error?: string
+}
+
+export interface OAuthStartResult {
+  auth_url: string
+}
+
+export interface OAuthStatus {
+  authenticated: boolean
+  project_id?: string
+  email?: string
+}

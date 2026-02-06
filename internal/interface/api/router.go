@@ -8,6 +8,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 // Router sets up the HTTP API routes.
@@ -21,9 +22,10 @@ func NewRouter(
 	chatService *app.ChatService,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	oauthFlow *llm.GeminiOAuthFlow,
 	ctx context.Context,
 ) *Router {
-	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, ctx)
+	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, oauthFlow, ctx)
 	mux := http.NewServeMux()
 
 	r := &Router{mux: mux, handlers: handlers}
@@ -45,6 +47,12 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/settings", r.handlers.GetSettings)
 	r.mux.HandleFunc("PUT /api/settings", r.handlers.UpdateSettings)
 	r.mux.HandleFunc("GET /api/settings/status", r.handlers.GetProviderStatus)
+
+	// OAuth
+	r.mux.HandleFunc("POST /api/oauth/gemini/detect", r.handlers.OAuthDetect)
+	r.mux.HandleFunc("POST /api/oauth/gemini/start", r.handlers.OAuthStart)
+	r.mux.HandleFunc("GET /api/oauth/gemini/callback", r.handlers.OAuthCallback)
+	r.mux.HandleFunc("GET /api/oauth/gemini/status", r.handlers.OAuthStatus)
 
 	// Health
 	r.mux.HandleFunc("GET /api/health", r.handlers.Health)

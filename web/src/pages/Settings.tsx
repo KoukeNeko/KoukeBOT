@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
-import { getSettings, updateSettings, getProviderStatus } from '../api'
-import type { SettingsData, ProviderStatus } from '../types'
+import { useEffect, useState, useRef } from 'react'
+import { getSettings, updateSettings, getProviderStatus, detectGeminiCLI, startGeminiOAuth, getOAuthStatus } from '../api'
+import type { SettingsData, ProviderStatus, OAuthStatus } from '../types'
+
+type ProviderTab = 'api-key' | 'oauth'
 
 export default function Settings() {
   const [form, setForm] = useState<SettingsData>({
@@ -13,14 +15,36 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
+  // OAuth state
+  const [providerTab, setProviderTab] = useState<ProviderTab>('api-key')
+  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus | null>(null)
+  const [detecting, setDetecting] = useState(false)
+  const [detectedClientID, setDetectedClientID] = useState('')
+  const [detectError, setDetectError] = useState('')
+  const [manualClientID, setManualClientID] = useState('')
+  const [manualClientSecret, setManualClientSecret] = useState('')
+  const [oauthStarting, setOAuthStarting] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
-    Promise.all([getSettings(), getProviderStatus()])
-      .then(([s, st]) => {
+    Promise.all([getSettings(), getProviderStatus(), getOAuthStatus()])
+      .then(([s, st, oauth]) => {
         setForm(s)
         setStatus(st)
+        setOAuthStatus(oauth)
+        if (oauth.authenticated && st.provider_name === 'gemini-oauth') {
+          setProviderTab('oauth')
+        }
       })
       .catch((e) => setMessage({ type: 'err', text: e.message }))
       .finally(() => setLoading(false))
+  }, [])
+
+  // Stop polling on unmount.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
   }, [])
 
   const handleSave = async () => {
@@ -40,6 +64,66 @@ export default function Settings() {
     }
   }
 
+  const handleDetect = async () => {
+    setDetecting(true)
+    setDetectError('')
+    setDetectedClientID('')
+    try {
+      const result = await detectGeminiCLI()
+      if (result.found && result.client_id) {
+        setDetectedClientID(result.client_id)
+      } else {
+        setDetectError(result.error || 'Gemini CLI not found.')
+      }
+    } catch (e) {
+      setDetectError(e instanceof Error ? e.message : 'Detection failed')
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  const handleOAuthLogin = async () => {
+    setOAuthStarting(true)
+    setMessage(null)
+    try {
+      const clientId = manualClientID || undefined
+      const clientSecret = manualClientSecret || undefined
+      const result = await startGeminiOAuth(clientId, clientSecret)
+
+      // Open auth URL in popup.
+      window.open(result.auth_url, 'gemini-oauth', 'width=600,height=700')
+
+      // Poll for completion.
+      pollRef.current = setInterval(async () => {
+        try {
+          const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()])
+          setOAuthStatus(oauth)
+          setStatus(st)
+          if (oauth.authenticated) {
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            setMessage({ type: 'ok', text: 'OAuth authentication successful!' })
+            setOAuthStarting(false)
+          }
+        } catch {
+          // Ignore polling errors.
+        }
+      }, 2000)
+
+      // Stop polling after 5 minutes.
+      setTimeout(() => {
+        if (pollRef.current) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setOAuthStarting(false)
+        }
+      }, 5 * 60 * 1000)
+    } catch (e) {
+      setMessage({ type: 'err', text: e instanceof Error ? e.message : 'OAuth start failed' })
+      setOAuthStarting(false)
+    }
+  }
+
   if (loading) return <p>Loading settings...</p>
 
   return (
@@ -50,7 +134,7 @@ export default function Settings() {
         <div className={`status-banner ${status.configured ? 'ok' : 'warn'}`}>
           {status.configured
             ? `Provider active: ${status.provider_name}`
-            : 'LLM provider not configured — enter your API key below.'}
+            : 'LLM provider not configured — set API key or use OAuth below.'}
         </div>
       )}
 
@@ -61,25 +145,123 @@ export default function Settings() {
       <section>
         <h3>LLM Provider</h3>
 
-        <label className="form-field">
-          <span>Gemini API Key</span>
-          <input
-            type="password"
-            value={form.gemini_api_key}
-            onChange={(e) => setForm({ ...form, gemini_api_key: e.target.value })}
-            placeholder="Enter your Gemini API key"
-          />
-        </label>
+        <div className="provider-tabs">
+          <button
+            className={`provider-tab ${providerTab === 'api-key' ? 'active' : ''}`}
+            onClick={() => setProviderTab('api-key')}
+          >
+            API Key
+          </button>
+          <button
+            className={`provider-tab ${providerTab === 'oauth' ? 'active' : ''}`}
+            onClick={() => setProviderTab('oauth')}
+          >
+            Gemini OAuth
+          </button>
+        </div>
 
-        <label className="form-field">
-          <span>Model</span>
-          <input
-            type="text"
-            value={form.gemini_model}
-            onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
-            placeholder="gemini-2.5-pro-preview-06-05"
-          />
-        </label>
+        {providerTab === 'api-key' && (
+          <div style={{ marginTop: '1rem' }}>
+            <label className="form-field">
+              <span>Gemini API Key</span>
+              <input
+                type="password"
+                value={form.gemini_api_key}
+                onChange={(e) => setForm({ ...form, gemini_api_key: e.target.value })}
+                placeholder="Enter your Gemini API key"
+              />
+            </label>
+
+            <label className="form-field">
+              <span>Model</span>
+              <input
+                type="text"
+                value={form.gemini_model}
+                onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
+                placeholder="gemini-2.5-pro-preview-06-05"
+              />
+            </label>
+
+            <button onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        )}
+
+        {providerTab === 'oauth' && (
+          <div style={{ marginTop: '1rem' }}>
+            {/* OAuth Status */}
+            {oauthStatus?.authenticated ? (
+              <div className="status-banner ok" style={{ marginBottom: '1rem' }}>
+                Connected{oauthStatus.email ? ` as ${oauthStatus.email}` : ''}
+                {oauthStatus.project_id ? ` (project: ${oauthStatus.project_id})` : ''}
+              </div>
+            ) : (
+              <div className="status-banner warn" style={{ marginBottom: '1rem' }}>
+                Not connected — click below to authenticate with Google.
+              </div>
+            )}
+
+            {/* Detect Gemini CLI */}
+            <div style={{ marginBottom: '1rem' }}>
+              <button onClick={handleDetect} disabled={detecting} className="btn-secondary">
+                {detecting ? 'Detecting...' : 'Detect Gemini CLI'}
+              </button>
+              {detectedClientID && (
+                <p className="success" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
+                  Found: {detectedClientID}
+                </p>
+              )}
+              {detectError && (
+                <p className="error" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
+                  {detectError}
+                </p>
+              )}
+            </div>
+
+            {/* Manual credentials fallback */}
+            {!detectedClientID && (
+              <div style={{ marginBottom: '1rem' }}>
+                <p className="meta" style={{ marginBottom: '0.5rem' }}>
+                  If Gemini CLI is not installed, enter credentials manually:
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <label className="form-field">
+                    <span>Client ID</span>
+                    <input
+                      type="text"
+                      value={manualClientID}
+                      onChange={(e) => setManualClientID(e.target.value)}
+                      placeholder="xxx.apps.googleusercontent.com"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Client Secret</span>
+                    <input
+                      type="password"
+                      value={manualClientSecret}
+                      onChange={(e) => setManualClientSecret(e.target.value)}
+                      placeholder="GOCSPX-xxx"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {/* Login button */}
+            <button
+              onClick={handleOAuthLogin}
+              disabled={oauthStarting || (!detectedClientID && !manualClientID)}
+            >
+              {oauthStarting ? 'Waiting for authorization...' : 'Login with Google'}
+            </button>
+            {oauthStarting && (
+              <p className="meta" style={{ marginTop: '0.5rem' }}>
+                Complete the authorization in the popup window...
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       <section>
@@ -95,11 +277,11 @@ export default function Settings() {
           />
           <span className="hint">Discord bot requires restart to apply.</span>
         </label>
-      </section>
 
-      <button onClick={handleSave} disabled={saving} style={{ marginTop: '1rem' }}>
-        {saving ? 'Saving...' : 'Save'}
-      </button>
+        <button onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save'}
+        </button>
+      </section>
     </div>
   )
 }

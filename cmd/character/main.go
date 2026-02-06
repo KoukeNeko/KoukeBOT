@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	personasDir  = "configs/personas"
-	settingsPath = "data/settings.json"
-	defaultModel = "gemini-2.5-pro-preview-06-05"
-	defaultPort  = "8080"
+	personasDir    = "configs/personas"
+	settingsPath   = "data/settings.json"
+	oauthTokenPath = "data/gemini_oauth.json"
+	defaultModel   = "gemini-2.5-pro-preview-06-05"
+	defaultPort    = "8080"
 )
 
 func main() {
@@ -59,23 +60,33 @@ func run() error {
 
 	// Init LLM provider (optional — can be configured later via Web UI)
 	providerManager := app.NewProviderManager(nil)
+	model := settings.GeminiModel
+	if model == "" {
+		model = defaultModel
+	}
 
 	if settings.GeminiAPIKey != "" {
-		model := settings.GeminiModel
-		if model == "" {
-			model = defaultModel
-		}
-
 		provider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, model)
 		if err != nil {
-			log.Printf("WARNING: failed to init Gemini provider: %v", err)
+			log.Printf("WARNING: failed to init Gemini API provider: %v", err)
 			log.Println("  → configure a valid API key at http://localhost:" + port + "/settings")
 		} else {
 			providerManager.Update(provider)
 			log.Printf("LLM provider: %s (model: %s)", provider.ModelInfo().ProviderName, model)
 		}
+	} else if oauthData, err := llm.LoadStoredToken(oauthTokenPath); err == nil && oauthData != nil {
+		if err := llm.RefreshIfNeeded(ctx, oauthData, oauthTokenPath); err != nil {
+			log.Printf("WARNING: OAuth token refresh failed: %v", err)
+		}
+		provider, err := llm.NewGeminiOAuthProvider(ctx, oauthData, model)
+		if err != nil {
+			log.Printf("WARNING: failed to init Gemini OAuth provider: %v", err)
+		} else {
+			providerManager.Update(provider)
+			log.Printf("LLM provider: %s (model: %s, project: %s)", provider.ModelInfo().ProviderName, model, oauthData.ProjectID)
+		}
 	} else {
-		log.Println("GEMINI_API_KEY not set — configure it at http://localhost:" + port + "/settings")
+		log.Println("no LLM credentials — configure at http://localhost:" + port + "/settings")
 	}
 
 	// Init core services
@@ -92,8 +103,12 @@ func run() error {
 		log.Println("DISCORD_TOKEN not set — skipping Discord bot")
 	}
 
+	// Init OAuth flow for Gemini CLI auth
+	oauthRedirectURL := "http://localhost:" + port + "/api/oauth/gemini/callback"
+	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthRedirectURL)
+
 	// Start HTTP API server
-	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager)
+	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow)
 
 	log.Printf("character bot ready — API on :%s", port)
 
@@ -171,8 +186,9 @@ func startAPIServer(
 	chatService *app.ChatService,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	oauthFlow *llm.GeminiOAuthFlow,
 ) {
-	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, ctx)
+	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, oauthFlow, ctx)
 	handler := router.Handler()
 
 	// Wrap with SPA static file serving if web/dist exists

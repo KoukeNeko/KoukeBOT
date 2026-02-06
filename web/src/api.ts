@@ -1,4 +1,4 @@
-import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus } from './types'
+import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, OAuthDetectResult, OAuthStartResult, OAuthStatus } from './types'
 
 const BASE = '/api'
 
@@ -61,4 +61,20 @@ export function updateSettings(data: SettingsData): Promise<{ status: string }> 
 
 export function getProviderStatus(): Promise<ProviderStatus> {
   return fetchJSON(`${BASE}/settings/status`)
+}
+
+export function detectGeminiCLI(): Promise<OAuthDetectResult> {
+  return fetchJSON(`${BASE}/oauth/gemini/detect`, { method: 'POST' })
+}
+
+export function startGeminiOAuth(clientId?: string, clientSecret?: string): Promise<OAuthStartResult> {
+  return fetchJSON(`${BASE}/oauth/gemini/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: clientId ?? '', client_secret: clientSecret ?? '' }),
+  })
+}
+
+export function getOAuthStatus(): Promise<OAuthStatus> {
+  return fetchJSON(`${BASE}/oauth/gemini/status`)
 }
