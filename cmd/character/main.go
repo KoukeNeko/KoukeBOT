@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
@@ -171,34 +172,44 @@ func startAPIServer(
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
 ) {
-	// Serve React frontend from web/dist if it exists
-	webDir := filepath.Join("web", "dist")
 	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, ctx)
-	mux := http.NewServeMux()
+	handler := router.Handler()
 
-	// API routes first
-	mux.Handle("/api/", router.Handler())
-
-	// Static files for the web frontend
+	// Wrap with SPA static file serving if web/dist exists
+	webDir := filepath.Join("web", "dist")
 	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
-		fs := http.FileServer(http.Dir(webDir))
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			// SPA fallback: serve index.html for non-file paths
-			path := filepath.Join(webDir, r.URL.Path)
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
-				return
-			}
-			fs.ServeHTTP(w, r)
-		})
+		handler = withSPA(webDir, handler)
 		log.Printf("serving web frontend from %s", webDir)
 	}
 
 	go func() {
 		addr := ":" + port
 		log.Printf("HTTP listening on %s", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil && err != http.ErrServerClosed {
+		if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server error: %v", err)
 		}
 	}()
+}
+
+// withSPA wraps an API handler with SPA static file serving.
+// /api/* requests go to the API; everything else serves static files
+// with index.html fallback for client-side routing.
+func withSPA(webDir string, apiHandler http.Handler) http.Handler {
+	fs := http.FileServer(http.Dir(webDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			apiHandler.ServeHTTP(w, r)
+			return
+		}
+
+		// Try serving a static file
+		filePath := filepath.Join(webDir, r.URL.Path)
+		if _, err := os.Stat(filePath); err == nil {
+			fs.ServeHTTP(w, r)
+			return
+		}
+
+		// SPA fallback: serve index.html for unmatched paths
+		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+	})
 }

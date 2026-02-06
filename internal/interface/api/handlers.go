@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -51,6 +52,15 @@ type PersonaSummary struct {
 	AnchorTags  []string `json:"anchor_tags"`
 }
 
+// PersonaDetail is the full API representation of a persona.
+type PersonaDetail struct {
+	Meta       domain.PersonaMeta      `json:"meta"`
+	Lore       string                  `json:"lore"`
+	Anchors    []domain.Anchor         `json:"anchors"`
+	Generation domain.GenerationConfig `json:"generation"`
+	Variables  map[string]any          `json:"variables"`
+}
+
 func (h *Handlers) ListPersonas(w http.ResponseWriter, r *http.Request) {
 	personas := h.personaService.GetAll()
 	summaries := make([]PersonaSummary, 0, len(personas))
@@ -70,13 +80,13 @@ func (h *Handlers) GetPersona(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return full detail including lore and anchors
-	detail := map[string]any{
-		"meta":       persona.Config.Meta,
-		"lore":       persona.Lore,
-		"anchors":    persona.Anchors,
-		"generation": persona.Config.Generation,
-		"variables":  persona.Config.Variables,
+	// Return full detail using explicit DTO
+	detail := PersonaDetail{
+		Meta:       persona.Config.Meta,
+		Lore:       persona.Lore,
+		Anchors:    persona.Anchors,
+		Generation: persona.Config.Generation,
+		Variables:  persona.Config.Variables,
 	}
 
 	writeJSON(w, http.StatusOK, detail)
@@ -124,7 +134,12 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 
 	response, err := h.chatService.HandleMessage(r.Context(), req.ChannelID, req.PersonaID, req.Message)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// Distinguish between configuration errors and actual server errors
+		if strings.Contains(err.Error(), "LLM provider not configured") {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
