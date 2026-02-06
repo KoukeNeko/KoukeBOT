@@ -101,3 +101,44 @@ func loadAnchors(path string) ([]domain.Anchor, error) {
 
 	return file.Anchors, nil
 }
+
+// SavePersona writes the persona module back to disk:
+// config.yaml, lore.md, and anchors.yaml.
+func SavePersona(baseDir, id string, module *domain.PersonaModule) error {
+	personaDir := filepath.Join(baseDir, id)
+
+	if err := saveConfig(filepath.Join(personaDir, configFileName), &module.Config); err != nil {
+		return fmt.Errorf("save config for persona %q: %w", id, err)
+	}
+
+	if err := saveLore(filepath.Join(personaDir, loreFileName), module.Lore); err != nil {
+		return fmt.Errorf("save lore for persona %q: %w", id, err)
+	}
+
+	if err := saveAnchors(filepath.Join(personaDir, anchorsFileName), module.Anchors); err != nil {
+		return fmt.Errorf("save anchors for persona %q: %w", id, err)
+	}
+
+	return nil
+}
+
+func saveConfig(path string, cfg *domain.PersonaConfig) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func saveLore(path, lore string) error {
+	return os.WriteFile(path, []byte(lore), 0o644)
+}
+
+func saveAnchors(path string, anchors []domain.Anchor) error {
+	file := domain.AnchorFile{Anchors: anchors}
+	data, err := yaml.Marshal(&file)
+	if err != nil {
+		return fmt.Errorf("marshal anchors: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}

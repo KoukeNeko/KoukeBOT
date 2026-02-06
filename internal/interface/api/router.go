@@ -35,6 +35,7 @@ func (r *Router) registerRoutes() {
 	// Persona endpoints
 	r.mux.HandleFunc("GET /api/personas", r.handlers.ListPersonas)
 	r.mux.HandleFunc("GET /api/personas/{id}", r.handlers.GetPersona)
+	r.mux.HandleFunc("PUT /api/personas/{id}", r.handlers.UpdatePersona)
 	r.mux.HandleFunc("POST /api/personas/reload", r.handlers.ReloadPersonas)
 
 	// Chat endpoint (for web-based testing)

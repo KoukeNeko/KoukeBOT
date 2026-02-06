@@ -92,6 +92,40 @@ func (h *Handlers) GetPersona(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+func (h *Handlers) UpdatePersona(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	existing, ok := h.personaService.Get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "persona not found: "+id)
+		return
+	}
+
+	var req PersonaDetail
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// Preserve the original system_template — not editable from the web UI
+	updated := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			Meta:           req.Meta,
+			SystemTemplate: existing.Config.SystemTemplate,
+			Generation:     req.Generation,
+			Variables:      req.Variables,
+		},
+		Lore:    req.Lore,
+		Anchors: req.Anchors,
+	}
+
+	if err := h.personaService.Update(id, updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "save persona: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
 func (h *Handlers) ReloadPersonas(w http.ResponseWriter, r *http.Request) {
 	if err := h.personaService.Reload(); err != nil {
 		writeError(w, http.StatusInternalServerError, "reload failed: "+err.Error())
