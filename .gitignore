@@ -1,1 +1,41 @@
 PROPOSED_PLAN.md
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/character
+
+# Test
+*.test
+*.out
+coverage.html
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node (web/)
+web/node_modules/
+web/dist/
+web/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+__debug_bin*
