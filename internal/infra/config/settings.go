@@ -8,11 +8,18 @@ import (
 	"sync"
 )
 
+// Provider type constants for explicit provider selection.
+const (
+	ProviderAPIKey = "api-key"
+	ProviderOAuth  = "oauth"
+)
+
 // Settings holds the runtime-configurable values.
 type Settings struct {
 	GeminiAPIKey string `json:"gemini_api_key"`
 	GeminiModel  string `json:"gemini_model"`
 	DiscordToken string `json:"discord_token"`
+	ProviderType string `json:"provider_type"` // "api-key", "oauth", or "" (auto)
 }
 
 // SettingsStore reads and writes settings to a JSON file.

@@ -46,6 +46,12 @@ export interface SettingsData {
   gemini_api_key: string
   gemini_model: string
   discord_token: string
+  provider_type: string
+}
+
+export interface ModelEntry {
+  id: string
+  display_name: string
 }
 
 export interface ProviderStatus {

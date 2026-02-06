@@ -24,7 +24,7 @@ const (
 	personasDir    = "configs/personas"
 	settingsPath   = "data/settings.json"
 	oauthTokenPath = "data/gemini_oauth.json"
-	defaultModel   = "gemini-2.5-pro-preview-06-05"
+	defaultModel   = "gemini-2.5-pro"
 	defaultPort    = "8080"
 )
 
@@ -65,29 +65,7 @@ func run() error {
 		model = defaultModel
 	}
 
-	if settings.GeminiAPIKey != "" {
-		provider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, model)
-		if err != nil {
-			log.Printf("WARNING: failed to init Gemini API provider: %v", err)
-			log.Println("  → configure a valid API key at http://localhost:" + port + "/settings")
-		} else {
-			providerManager.Update(provider)
-			log.Printf("LLM provider: %s (model: %s)", provider.ModelInfo().ProviderName, model)
-		}
-	} else if oauthData, err := llm.LoadStoredToken(oauthTokenPath); err == nil && oauthData != nil {
-		if err := llm.RefreshIfNeeded(ctx, oauthData, oauthTokenPath); err != nil {
-			log.Printf("WARNING: OAuth token refresh failed: %v", err)
-		}
-		provider, err := llm.NewGeminiOAuthProvider(ctx, oauthData, model)
-		if err != nil {
-			log.Printf("WARNING: failed to init Gemini OAuth provider: %v", err)
-		} else {
-			providerManager.Update(provider)
-			log.Printf("LLM provider: %s (model: %s, project: %s)", provider.ModelInfo().ProviderName, model, oauthData.ProjectID)
-		}
-	} else {
-		log.Println("no LLM credentials — configure at http://localhost:" + port + "/settings")
-	}
+	initProvider(ctx, settings, providerManager, model, port)
 
 	// Init core services
 	convStore := store.NewMemoryStore()
@@ -140,6 +118,65 @@ func resolveSettings(settingsStore *config.SettingsStore) config.Settings {
 	}
 
 	return settings
+}
+
+// initProvider selects and initializes the LLM provider based on settings.
+func initProvider(ctx context.Context, settings config.Settings, pm *app.ProviderManager, model, port string) {
+	switch settings.ProviderType {
+	case config.ProviderOAuth:
+		if initOAuthProvider(ctx, pm, model) {
+			return
+		}
+		log.Println("OAuth selected but not available — configure at http://localhost:" + port + "/settings")
+
+	case config.ProviderAPIKey:
+		if initAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model) {
+			return
+		}
+		log.Println("API key selected but invalid — configure at http://localhost:" + port + "/settings")
+
+	default:
+		// Auto: API key first, then OAuth.
+		if settings.GeminiAPIKey != "" && initAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model) {
+			return
+		}
+		if initOAuthProvider(ctx, pm, model) {
+			return
+		}
+		log.Println("no LLM credentials — configure at http://localhost:" + port + "/settings")
+	}
+}
+
+func initAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderManager, model string) bool {
+	if apiKey == "" {
+		return false
+	}
+	provider, err := llm.NewGeminiAPIProvider(ctx, apiKey, model)
+	if err != nil {
+		log.Printf("WARNING: failed to init Gemini API provider: %v", err)
+		return false
+	}
+	pm.Update(provider)
+	log.Printf("LLM provider: %s (model: %s)", provider.ModelInfo().ProviderName, model)
+	return true
+}
+
+func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model string) bool {
+	oauthData, err := llm.LoadStoredToken(oauthTokenPath)
+	if err != nil || oauthData == nil {
+		return false
+	}
+	if err := llm.RefreshIfNeeded(ctx, oauthData, oauthTokenPath); err != nil {
+		log.Printf("WARNING: OAuth token refresh failed: %v", err)
+	}
+	provider, err := llm.NewGeminiOAuthProvider(ctx, oauthData, model)
+	if err != nil {
+		log.Printf("WARNING: failed to init Gemini OAuth provider: %v", err)
+		return false
+	}
+	pm.Update(provider)
+	log.Printf("LLM provider: %s (model: %s, project: %s)", provider.ModelInfo().ProviderName, model, oauthData.ProjectID)
+	return true
 }
 
 func startDiscordBot(token string, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository) error {

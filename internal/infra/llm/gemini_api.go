@@ -110,7 +110,7 @@ type genConfig struct {
 func buildConfig(req ChatRequest) genConfig {
 	cfg := genConfig{
 		temperature:      0.7,
-		maxTokens:        800,
+		maxTokens:        8192,
 		topP:             0.95,
 		frequencyPenalty: 0.0,
 		presencePenalty:  0.0,

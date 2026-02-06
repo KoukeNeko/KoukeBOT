@@ -225,12 +225,14 @@ type SettingsResponse struct {
 	GeminiAPIKey string `json:"gemini_api_key"`
 	GeminiModel  string `json:"gemini_model"`
 	DiscordToken string `json:"discord_token"`
+	ProviderType string `json:"provider_type"`
 }
 
 type SettingsUpdateRequest struct {
 	GeminiAPIKey string `json:"gemini_api_key"`
 	GeminiModel  string `json:"gemini_model"`
 	DiscordToken string `json:"discord_token"`
+	ProviderType string `json:"provider_type"`
 }
 
 type ProviderStatusResponse struct {
@@ -250,6 +252,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		GeminiAPIKey: maskKey(settings.GeminiAPIKey),
 		GeminiModel:  settings.GeminiModel,
 		DiscordToken: maskKey(settings.DiscordToken),
+		ProviderType: settings.ProviderType,
 	})
 }
 
@@ -260,14 +263,13 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load existing settings to preserve unchanged masked fields
+	// Load existing settings to preserve unchanged masked fields.
 	existing, err := h.settingsStore.Load()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "load settings: "+err.Error())
 		return
 	}
 
-	// Only update fields that are not masked placeholders
 	if req.GeminiAPIKey != "" && !isMasked(req.GeminiAPIKey) {
 		existing.GeminiAPIKey = req.GeminiAPIKey
 	}
@@ -277,29 +279,67 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.DiscordToken != "" && !isMasked(req.DiscordToken) {
 		existing.DiscordToken = req.DiscordToken
 	}
+	if req.ProviderType != "" {
+		existing.ProviderType = req.ProviderType
+	}
 
 	if err := h.settingsStore.Save(existing); err != nil {
 		writeError(w, http.StatusInternalServerError, "save settings: "+err.Error())
 		return
 	}
 
-	// Hot-swap the LLM provider if API key is available
-	if existing.GeminiAPIKey != "" {
-		model := existing.GeminiModel
-		if model == "" {
-			model = "gemini-2.5-pro-preview-06-05"
-		}
-
-		provider, err := llm.NewGeminiAPIProvider(h.ctx, existing.GeminiAPIKey, model)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid API key: "+err.Error())
-			return
-		}
-		h.providerManager.Update(provider)
-		log.Printf("provider hot-swapped: %s (model: %s)", provider.ModelInfo().ProviderName, model)
+	// Hot-swap the LLM provider based on selected provider_type.
+	if err := h.activateProvider(existing); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+// activateProvider creates and hot-swaps the LLM provider based on settings.
+func (h *Handlers) activateProvider(s config.Settings) error {
+	model := s.GeminiModel
+	if model == "" {
+		model = "gemini-2.5-pro"
+	}
+
+	switch s.ProviderType {
+	case config.ProviderOAuth:
+		oauthData, err := h.oauthFlow.GetStatus()
+		if err != nil || oauthData == nil {
+			return fmt.Errorf("no OAuth credentials available")
+		}
+		provider, err := llm.NewGeminiOAuthProvider(h.ctx, oauthData, model)
+		if err != nil {
+			return fmt.Errorf("create OAuth provider: %w", err)
+		}
+		h.providerManager.Update(provider)
+		log.Printf("provider hot-swapped: gemini-oauth (model: %s)", model)
+
+	case config.ProviderAPIKey:
+		if s.GeminiAPIKey == "" {
+			return fmt.Errorf("no API key configured")
+		}
+		provider, err := llm.NewGeminiAPIProvider(h.ctx, s.GeminiAPIKey, model)
+		if err != nil {
+			return fmt.Errorf("invalid API key: %w", err)
+		}
+		h.providerManager.Update(provider)
+		log.Printf("provider hot-swapped: gemini-api (model: %s)", model)
+
+	default:
+		// Auto mode: try API key first, then OAuth.
+		if s.GeminiAPIKey != "" {
+			provider, err := llm.NewGeminiAPIProvider(h.ctx, s.GeminiAPIKey, model)
+			if err != nil {
+				return fmt.Errorf("invalid API key: %w", err)
+			}
+			h.providerManager.Update(provider)
+			log.Printf("provider hot-swapped: gemini-api (model: %s)", model)
+		}
+	}
+	return nil
 }
 
 func (h *Handlers) GetProviderStatus(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +349,29 @@ func (h *Handlers) GetProviderStatus(w http.ResponseWriter, r *http.Request) {
 		ProviderName: info.ProviderName,
 		Model:        info.ProviderName, // ModelInfo doesn't expose model name separately
 	})
+}
+
+// --- Models endpoint ---
+
+func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.settingsStore.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load settings: "+err.Error())
+		return
+	}
+
+	var oauthToken *llm.OAuthTokenData
+	if data, err := h.oauthFlow.GetStatus(); err == nil {
+		oauthToken = data
+	}
+
+	models, err := llm.ListGeminiModels(r.Context(), settings.GeminiAPIKey, oauthToken)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list models: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models)
 }
 
 // maskKey shows only the last 4 characters of a secret, e.g. "***...abcd".
@@ -396,8 +459,8 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hot-swap the provider.
-	model := "gemini-2.5-pro-preview-06-05"
+	// Hot-swap the provider and save provider_type.
+	model := "gemini-2.5-pro"
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil && s.GeminiModel != "" {
 		model = s.GeminiModel
 	}
@@ -411,6 +474,12 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	h.providerManager.Update(provider)
 	log.Printf("provider hot-swapped: gemini-oauth (project: %s)", tokenData.ProjectID)
+
+	// Persist provider_type = oauth.
+	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
+		s.ProviderType = config.ProviderOAuth
+		_ = h.settingsStore.Save(s)
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8"/></head>`+

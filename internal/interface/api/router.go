@@ -47,6 +47,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/settings", r.handlers.GetSettings)
 	r.mux.HandleFunc("PUT /api/settings", r.handlers.UpdateSettings)
 	r.mux.HandleFunc("GET /api/settings/status", r.handlers.GetProviderStatus)
+	r.mux.HandleFunc("GET /api/models", r.handlers.ListModels)
 
 	// OAuth
 	r.mux.HandleFunc("POST /api/oauth/gemini/detect", r.handlers.OAuthDetect)

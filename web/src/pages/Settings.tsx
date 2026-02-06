@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
-import { getSettings, updateSettings, getProviderStatus, detectGeminiCLI, startGeminiOAuth, getOAuthStatus } from '../api'
-import type { SettingsData, ProviderStatus, OAuthStatus } from '../types'
+import { getSettings, updateSettings, getProviderStatus, detectGeminiCLI, startGeminiOAuth, getOAuthStatus, listModels } from '../api'
+import type { SettingsData, ProviderStatus, OAuthStatus, ModelEntry } from '../types'
 
 type ProviderTab = 'api-key' | 'oauth'
 
@@ -9,7 +9,9 @@ export default function Settings() {
     gemini_api_key: '',
     gemini_model: '',
     discord_token: '',
+    provider_type: '',
   })
+  const [models, setModels] = useState<ModelEntry[]>([])
   const [status, setStatus] = useState<ProviderStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -27,13 +29,16 @@ export default function Settings() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    Promise.all([getSettings(), getProviderStatus(), getOAuthStatus()])
-      .then(([s, st, oauth]) => {
+    Promise.all([getSettings(), getProviderStatus(), getOAuthStatus(), listModels()])
+      .then(([s, st, oauth, modelList]) => {
         setForm(s)
         setStatus(st)
         setOAuthStatus(oauth)
-        if (oauth.authenticated && st.provider_name === 'gemini-oauth') {
+        setModels(modelList)
+        if (s.provider_type === 'oauth' || (oauth.authenticated && st.provider_name === 'gemini-oauth')) {
           setProviderTab('oauth')
+        } else if (s.provider_type === 'api-key') {
+          setProviderTab('api-key')
         }
       })
       .catch((e) => setMessage({ type: 'err', text: e.message }))
@@ -47,15 +52,19 @@ export default function Settings() {
     }
   }, [])
 
-  const handleSave = async () => {
+  const handleSave = async (overrideProviderType?: string) => {
     setSaving(true)
     setMessage(null)
     try {
-      await updateSettings(form)
-      const st = await getProviderStatus()
+      const payload = { ...form }
+      if (overrideProviderType) {
+        payload.provider_type = overrideProviderType
+      }
+      await updateSettings(payload)
+      const [st, updated, modelList] = await Promise.all([getProviderStatus(), getSettings(), listModels()])
       setStatus(st)
-      const updated = await getSettings()
       setForm(updated)
+      setModels(modelList)
       setMessage({ type: 'ok', text: 'Settings saved successfully.' })
     } catch (e) {
       setMessage({ type: 'err', text: e instanceof Error ? e.message : 'Save failed' })
@@ -174,15 +183,25 @@ export default function Settings() {
 
             <label className="form-field">
               <span>Model</span>
-              <input
-                type="text"
+              <select
                 value={form.gemini_model}
                 onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
-                placeholder="gemini-2.5-pro-preview-06-05"
-              />
+              >
+                {models.length > 0 ? (
+                  models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.display_name}
+                    </option>
+                  ))
+                ) : (
+                  <option value={form.gemini_model || 'gemini-2.5-pro'}>
+                    {form.gemini_model || 'gemini-2.5-pro'}
+                  </option>
+                )}
+              </select>
             </label>
 
-            <button onClick={handleSave} disabled={saving}>
+            <button onClick={() => handleSave('api-key')} disabled={saving}>
               {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
@@ -260,6 +279,35 @@ export default function Settings() {
                 Complete the authorization in the popup window...
               </p>
             )}
+
+            {/* Model selector + activate */}
+            {oauthStatus?.authenticated && (
+              <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+                <label className="form-field">
+                  <span>Model</span>
+                  <select
+                    value={form.gemini_model}
+                    onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
+                  >
+                    {models.length > 0 ? (
+                      models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.display_name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value={form.gemini_model || 'gemini-2.5-pro'}>
+                        {form.gemini_model || 'gemini-2.5-pro'}
+                      </option>
+                    )}
+                  </select>
+                </label>
+
+                <button onClick={() => handleSave('oauth')} disabled={saving}>
+                  {saving ? 'Saving...' : 'Use OAuth Provider'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -278,7 +326,7 @@ export default function Settings() {
           <span className="hint">Discord bot requires restart to apply.</span>
         </label>
 
-        <button onClick={handleSave} disabled={saving}>
+        <button onClick={() => handleSave()} disabled={saving}>
           {saving ? 'Saving...' : 'Save'}
         </button>
       </section>
