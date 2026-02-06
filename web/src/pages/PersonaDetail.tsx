@@ -1,20 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import Editor from '@monaco-editor/react'
 import { getPersona, updatePersona } from '../api'
 import type { PersonaDetail as PersonaDetailType, Anchor } from '../types'
-
-const MONACO_THEME = 'vs-dark'
-const EDITOR_OPTIONS = {
-  minimap: { enabled: false },
-  fontSize: 13,
-  lineNumbers: 'on' as const,
-  scrollBeyondLastLine: false,
-  wordWrap: 'on' as const,
-  padding: { top: 12, bottom: 12 },
-  renderLineHighlight: 'gutter' as const,
-  automaticLayout: true,
-}
+import EditorModal from '../components/EditorModal'
 
 export default function PersonaDetail() {
   const { id } = useParams<{ id: string }>()
@@ -24,6 +12,12 @@ export default function PersonaDetail() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [dirty, setDirty] = useState(false)
+
+  // Track which field is open in the modal
+  const [editingField, setEditingField] = useState<{
+    type: 'lore' | 'system_template' | 'anchor_input' | 'anchor_response'
+    index?: number
+  } | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -69,7 +63,6 @@ export default function PersonaDetail() {
 
   const updateVariable = (key: string, raw: string) => {
     if (!persona) return
-    // Preserve numeric types for YAML roundtrip
     const num = Number(raw)
     const value: unknown = raw !== '' && !isNaN(num) ? num : raw
     setPersona({ ...persona, variables: { ...persona.variables, [key]: value } })
@@ -267,26 +260,22 @@ export default function PersonaDetail() {
               <div className="anchor-content">
                 <div>
                   <h4>User Input</h4>
-                  <div className="editor-container editor-sm">
-                    <Editor
-                      theme={MONACO_THEME}
-                      language="plaintext"
-                      value={a.user_input}
-                      onChange={(v) => updateAnchor(i, 'user_input', v ?? '')}
-                      options={{ ...EDITOR_OPTIONS, lineNumbers: 'off' }}
-                    />
+                  <div
+                    className="preview-box"
+                    onClick={() => setEditingField({ type: 'anchor_input', index: i })}
+                    title="Click to edit"
+                  >
+                    {a.user_input || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty (Click to edit)</span>}
                   </div>
                 </div>
                 <div>
                   <h4>Bot Response</h4>
-                  <div className="editor-container editor-sm">
-                    <Editor
-                      theme={MONACO_THEME}
-                      language="plaintext"
-                      value={a.bot_response}
-                      onChange={(v) => updateAnchor(i, 'bot_response', v ?? '')}
-                      options={{ ...EDITOR_OPTIONS, lineNumbers: 'off' }}
-                    />
+                  <div
+                    className="preview-box"
+                    onClick={() => setEditingField({ type: 'anchor_response', index: i })}
+                    title="Click to edit"
+                  >
+                    {a.bot_response || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty (Click to edit)</span>}
                   </div>
                 </div>
               </div>
@@ -301,33 +290,62 @@ export default function PersonaDetail() {
       {/* System Template */}
       <section>
         <h3>System Template</h3>
-        <p className="hint" style={{ marginBottom: '0.5rem', color: '#666' }}>
+        <p className="hint" style={{ marginBottom: '0.75rem', color: '#666' }}>
           Available placeholders: <code>{'{{.Lore}}'}</code>, <code>{'{{.Anchors}}'}</code>
         </p>
-        <div className="editor-container editor-lg">
-          <Editor
-            theme={MONACO_THEME}
-            language="yaml"
-            value={system_template}
-            onChange={updateSystemTemplate}
-            options={EDITOR_OPTIONS}
-          />
-        </div>
+        <button className="btn-secondary" onClick={() => setEditingField({ type: 'system_template' })}>
+          Edit System Template
+        </button>
       </section>
 
       {/* Lore */}
       <section>
         <h3>Lore</h3>
-        <div className="editor-container editor-lg">
-          <Editor
-            theme={MONACO_THEME}
-            language="markdown"
-            value={lore}
-            onChange={updateLore}
-            options={EDITOR_OPTIONS}
-          />
-        </div>
+        <button className="btn-secondary" onClick={() => setEditingField({ type: 'lore' })}>
+          Edit Lore
+        </button>
       </section>
+
+      {/* Editor Modal */}
+      {editingField && (
+        <EditorModal
+          title={
+            editingField.type === 'lore'
+              ? 'Edit Lore'
+              : editingField.type === 'system_template'
+              ? 'Edit System Template'
+              : editingField.type === 'anchor_input'
+              ? `Edit Anchor Input (${anchors[editingField.index!].id})`
+              : `Edit Anchor Response (${anchors[editingField.index!].id})`
+          }
+          language={
+            editingField.type === 'lore' ? 'markdown' : editingField.type === 'system_template' ? 'yaml' : 'plaintext'
+          }
+          value={
+            editingField.type === 'lore'
+              ? lore
+              : editingField.type === 'system_template'
+              ? system_template
+              : editingField.type === 'anchor_input'
+              ? anchors[editingField.index!].user_input
+              : anchors[editingField.index!].bot_response
+          }
+          onChange={(v) => {
+            if (editingField.type === 'lore') updateLore(v)
+            else if (editingField.type === 'system_template') updateSystemTemplate(v)
+            else if (editingField.type === 'anchor_input') updateAnchor(editingField.index!, 'user_input', v ?? '')
+            else if (editingField.type === 'anchor_response') updateAnchor(editingField.index!, 'bot_response', v ?? '')
+          }}
+          onClose={() => setEditingField(null)}
+          hint={
+            editingField.type === 'system_template' ? (
+              <span>
+                Available placeholders: <code>{'{{.Lore}}'}</code>, <code>{'{{.Anchors}}'}</code>
+              </span>
+            ) : null
+          }
+        />
+      )}
     </div>
   )
 }
