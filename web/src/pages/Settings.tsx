@@ -43,7 +43,7 @@ export default function Settings() {
   if (loading) return <p>Loading settings...</p>
 
   return (
-    <div>
+    <div className="settings-page">
       <h2>Settings</h2>
 
       {status && (

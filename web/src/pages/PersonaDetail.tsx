@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
 import { getPersona, updatePersona } from '../api'
 import type { PersonaDetail as PersonaDetailType, Anchor } from '../types'
@@ -133,8 +133,7 @@ export default function PersonaDetail() {
 
   return (
     <div>
-      <div className="page-header">
-        <Link to="/">&larr; Back</Link>
+      <div className="page-header" style={{ justifyContent: 'flex-end' }}>
         <button onClick={handleSave} disabled={saving || !dirty}>
           {saving ? 'Saving...' : 'Save'}
         </button>
