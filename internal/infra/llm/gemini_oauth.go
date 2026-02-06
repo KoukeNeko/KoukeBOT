@@ -9,21 +9,21 @@ import (
 	"google.golang.org/genai"
 )
 
-// GeminiOAuthProvider uses OAuth token + Vertex AI backend to access Gemini.
+// GeminiOAuthProvider uses OAuth token + Gemini API backend to access Gemini.
+// The Code Assist project doesn't have Vertex AI enabled, so we use the
+// Gemini API endpoint (generativelanguage.googleapis.com) with OAuth Bearer auth.
 type GeminiOAuthProvider struct {
 	client *genai.Client
 	model  string
 }
 
-// NewGeminiOAuthProvider creates a provider using OAuth credentials via Vertex AI backend.
+// NewGeminiOAuthProvider creates a provider using OAuth credentials via Gemini API backend.
 func NewGeminiOAuthProvider(ctx context.Context, tokenData *OAuthTokenData, model string) (*GeminiOAuthProvider, error) {
 	tokenSource := NewTokenSource(ctx, tokenData)
 	httpClient := oauth2.NewClient(ctx, tokenSource)
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		Backend:    genai.BackendVertexAI,
-		Project:    tokenData.ProjectID,
-		Location:   "us-central1",
+		Backend:    genai.BackendGeminiAPI,
 		HTTPClient: httpClient,
 	})
 	if err != nil {
