@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"gopkg.in/yaml.v3"
@@ -15,6 +16,8 @@ const (
 	loreFileName        = "lore.md"
 	userProfileFileName = "user.md"
 	anchorsFileName     = "anchors.yaml"
+	memoryDirName       = "memory"
+	longTermMemoryFile  = "MEMORY.md"
 )
 
 // LoadPersona reads a persona folder and assembles a PersonaModule.
@@ -43,11 +46,24 @@ func LoadPersona(baseDir, id string) (*domain.PersonaModule, error) {
 		return nil, fmt.Errorf("load anchors for persona %q: %w", id, err)
 	}
 
+	memoryDir := filepath.Join(personaDir, memoryDirName)
+	longTermMemory, err := loadLongTermMemory(memoryDir)
+	if err != nil {
+		return nil, fmt.Errorf("load long-term memory for persona %q: %w", id, err)
+	}
+
+	dailyMemory, err := loadDailyMemory(memoryDir)
+	if err != nil {
+		return nil, fmt.Errorf("load daily memory for persona %q: %w", id, err)
+	}
+
 	return &domain.PersonaModule{
-		Config:      *config,
-		Lore:        lore,
-		UserProfile: userProfile,
-		Anchors:     anchors,
+		Config:         *config,
+		Lore:           lore,
+		UserProfile:    userProfile,
+		LongTermMemory: longTermMemory,
+		DailyMemory:    dailyMemory,
+		Anchors:        anchors,
 	}, nil
 }
 
@@ -99,12 +115,114 @@ func loadLore(path string) (string, error) {
 func loadUserProfile(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return "", nil // Optional
+		// 如果檔案不存在，建立空白模板
+		template := getDefaultUserTemplate()
+		if err := os.WriteFile(path, []byte(template), 0644); err != nil {
+			return "", fmt.Errorf("create user.md template: %w", err)
+		}
+		return template, nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
+
+	// 如果檔案存在但為空，返回空白模板（但不寫入）
+	content := string(data)
+	if len(bytes.TrimSpace(data)) == 0 {
+		return getDefaultUserTemplate(), nil
+	}
+
+	return content, nil
+}
+
+func getDefaultUserTemplate() string {
+	return `# About the User
+
+## Basic Info
+- **Name:**
+- **Preferred Name:**
+- **Pronouns:**
+- **Timezone:**
+- **Location:**
+
+## Context & Preferences
+_(What do they care about? What are they working on? Build this over time.)_
+
+## Notes from Conversations
+_(Important things learned from past conversations)_
+
+---
+_Update this file as you learn more about the person you're helping._
+`
+}
+
+func loadLongTermMemory(memoryDir string) (string, error) {
+	memoryPath := filepath.Join(memoryDir, longTermMemoryFile)
+	data, err := os.ReadFile(memoryPath)
+	if os.IsNotExist(err) {
+		// 如果檔案不存在，建立預設模板
+		template := getDefaultLongTermMemoryTemplate()
+		if err := os.MkdirAll(memoryDir, 0755); err != nil {
+			return "", fmt.Errorf("create memory directory: %w", err)
+		}
+		if err := os.WriteFile(memoryPath, []byte(template), 0644); err != nil {
+			return "", fmt.Errorf("create MEMORY.md template: %w", err)
+		}
+		return template, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", memoryPath, err)
+	}
+
+	content := string(data)
+	if len(bytes.TrimSpace(data)) == 0 {
+		return getDefaultLongTermMemoryTemplate(), nil
+	}
+
+	return content, nil
+}
+
+func getDefaultLongTermMemoryTemplate() string {
+	return `# Long-Term Memory
+
+This file contains persistent knowledge about the user and important context that should be retained across all sessions.
+
+## User Relationship & Context
+_(Key facts about your relationship with the user, their background, ongoing projects)_
+
+## Recurring Topics & Patterns
+_(Themes that come up frequently in conversations)_
+
+## Important Decisions & Commitments
+_(Promises made, decisions agreed upon, ongoing tasks)_
+
+## Learning & Growth
+_(How your understanding of the user has evolved)_
+
+---
+_This is your long-term memory. Update it when you learn something significant that should persist indefinitely._
+`
+}
+
+func loadDailyMemory(memoryDir string) (string, error) {
+	// 使用目前日期建立檔案名稱 (YYYY-MM-DD.md)
+	today := filepath.Join(memoryDir, fmt.Sprintf("%s.md", getTodayDateString()))
+	data, err := os.ReadFile(today)
+	if os.IsNotExist(err) {
+		// 如果今天的日誌不存在，返回空字串（不自動建立）
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", today, err)
+	}
+
 	return string(data), nil
+}
+
+func getTodayDateString() string {
+	// 返回 YYYY-MM-DD 格式
+	now := time.Now()
+	return fmt.Sprintf("%d-%02d-%02d", now.Year(), now.Month(), now.Day())
 }
 
 func loadAnchors(path string) ([]domain.Anchor, error) {

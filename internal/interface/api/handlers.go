@@ -436,6 +436,9 @@ type SettingsResponse struct {
 	PerplexityAPIKey string `json:"perplexity_api_key"` // OpenClaw 相容
 	SearchProvider   string `json:"search_provider"`    // OpenClaw 相容
 	WebFetchEnabled  bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone         string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat       string `json:"time_format"`        // OpenClaw 相容
+	Location         string `json:"location"`           // OpenClaw 相容
 }
 
 type SettingsUpdateRequest struct {
@@ -449,6 +452,9 @@ type SettingsUpdateRequest struct {
 	PerplexityAPIKey string `json:"perplexity_api_key"` // OpenClaw 相容
 	SearchProvider   string `json:"search_provider"`    // OpenClaw 相容
 	WebFetchEnabled  *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone         string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat       string `json:"time_format"`        // OpenClaw 相容
+	Location         string `json:"location"`           // OpenClaw 相容
 }
 
 type ProviderStatusResponse struct {
@@ -481,6 +487,9 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		PerplexityAPIKey: maskKey(settings.PerplexityAPIKey),
 		SearchProvider:   searchProvider,
 		WebFetchEnabled:  settings.WebFetchEnabled,
+		Timezone:         settings.Timezone,
+		TimeFormat:       settings.TimeFormat,
+		Location:         settings.Location,
 	})
 }
 
@@ -527,6 +536,10 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.WebFetchEnabled != nil {
 		existing.WebFetchEnabled = *req.WebFetchEnabled
 	}
+	// Time/Location settings
+	existing.Timezone = req.Timezone
+	existing.TimeFormat = req.TimeFormat
+	existing.Location = req.Location
 
 	log.Printf("[Settings] Saving settings - Model: %s, ProviderType: %s, WebSearch: %v, DiscordReply: %v",
 		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)

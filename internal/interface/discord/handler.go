@@ -218,7 +218,8 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 			if chunk.ToolStatus == "tool_start" {
 				// Format tool status message
 				var toolMsg string
-				if chunk.ToolName == "web_search" {
+				switch chunk.ToolName {
+				case "web_search":
 					query := ""
 					if chunk.ToolInput != nil {
 						if q, ok := chunk.ToolInput["query"].(string); ok {
@@ -230,7 +231,7 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 					} else {
 						toolMsg = "🔍 正在搜尋..."
 					}
-				} else if chunk.ToolName == "web_fetch" {
+				case "web_fetch":
 					url := ""
 					if chunk.ToolInput != nil {
 						if u, ok := chunk.ToolInput["url"].(string); ok {
@@ -242,7 +243,45 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 					} else {
 						toolMsg = "📄 正在擷取網頁..."
 					}
-				} else {
+				case "file_read":
+					filename := ""
+					if chunk.ToolInput != nil {
+						if f, ok := chunk.ToolInput["filename"].(string); ok {
+							filename = f
+						}
+					}
+					if filename != "" {
+						toolMsg = fmt.Sprintf("📖 正在讀取檔案：%s", filename)
+					} else {
+						toolMsg = "📖 正在讀取檔案..."
+					}
+				case "file_write":
+					filename := ""
+					if chunk.ToolInput != nil {
+						if f, ok := chunk.ToolInput["filename"].(string); ok {
+							filename = f
+						}
+					}
+					if filename != "" {
+						toolMsg = fmt.Sprintf("💾 正在寫入檔案：%s", filename)
+					} else {
+						toolMsg = "💾 正在寫入檔案..."
+					}
+				case "file_append":
+					filename := ""
+					if chunk.ToolInput != nil {
+						if f, ok := chunk.ToolInput["filename"].(string); ok {
+							filename = f
+						}
+					}
+					if filename != "" {
+						toolMsg = fmt.Sprintf("📝 正在追加內容到：%s", filename)
+					} else {
+						toolMsg = "📝 正在追加內容..."
+					}
+				case "session_status":
+					toolMsg = "⏰ 正在取得時間資訊..."
+				default:
 					toolMsg = fmt.Sprintf("🔧 正在使用工具：%s", chunk.ToolName)
 				}
 

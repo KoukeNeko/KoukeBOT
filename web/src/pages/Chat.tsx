@@ -168,10 +168,34 @@ export default function Chat() {
                 try {
                   const toolData = JSON.parse(data)
                   if (toolData.status === 'tool_start') {
-                    const query = toolData.input?.query || ''
-                    const toolMsg = query
-                      ? `🔍 正在搜尋：${query}`
-                      : `🔧 正在使用工具：${toolData.name}`
+                    let toolMsg = ''
+                    switch (toolData.name) {
+                      case 'web_search':
+                        const query = toolData.input?.query || ''
+                        toolMsg = query ? `🔍 正在搜尋：${query}` : '🔍 正在搜尋...'
+                        break
+                      case 'web_fetch':
+                        const url = toolData.input?.url || ''
+                        toolMsg = url ? `📄 正在擷取網頁：${url}` : '📄 正在擷取網頁...'
+                        break
+                      case 'file_read':
+                        const readFile = toolData.input?.filename || ''
+                        toolMsg = readFile ? `📖 正在讀取檔案：${readFile}` : '📖 正在讀取檔案...'
+                        break
+                      case 'file_write':
+                        const writeFile = toolData.input?.filename || ''
+                        toolMsg = writeFile ? `💾 正在寫入檔案：${writeFile}` : '💾 正在寫入檔案...'
+                        break
+                      case 'file_append':
+                        const appendFile = toolData.input?.filename || ''
+                        toolMsg = appendFile ? `📝 正在追加內容到：${appendFile}` : '📝 正在追加內容...'
+                        break
+                      case 'session_status':
+                        toolMsg = '⏰ 正在取得時間資訊...'
+                        break
+                      default:
+                        toolMsg = `🔧 正在使用工具：${toolData.name}`
+                    }
 
                     setMessages((prev) => {
                       const updated = [...prev]
@@ -244,10 +268,34 @@ export default function Chat() {
           try {
             const toolData = JSON.parse(event.data)
             if (toolData.status === 'tool_start') {
-              const query = toolData.input?.query || ''
-              const toolMsg = query
-                ? `🔍 正在搜尋：${query}`
-                : `🔧 正在使用工具：${toolData.name}`
+              let toolMsg = ''
+              switch (toolData.name) {
+                case 'web_search':
+                  const query = toolData.input?.query || ''
+                  toolMsg = query ? `🔍 正在搜尋：${query}` : '🔍 正在搜尋...'
+                  break
+                case 'web_fetch':
+                  const url = toolData.input?.url || ''
+                  toolMsg = url ? `📄 正在擷取網頁：${url}` : '📄 正在擷取網頁...'
+                  break
+                case 'file_read':
+                  const readFile = toolData.input?.filename || ''
+                  toolMsg = readFile ? `📖 正在讀取檔案：${readFile}` : '📖 正在讀取檔案...'
+                  break
+                case 'file_write':
+                  const writeFile = toolData.input?.filename || ''
+                  toolMsg = writeFile ? `💾 正在寫入檔案：${writeFile}` : '💾 正在寫入檔案...'
+                  break
+                case 'file_append':
+                  const appendFile = toolData.input?.filename || ''
+                  toolMsg = appendFile ? `📝 正在追加內容到：${appendFile}` : '📝 正在追加內容...'
+                  break
+                case 'session_status':
+                  toolMsg = '⏰ 正在取得時間資訊...'
+                  break
+                default:
+                  toolMsg = `🔧 正在使用工具：${toolData.name}`
+              }
 
               setMessages((prev) => {
                 const updated = [...prev]

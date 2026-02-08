@@ -45,10 +45,12 @@ type AnchorFile struct {
 }
 
 // PersonaModule is the fully loaded, runtime-ready persona.
-// Assembled from config.yaml + lore.md + anchors.yaml + user.md.
+// Assembled from config.yaml + lore.md + anchors.yaml + user.md + memory/.
 type PersonaModule struct {
-	Config      PersonaConfig
-	Lore        string // raw markdown from lore.md
-	UserProfile string // raw markdown from user.md
-	Anchors     []Anchor // parsed from anchors.yaml
+	Config          PersonaConfig
+	Lore            string   // raw markdown from lore.md
+	UserProfile     string   // raw markdown from user.md
+	LongTermMemory  string   // raw markdown from memory/MEMORY.md
+	DailyMemory     string   // raw markdown from memory/YYYY-MM-DD.md (today's log)
+	Anchors         []Anchor // parsed from anchors.yaml
 }
