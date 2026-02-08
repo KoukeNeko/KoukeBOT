@@ -104,31 +104,84 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	h.streamToDiscord(m.ChannelID, streamCh)
 }
 
-// streamToDiscord collects streaming chunks and sends the result.
-// Splits into multiple messages if exceeding Discord's 2000 char limit.
+// streamToDiscord collects streaming chunks and updates the Discord message in real-time.
 func (h *Handler) streamToDiscord(channelID string, streamCh <-chan llm.StreamChunk) {
 	var fullResponse strings.Builder
+	var lastUpdate time.Time
+	var messageID string
+
+	// Update interval: 1.5 seconds (避免 rate limit)
+	const updateInterval = 1500 * time.Millisecond
 
 	for chunk := range streamCh {
 		if chunk.Error != nil {
 			log.Printf("stream error [%s]: %v", channelID, chunk.Error)
-			_ = h.bot.SendMessage(channelID, "⚠️ Stream error occurred.")
+
+			if messageID != "" {
+				// Update existing message with error
+				_ = h.bot.EditMessage(channelID, messageID, "⚠️ Stream error occurred.")
+			} else {
+				_ = h.bot.SendMessage(channelID, "⚠️ Stream error occurred.")
+			}
 			return
 		}
+
 		fullResponse.WriteString(chunk.Content)
+
+		// Throttle updates to avoid rate limiting
+		if time.Since(lastUpdate) < updateInterval {
+			continue
+		}
+		lastUpdate = time.Now()
+
+		currentContent := fullResponse.String()
+		if currentContent == "" {
+			continue
+		}
+
+		// Split if exceeds Discord limit
+		segments := splitMessage(currentContent, discordMaxLength)
+
+		if messageID == "" {
+			// First update: create message
+			msg, err := h.bot.SendMessageWithReturn(channelID, segments[0])
+			if err != nil {
+				log.Printf("send error [%s]: %v", channelID, err)
+				return
+			}
+			messageID = msg.ID
+		} else {
+			// Subsequent updates: edit message
+			if err := h.bot.EditMessage(channelID, messageID, segments[0]); err != nil {
+				log.Printf("edit error [%s]: %v", channelID, err)
+				return
+			}
+		}
 	}
 
-	response := fullResponse.String()
-	if response == "" {
-		_ = h.bot.SendMessage(channelID, "(No response generated)")
+	// Final update: ensure complete response is sent
+	finalContent := fullResponse.String()
+	if finalContent == "" {
+		if messageID == "" {
+			_ = h.bot.SendMessage(channelID, "(No response generated)")
+		}
 		return
 	}
 
-	// Split and send if exceeding Discord limit
-	for _, segment := range splitMessage(response, discordMaxLength) {
-		if err := h.bot.SendMessage(channelID, segment); err != nil {
-			log.Printf("send error [%s]: %v", channelID, err)
-			return
+	segments := splitMessage(finalContent, discordMaxLength)
+
+	if messageID != "" {
+		// Update first message with final content
+		_ = h.bot.EditMessage(channelID, messageID, segments[0])
+
+		// Send additional segments if needed
+		for i := 1; i < len(segments); i++ {
+			_ = h.bot.SendMessage(channelID, segments[i])
+		}
+	} else {
+		// Fallback: send all segments
+		for _, segment := range segments {
+			_ = h.bot.SendMessage(channelID, segment)
 		}
 	}
 }

@@ -98,3 +98,14 @@ func (b *Bot) SendMessage(channelID, content string) error {
 func (b *Bot) SendTyping(channelID string) error {
 	return b.session.ChannelTyping(channelID)
 }
+
+// SendMessageWithReturn sends a message and returns the Message object.
+func (b *Bot) SendMessageWithReturn(channelID, content string) (*discordgo.Message, error) {
+	return b.session.ChannelMessageSend(channelID, content)
+}
+
+// EditMessage edits an existing message.
+func (b *Bot) EditMessage(channelID, messageID, newContent string) error {
+	_, err := b.session.ChannelMessageEdit(channelID, messageID, newContent)
+	return err
+}

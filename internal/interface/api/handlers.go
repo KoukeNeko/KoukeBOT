@@ -192,6 +192,72 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ChatResponseBody{Response: response})
 }
 
+// ChatStream handles Server-Sent Events streaming for real-time chat responses.
+// GET /api/chat/stream?persona_id=xxx&message=xxx&channel_id=web-test
+func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
+	// 1. Parse query params
+	personaID := r.URL.Query().Get("persona_id")
+	message := r.URL.Query().Get("message")
+	channelID := r.URL.Query().Get("channel_id")
+
+	if channelID == "" {
+		channelID = "web-test"
+	}
+
+	log.Printf("[CHAT STREAM] Received request - Channel: %s, Persona: %s, Message: %s",
+		channelID, personaID, truncate(message, 50))
+
+	// 2. Validate inputs
+	if personaID == "" || message == "" {
+		writeError(w, http.StatusBadRequest, "missing persona_id or message")
+		return
+	}
+
+	// 3. Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	// 4. Start streaming
+	ctx := r.Context()
+	streamCh, err := h.chatService.HandleMessageStream(ctx, channelID, personaID, message)
+	if err != nil {
+		log.Printf("[CHAT STREAM] Error initializing stream: %v", err)
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	// 5. Forward chunks as SSE events
+	totalChunks := 0
+	for chunk := range streamCh {
+		if chunk.Error != nil {
+			log.Printf("[CHAT STREAM] Stream error: %v", chunk.Error)
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", chunk.Error.Error())
+			flusher.Flush()
+			return
+		}
+
+		// Escape newlines for SSE format
+		content := strings.ReplaceAll(chunk.Content, "\n", "\\n")
+		fmt.Fprintf(w, "data: %s\n\n", content)
+		flusher.Flush()
+		totalChunks++
+	}
+
+	// 6. Send done event
+	log.Printf("[CHAT STREAM] Success - Streamed %d chunks", totalChunks)
+	fmt.Fprintf(w, "event: done\ndata: \n\n")
+	flusher.Flush()
+}
+
 // --- Health ---
 
 func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
