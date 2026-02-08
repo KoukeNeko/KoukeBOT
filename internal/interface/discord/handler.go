@@ -22,6 +22,11 @@ const (
 	discordMaxLength = 2000
 	// Timeout for a single LLM call
 	llmTimeout = 120 * time.Second
+	// Channel history limit (same as openclaw's DEFAULT_GROUP_HISTORY_LIMIT)
+	defaultGroupHistoryLimit = 50
+	// Context markers (same as openclaw)
+	historyContextMarker  = "[Chat messages since your last reply - for context]"
+	currentMessageMarker  = "[Current message]"
 )
 
 // Handler bridges Discord events to the ChatService.
@@ -98,12 +103,6 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	stopTyping := h.keepTyping(ctx, m.ChannelID)
 	defer stopTyping()
 
-	// Fetch recent channel messages for context (only in guilds, not DMs)
-	var channelContext string
-	if !isDM(m) {
-		channelContext = h.fetchChannelContext(s, m.ChannelID, m.ID, 10)
-	}
-
 	// Check for image attachments
 	var images []domain.ImageInput
 	for _, attachment := range m.Attachments {
@@ -117,10 +116,17 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
-	// Prepend channel context if available
-	finalContent := content
-	if channelContext != "" {
-		finalContent = channelContext + "\n" + content
+	// Format current message with envelope (openclaw style)
+	senderLabel := resolveSenderLabel(m.Author)
+	timestamp := m.Timestamp.Format("2006-01-02 15:04")
+	currentMessage := formatInboundEnvelope("Discord", senderLabel, timestamp, content)
+
+	// Build final content with channel history context (only in guilds, not DMs)
+	var finalContent string
+	if !isDM(m) {
+		finalContent = h.buildChannelHistoryContext(s, m.ChannelID, m.ID, currentMessage)
+	} else {
+		finalContent = currentMessage
 	}
 
 	// Use multimodal handler if images are present
@@ -321,26 +327,71 @@ func extractFilename(url string) string {
 	return "image"
 }
 
-// fetchChannelContext fetches recent messages from the channel for context.
-// This helps the bot understand the ongoing conversation in the channel.
-func (h *Handler) fetchChannelContext(s *discordgo.Session, channelID, currentMessageID string, limit int) string {
-	messages, err := s.ChannelMessages(channelID, limit, currentMessageID, "", "")
+// resolveSenderLabel returns a human-readable label for the message author.
+// Priority: GlobalName > Username (with discriminator if present).
+func resolveSenderLabel(author *discordgo.User) string {
+	if author == nil {
+		return ""
+	}
+
+	// Prefer GlobalName (display name) if available
+	displayName := strings.TrimSpace(author.GlobalName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(author.Username)
+	}
+
+	// If no valid name found, fallback to ID
+	if displayName == "" {
+		return author.ID
+	}
+
+	// Add discriminator if present and not "0" (Discord's new username system)
+	discriminator := strings.TrimSpace(author.Discriminator)
+	if discriminator != "" && discriminator != "0" {
+		return fmt.Sprintf("%s#%s", displayName, discriminator)
+	}
+
+	return displayName
+}
+
+// formatInboundEnvelope formats a message with openclaw-style envelope.
+// Format: [Discord sender timestamp] body
+//         [from: sender]
+func formatInboundEnvelope(channel, sender, timestamp, body string) string {
+	envelope := fmt.Sprintf("[%s %s %s] %s", channel, sender, timestamp, body)
+	if sender != "" {
+		envelope = envelope + fmt.Sprintf("\n[from: %s]", sender)
+	}
+	return envelope
+}
+
+// buildChannelHistoryContext builds openclaw-style channel history context.
+// Format:
+// [Chat messages since your last reply - for context]
+// [Discord Alice 2024-01-01 10:25] message 1
+// [from: Alice]
+// [Discord Bob 2024-01-01 10:27] message 2
+// [from: Bob]
+//
+// [Current message]
+// [Discord Alice 2024-01-01 10:30] current message
+// [from: Alice]
+func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, currentMessageID, currentMessage string) string {
+	messages, err := s.ChannelMessages(channelID, defaultGroupHistoryLimit, currentMessageID, "", "")
 	if err != nil {
 		log.Printf("failed to fetch channel history [%s]: %v", channelID, err)
-		return ""
+		return currentMessage // Fallback to current message only
 	}
 
+	// If no history, return current message only
 	if len(messages) == 0 {
-		return ""
+		return currentMessage
 	}
 
-	// Build context string from recent messages (reverse order - oldest first)
-	var contextLines []string
-	contextLines = append(contextLines, "[Recent channel messages for context:]")
-
+	// Build history entries (reverse order - oldest first)
+	var historyLines []string
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
-		author := msg.Author.Username
 		content := msg.Content
 
 		// Skip empty messages
@@ -348,14 +399,27 @@ func (h *Handler) fetchChannelContext(s *discordgo.Session, channelID, currentMe
 			continue
 		}
 
-		// Truncate long messages
+		// Truncate long messages to avoid excessive token usage
 		if len(content) > 200 {
 			content = content[:200] + "..."
 		}
 
-		contextLines = append(contextLines, fmt.Sprintf("- %s: %s", author, content))
+		// Format with envelope
+		senderLabel := resolveSenderLabel(msg.Author)
+		timestamp := msg.Timestamp.Format("2006-01-02 15:04")
+		formattedMsg := formatInboundEnvelope("Discord", senderLabel, timestamp, content)
+		historyLines = append(historyLines, formattedMsg)
 	}
 
-	contextLines = append(contextLines, "[End of context]\n")
-	return strings.Join(contextLines, "\n")
+	// Build final context with openclaw markers
+	var result strings.Builder
+	result.WriteString(historyContextMarker)
+	result.WriteString("\n")
+	result.WriteString(strings.Join(historyLines, "\n"))
+	result.WriteString("\n\n")
+	result.WriteString(currentMessageMarker)
+	result.WriteString("\n")
+	result.WriteString(currentMessage)
+
+	return result.String()
 }
