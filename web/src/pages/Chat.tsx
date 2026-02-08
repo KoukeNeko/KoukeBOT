@@ -372,13 +372,36 @@ export default function Chat() {
                 )}
                                 {messages.map((m, i) => {
                                   const displayContent = m.display_text || m.content
-                                  return displayContent ? (
+
+                                  return (
                                     <div key={i} className={`chat-bubble ${m.role}`}>
-                                      <div className="markdown-content">
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
-                                      </div>
+                                      {/* Tool calls indicator */}
+                                      {m.tool_calls && m.tool_calls.length > 0 && (
+                                        <div style={{
+                                          background: 'rgba(66, 133, 244, 0.1)',
+                                          borderLeft: '3px solid #4285f4',
+                                          padding: '0.5rem',
+                                          marginBottom: '0.5rem',
+                                          borderRadius: '4px',
+                                          fontSize: '0.85rem'
+                                        }}>
+                                          🔍 {m.tool_calls.map(call => {
+                                            if (call.name === 'web_search') {
+                                              return `正在搜尋: ${call.input.query || '...'}`
+                                            }
+                                            return `使用工具: ${call.name}`
+                                          }).join(', ')}
+                                        </div>
+                                      )}
+
+                                      {/* Message content */}
+                                      {displayContent && (
+                                        <div className="markdown-content">
+                                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
+                                        </div>
+                                      )}
                                     </div>
-                                  ) : null
+                                  )
                                 })}                                {sending && (
                                   <div style={{ padding: '0.5rem 1rem', opacity: 0.7 }}>
                                     <p className="meta" style={{ margin: 0, fontSize: '0.85rem' }}>Thinking...</p>

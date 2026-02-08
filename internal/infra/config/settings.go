@@ -16,10 +16,12 @@ const (
 
 // Settings holds the runtime-configurable values.
 type Settings struct {
-	GeminiAPIKey string `json:"gemini_api_key"`
-	GeminiModel  string `json:"gemini_model"`
-	DiscordToken string `json:"discord_token"`
-	ProviderType string `json:"provider_type"` // "api-key", "oauth", or "" (auto)
+	GeminiAPIKey     string `json:"gemini_api_key"`
+	GeminiModel      string `json:"gemini_model"`
+	DiscordToken     string `json:"discord_token"`
+	ProviderType     string `json:"provider_type"`      // "api-key", "oauth", or "" (auto)
+	BraveAPIKey      string `json:"brave_api_key"`      // Brave Search API key for web search
+	WebSearchEnabled bool   `json:"web_search_enabled"` // Enable/disable web search tool
 }
 
 // SettingsStore reads and writes settings to a JSON file.

@@ -47,6 +47,8 @@ export interface SettingsData {
   gemini_model: string
   discord_token: string
   provider_type: string
+  brave_api_key: string
+  web_search_enabled: boolean
 }
 
 export interface ModelEntry {
@@ -82,6 +84,20 @@ export interface Message {
   content: string
   display_text?: string
   timestamp?: string
+  tool_calls?: ToolCall[]
+  tool_results?: ToolResult[]
+}
+
+export interface ToolCall {
+  id: string
+  name: string
+  input: Record<string, any>
+}
+
+export interface ToolResult {
+  tool_call_id: string
+  content: string
+  is_error: boolean
 }
 
 export interface Conversation {

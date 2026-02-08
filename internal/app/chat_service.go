@@ -12,10 +12,11 @@ import (
 // ChatService orchestrates the full chat pipeline:
 // receive message → load conversation → assemble context → call LLM → persist → return.
 type ChatService struct {
-	provider  llm.Provider
-	assembler *ContextAssembler
-	store     store.ConversationRepository
-	personas  map[string]*domain.PersonaModule
+	provider     llm.Provider
+	assembler    *ContextAssembler
+	store        store.ConversationRepository
+	personas     map[string]*domain.PersonaModule
+	toolRegistry map[string]domain.Tool // tool name → tool instance
 }
 
 func NewChatService(
@@ -23,12 +24,20 @@ func NewChatService(
 	assembler *ContextAssembler,
 	convStore store.ConversationRepository,
 	personas map[string]*domain.PersonaModule,
+	tools []domain.Tool,
 ) *ChatService {
+	// Build tool registry
+	toolRegistry := make(map[string]domain.Tool)
+	for _, tool := range tools {
+		toolRegistry[tool.Name()] = tool
+	}
+
 	return &ChatService{
-		provider:  provider,
-		assembler: assembler,
-		store:     convStore,
-		personas:  personas,
+		provider:     provider,
+		assembler:    assembler,
+		store:        convStore,
+		personas:     personas,
+		toolRegistry: toolRegistry,
 	}
 }
 
@@ -117,28 +126,8 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 		return nil, fmt.Errorf("llm stream: %w", err)
 	}
 
-	// Wrap the stream to capture the full response for persistence
-	outputCh := make(chan llm.StreamChunk, 16)
-	go func() {
-		defer close(outputCh)
-		var fullResponse string
-
-		for chunk := range streamCh {
-			outputCh <- chunk
-			if chunk.Error != nil {
-				return
-			}
-			fullResponse += chunk.Content
-			if chunk.Done {
-				// Store CLEAN content for persona assembly + FULL context for UI display
-				conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-				conv.AppendAssistantMessage(fullResponse)
-				_ = s.store.Save(ctx, conv) // best-effort persist
-			}
-		}
-	}()
-
-	return outputCh, nil
+	// Handle tool calling loop and wrap stream for persistence
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona), nil
 }
 
 // HandleMessageStreamWithImages processes a user message with images and returns a streaming channel.
@@ -191,28 +180,8 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		return nil, fmt.Errorf("llm multimodal stream: %w", err)
 	}
 
-	// Wrap the stream to capture the full response for persistence
-	outputCh := make(chan llm.StreamChunk, 16)
-	go func() {
-		defer close(outputCh)
-		var fullResponse string
-
-		for chunk := range streamCh {
-			outputCh <- chunk
-			if chunk.Error != nil {
-				return
-			}
-			fullResponse += chunk.Content
-			if chunk.Done {
-				// Store CLEAN content for persona assembly + FULL context for UI display
-				conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-				conv.AppendAssistantMessage(fullResponse)
-				_ = s.store.Save(ctx, conv) // best-effort persist
-			}
-		}
-	}()
-
-	return outputCh, nil
+	// Handle tool calling loop and wrap stream for persistence
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona), nil
 }
 
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {
@@ -221,4 +190,158 @@ func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, e
 		return nil, fmt.Errorf("persona %q not found", personaID)
 	}
 	return persona, nil
+}
+
+// executeTools executes a list of tool calls and returns the results
+func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolCall) []domain.ToolResult {
+	results := make([]domain.ToolResult, 0, len(toolCalls))
+
+	for _, call := range toolCalls {
+		tool, exists := s.toolRegistry[call.Name]
+		if !exists {
+			// Tool not found - return error result
+			results = append(results, domain.ToolResult{
+				ToolCallID: call.ID,
+				Content:    fmt.Sprintf("Error: tool %q not found", call.Name),
+				IsError:    true,
+			})
+			continue
+		}
+
+		// Execute tool
+		result, err := tool.Execute(ctx, call.Input)
+		if err != nil {
+			// Execution error - wrap in error result
+			results = append(results, domain.ToolResult{
+				ToolCallID: call.ID,
+				Content:    fmt.Sprintf("Error executing tool: %v", err),
+				IsError:    true,
+			})
+			continue
+		}
+
+		// Success - set tool call ID
+		result.ToolCallID = call.ID
+		results = append(results, result)
+	}
+
+	return results
+}
+
+// handleToolCallingStream handles the tool calling loop with streaming.
+// When the LLM requests tool calls, this executes them and continues the conversation.
+func (s *ChatService) handleToolCallingStream(
+	ctx context.Context,
+	streamCh <-chan llm.StreamChunk,
+	conv *domain.Conversation,
+	messageToStore, contextForLLM string,
+	persona *domain.PersonaModule,
+) <-chan llm.StreamChunk {
+	outputCh := make(chan llm.StreamChunk, 16)
+
+	go func() {
+		defer close(outputCh)
+
+		var fullResponse string
+		var pendingToolCalls []domain.ToolCall
+
+		// Process initial stream
+		for chunk := range streamCh {
+			// Check for tool calls
+			if len(chunk.ToolCalls) > 0 {
+				pendingToolCalls = chunk.ToolCalls
+				// Forward tool call indicator to frontend
+				outputCh <- chunk
+				continue
+			}
+
+			// Forward chunk to output
+			outputCh <- chunk
+			if chunk.Error != nil {
+				return
+			}
+			fullResponse += chunk.Content
+		}
+
+		// Handle tool calls if present
+		if len(pendingToolCalls) > 0 {
+			// Execute tools
+			toolResults := s.executeTools(ctx, pendingToolCalls)
+
+			// Build tool results message for LLM
+			toolResultsText := formatToolResults(toolResults)
+
+			// Append assistant's tool call request to conversation
+			conv.AppendAssistantMessage("[Tool calls executed]")
+
+			// Append tool results as system message
+			conv.Messages = append(conv.Messages, domain.Message{
+				Role:    domain.RoleUser,
+				Content: toolResultsText,
+			})
+
+			// Continue conversation with tool results
+			assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+			if err != nil {
+				outputCh <- llm.StreamChunk{Error: fmt.Errorf("assemble context after tools: %w", err), Done: true}
+				return
+			}
+
+			// Call LLM again with tool results
+			continuationStream, err := s.provider.StreamChat(ctx, llm.ChatRequest{
+				SystemPrompt: assembled.SystemPrompt,
+				Messages:     assembled.Messages,
+				Generation:   assembled.Generation,
+			})
+			if err != nil {
+				outputCh <- llm.StreamChunk{Error: fmt.Errorf("llm continuation: %w", err), Done: true}
+				return
+			}
+
+			// Forward continuation stream
+			var finalResponse string
+			for chunk := range continuationStream {
+				outputCh <- chunk
+				if chunk.Error != nil {
+					return
+				}
+				finalResponse += chunk.Content
+			}
+
+			// Store final conversation
+			conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
+			conv.AppendAssistantMessage(finalResponse)
+			_ = s.store.Save(ctx, conv)
+
+			outputCh <- llm.StreamChunk{Done: true}
+			return
+		}
+
+		// No tool calls - store conversation normally
+		if fullResponse != "" || messageToStore != "" {
+			conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
+			conv.AppendAssistantMessage(fullResponse)
+			_ = s.store.Save(ctx, conv)
+		}
+
+		// Send final Done signal to indicate stream completion
+		outputCh <- llm.StreamChunk{Done: true}
+	}()
+
+	return outputCh
+}
+
+// formatToolResults formats tool results for LLM consumption
+func formatToolResults(results []domain.ToolResult) string {
+	var formatted string
+	formatted += "Tool execution results:\n\n"
+	for _, result := range results {
+		formatted += fmt.Sprintf("Tool Call ID: %s\n", result.ToolCallID)
+		if result.IsError {
+			formatted += fmt.Sprintf("Status: ERROR\n%s\n\n", result.Content)
+		} else {
+			formatted += fmt.Sprintf("Status: SUCCESS\n%s\n\n", result.Content)
+		}
+	}
+	return formatted
 }

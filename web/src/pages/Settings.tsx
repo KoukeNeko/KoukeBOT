@@ -24,6 +24,8 @@ export default function Settings() {
     gemini_model: "",
     discord_token: "",
     provider_type: "",
+    brave_api_key: "",
+    web_search_enabled: false,
   });
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
@@ -477,6 +479,43 @@ export default function Settings() {
             </div>
           </div>
         </div>
+
+        <h3 style={{ marginTop: '2.5rem', marginBottom: '1rem', color: '#e0e0e0' }}>
+          🔧 Tools
+        </h3>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          <input
+            type="checkbox"
+            checked={form.web_search_enabled}
+            onChange={(e) => setForm({ ...form, web_search_enabled: e.target.checked })}
+          />
+          <span style={{ fontSize: '0.95rem', fontWeight: 500 }}>Enable Web Search</span>
+        </label>
+
+        {form.web_search_enabled && (
+          <label>
+            <span>Brave API Key</span>
+            <input
+              type="password"
+              value={form.brave_api_key}
+              onChange={(e) => setForm({ ...form, brave_api_key: e.target.value })}
+              placeholder="Enter your Brave Search API key"
+            />
+            <span className="hint">
+              Get your API key at{" "}
+              <a
+                href="https://brave.com/search/api/"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "#646cff" }}
+              >
+                brave.com/search/api
+              </a>{" "}
+              (Free tier: 2000 queries/month)
+            </span>
+          </label>
+        )}
 
         <button
           onClick={() => handleSave()}

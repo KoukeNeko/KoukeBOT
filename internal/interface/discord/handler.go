@@ -179,7 +179,36 @@ func (h *Handler) streamToDiscord(channelID string, streamCh <-chan llm.StreamCh
 			return
 		}
 
+		// Handle tool calls (display indicator)
+		if len(chunk.ToolCalls) > 0 {
+			toolIndicator := formatToolCallIndicator(chunk.ToolCalls)
+			if messageID == "" {
+				// Create initial message with tool indicator
+				msg, err := h.bot.SendMessageWithReturn(channelID, toolIndicator)
+				if err != nil {
+					log.Printf("send tool indicator error [%s]: %v", channelID, err)
+				} else {
+					messageID = msg.ID
+				}
+			} else {
+				// Update existing message with tool indicator
+				currentContent := fullResponse.String()
+				if currentContent != "" {
+					_ = h.bot.EditMessage(channelID, messageID, currentContent+"\n\n"+toolIndicator)
+				} else {
+					_ = h.bot.EditMessage(channelID, messageID, toolIndicator)
+				}
+			}
+			continue
+		}
+
+		// Accumulate content
 		fullResponse.WriteString(chunk.Content)
+
+		// If stream is done, break to final update
+		if chunk.Done {
+			break
+		}
 
 		// Throttle updates to avoid rate limiting
 		if time.Since(lastUpdate) < updateInterval {
@@ -412,6 +441,33 @@ func formatInboundEnvelope(channel, sender, timestamp, body string) string {
 		envelope = envelope + fmt.Sprintf("\n[from: %s]", sender)
 	}
 	return envelope
+}
+
+// formatToolCallIndicator formats tool call information for Discord display.
+func formatToolCallIndicator(toolCalls []domain.ToolCall) string {
+	if len(toolCalls) == 0 {
+		return ""
+	}
+
+	var indicators []string
+	for _, call := range toolCalls {
+		switch call.Name {
+		case "web_search":
+			query := ""
+			if q, ok := call.Input["query"].(string); ok {
+				query = q
+			}
+			if query != "" {
+				indicators = append(indicators, fmt.Sprintf("🔍 正在搜尋: %s", query))
+			} else {
+				indicators = append(indicators, "🔍 正在搜尋...")
+			}
+		default:
+			indicators = append(indicators, fmt.Sprintf("🔧 使用工具: %s", call.Name))
+		}
+	}
+
+	return strings.Join(indicators, "\n")
 }
 
 // buildChannelHistoryContext builds openclaw-style channel history context.

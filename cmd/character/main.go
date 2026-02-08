@@ -12,9 +12,11 @@ import (
 	"syscall"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/search"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 	"github.com/KoukeNeko/KoukeBOT/internal/interface/api"
 	discordhandler "github.com/KoukeNeko/KoukeBOT/internal/interface/discord"
@@ -73,8 +75,19 @@ func run() error {
 		return fmt.Errorf("init conversation store: %w", err)
 	}
 	log.Println("Conversation store: data/conversations")
+
+	// Initialize tools (OpenClaw-style web search)
+	tools := initializeTools(settings)
+	if len(tools) > 0 {
+		providerManager.RegisterTools(tools)
+		log.Printf("Registered %d tool(s)", len(tools))
+		for _, tool := range tools {
+			log.Printf("  - %s", tool.Name())
+		}
+	}
+
 	assembler := app.NewContextAssembler()
-	chatService := app.NewChatService(providerManager, assembler, convStore, personaService.GetAll())
+	chatService := app.NewChatService(providerManager, assembler, convStore, personaService.GetAll(), tools)
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
@@ -271,4 +284,18 @@ func withSPA(webDir string, apiHandler http.Handler) http.Handler {
 		// SPA fallback: serve index.html for unmatched paths
 		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
 	})
+}
+
+// initializeTools creates and returns enabled tools based on settings
+func initializeTools(settings config.Settings) []domain.Tool {
+	var tools []domain.Tool
+
+	// Web Search Tool (Brave Search API)
+	if settings.WebSearchEnabled && settings.BraveAPIKey != "" {
+		braveClient := search.NewBraveSearchClient(settings.BraveAPIKey)
+		webSearchTool := llm.NewWebSearchTool(braveClient)
+		tools = append(tools, webSearchTool)
+	}
+
+	return tools
 }
