@@ -38,6 +38,34 @@ func (h *Handler) Register() {
 	h.bot.Session().AddHandler(h.onMessageCreate)
 }
 
+// keepTyping sends typing indicator every 5 seconds until stopped.
+// Returns a function to stop the typing indicator.
+func (h *Handler) keepTyping(ctx context.Context, channelID string) func() {
+	ticker := time.NewTicker(5 * time.Second)
+	done := make(chan struct{})
+
+	// Send initial typing indicator
+	_ = h.bot.SendTyping(channelID)
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = h.bot.SendTyping(channelID)
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+	}
+}
+
 func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Ignore own messages
 	if m.Author.ID == s.State.User.ID {
@@ -59,11 +87,12 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		return
 	}
 
-	// Show typing indicator while processing
-	_ = h.bot.SendTyping(m.ChannelID)
-
 	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
 	defer cancel()
+
+	// Start typing indicator and keep it alive until response is sent
+	stopTyping := h.keepTyping(ctx, m.ChannelID)
+	defer stopTyping()
 
 	streamCh, err := h.chatService.HandleMessageStream(ctx, m.ChannelID, h.bot.PersonaID(), content)
 	if err != nil {
