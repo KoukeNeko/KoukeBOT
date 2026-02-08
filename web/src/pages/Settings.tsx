@@ -9,6 +9,7 @@ import {
   listModels,
 } from "../api";
 import Select from "../components/ui/Select";
+import Checkbox from "../components/ui/Checkbox";
 import type {
   SettingsData,
   ProviderStatus,
@@ -408,17 +409,16 @@ export default function Settings() {
           <span className="hint">Discord bot requires restart to apply.</span>
         </label>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '1rem' }}>
-          <input
-            type="checkbox"
+        <div style={{ marginTop: '1rem', marginBottom: '1.5rem' }}>
+          <Checkbox
             checked={form.discord_use_reply}
-            onChange={(e) => setForm({ ...form, discord_use_reply: e.target.checked })}
+            onChange={(checked) => setForm({ ...form, discord_use_reply: checked })}
+            label="使用回覆功能回應訊息"
           />
-          <span style={{ fontSize: '0.95rem', fontWeight: 500 }}>使用回覆功能回應訊息</span>
-        </label>
-        <p className="hint" style={{ marginTop: '0.25rem', marginLeft: '2rem' }}>
-          啟用後，BOT 會以 Discord 的「回覆」功能回應使用者訊息（顯示引用關係）
-        </p>
+          <p className="hint" style={{ marginTop: '0.4rem', marginLeft: '1.8rem', color: '#888' }}>
+            啟用後，BOT 會以 Discord 的「回覆」功能回應使用者訊息（顯示引用關係）
+          </p>
+        </div>
 
         <div style={{ marginTop: '1.5rem', background: '#16162a', padding: '1.25rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
           <h4 style={{ margin: '0 0 1rem', fontSize: '0.95rem', color: '#e0e0e0' }}>Discord Bot 設定指引</h4>
@@ -497,14 +497,13 @@ export default function Settings() {
           🔧 Tools
         </h3>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-          <input
-            type="checkbox"
+        <div style={{ marginBottom: '1.25rem' }}>
+          <Checkbox
             checked={form.web_search_enabled}
-            onChange={(e) => setForm({ ...form, web_search_enabled: e.target.checked })}
+            onChange={(checked) => setForm({ ...form, web_search_enabled: checked })}
+            label="Enable Web Search"
           />
-          <span style={{ fontSize: '0.95rem', fontWeight: 500 }}>Enable Web Search</span>
-        </label>
+        </div>
 
         {form.web_search_enabled && (
           <label>
