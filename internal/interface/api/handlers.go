@@ -193,27 +193,80 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 }
 
 // ChatStream handles Server-Sent Events streaming for real-time chat responses.
-// GET /api/chat/stream?persona_id=xxx&message=xxx&channel_id=web-test
+// GET /api/chat/stream?persona_id=xxx&message=xxx&channel_id=web-test (text only)
+// POST /api/chat/stream with multipart/form-data (text + images)
 func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
-	// 1. Parse query params
-	personaID := r.URL.Query().Get("persona_id")
-	message := r.URL.Query().Get("message")
-	channelID := r.URL.Query().Get("channel_id")
+	var personaID, message, channelID string
+	var images []domain.ImageInput
 
+	// Parse request based on method
+	if r.Method == http.MethodGet {
+		// GET: Query params (text only)
+		personaID = r.URL.Query().Get("persona_id")
+		message = r.URL.Query().Get("message")
+		channelID = r.URL.Query().Get("channel_id")
+	} else if r.Method == http.MethodPost {
+		// POST: Multipart form data (text + images)
+		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32 MB max
+			writeError(w, http.StatusBadRequest, "parse multipart form: "+err.Error())
+			return
+		}
+
+		personaID = r.FormValue("persona_id")
+		message = r.FormValue("message")
+		channelID = r.FormValue("channel_id")
+
+		// Parse images
+		if files := r.MultipartForm.File["images"]; len(files) > 0 {
+			for _, fileHeader := range files {
+				file, err := fileHeader.Open()
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "open image file: "+err.Error())
+					return
+				}
+				defer file.Close()
+
+				// Read file content
+				data := make([]byte, fileHeader.Size)
+				if _, err := file.Read(data); err != nil {
+					writeError(w, http.StatusBadRequest, "read image file: "+err.Error())
+					return
+				}
+
+				// Validate MIME type
+				mimeType := fileHeader.Header.Get("Content-Type")
+				if !isValidImageMIME(mimeType) {
+					writeError(w, http.StatusBadRequest, "invalid image type: "+mimeType)
+					return
+				}
+
+				images = append(images, domain.ImageInput{
+					Data:     data,
+					MimeType: mimeType,
+					Filename: fileHeader.Filename,
+				})
+			}
+		}
+	} else {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Set default channel ID
 	if channelID == "" {
 		channelID = "web-test"
 	}
 
-	log.Printf("[CHAT STREAM] Received request - Channel: %s, Persona: %s, Message: %s",
-		channelID, personaID, truncate(message, 50))
+	log.Printf("[CHAT STREAM] Received request - Channel: %s, Persona: %s, Message: %s, Images: %d",
+		channelID, personaID, truncate(message, 50), len(images))
 
-	// 2. Validate inputs
+	// Validate inputs
 	if personaID == "" || message == "" {
 		writeError(w, http.StatusBadRequest, "missing persona_id or message")
 		return
 	}
 
-	// 3. Set SSE headers
+	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -225,9 +278,17 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Start streaming
+	// Start streaming (with or without images)
 	ctx := r.Context()
-	streamCh, err := h.chatService.HandleMessageStream(ctx, channelID, personaID, message)
+	var streamCh <-chan llm.StreamChunk
+	var err error
+
+	if len(images) > 0 {
+		streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, channelID, personaID, message, images)
+	} else {
+		streamCh, err = h.chatService.HandleMessageStream(ctx, channelID, personaID, message)
+	}
+
 	if err != nil {
 		log.Printf("[CHAT STREAM] Error initializing stream: %v", err)
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
@@ -235,7 +296,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Forward chunks as SSE events
+	// Forward chunks as SSE events
 	totalChunks := 0
 	for chunk := range streamCh {
 		if chunk.Error != nil {
@@ -252,7 +313,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		totalChunks++
 	}
 
-	// 6. Send done event
+	// Send done event
 	log.Printf("[CHAT STREAM] Success - Streamed %d chunks", totalChunks)
 	fmt.Fprintf(w, "event: done\ndata: \n\n")
 	flusher.Flush()
@@ -679,4 +740,14 @@ func (h *Handlers) DeleteConversation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// isValidImageMIME checks if the MIME type is a supported image format.
+func isValidImageMIME(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
 }

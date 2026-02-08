@@ -87,6 +87,39 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 	return ch, nil
 }
 
+func (g *GeminiAPIProvider) StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan StreamChunk, error) {
+	contents := buildMultimodalContents(messages)
+	config := buildGenerationConfig(generation)
+	ch := make(chan StreamChunk, 16)
+
+	go func() {
+		defer close(ch)
+
+		iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, &genai.GenerateContentConfig{
+			SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
+			Temperature:       genai.Ptr(float32(config.temperature)),
+			MaxOutputTokens:   int32(config.maxTokens),
+			TopP:              genai.Ptr(float32(config.topP)),
+			FrequencyPenalty:  genai.Ptr(float32(config.frequencyPenalty)),
+			PresencePenalty:   genai.Ptr(float32(config.presencePenalty)),
+		})
+
+		for resp, err := range iter {
+			if err != nil {
+				ch <- StreamChunk{Error: err, Done: true}
+				return
+			}
+			text := extractText(resp)
+			if text != "" {
+				ch <- StreamChunk{Content: text}
+			}
+		}
+		ch <- StreamChunk{Done: true}
+	}()
+
+	return ch, nil
+}
+
 func (g *GeminiAPIProvider) ModelInfo() ModelCapabilities {
 	supportsThinking := strings.Contains(g.model, "2.5") ||
 		strings.Contains(g.model, "3")
@@ -164,4 +197,66 @@ func extractText(resp *genai.GenerateContentResponse) string {
 		}
 	}
 	return sb.String()
+}
+
+// buildMultimodalContents converts multimodal messages to genai Content format.
+func buildMultimodalContents(messages []domain.MultimodalMessage) []*genai.Content {
+	contents := make([]*genai.Content, 0, len(messages))
+	for _, msg := range messages {
+		role := "user"
+		if msg.Role == domain.RoleAssistant {
+			role = "model"
+		}
+
+		parts := make([]*genai.Part, 0, len(msg.Parts))
+		for _, p := range msg.Parts {
+			if p.Text != "" {
+				parts = append(parts, genai.NewPartFromText(p.Text))
+			}
+			if p.ImageData != nil {
+				// Use Blob for inline data (images)
+				parts = append(parts, &genai.Part{
+					InlineData: &genai.Blob{
+						MIMEType: p.ImageData.MimeType,
+						Data:     p.ImageData.Data,
+					},
+				})
+			}
+		}
+
+		if len(parts) > 0 {
+			contents = append(contents, &genai.Content{
+				Role:  role,
+				Parts: parts,
+			})
+		}
+	}
+	return contents
+}
+
+// buildGenerationConfig creates a genConfig from domain GenerationConfig.
+func buildGenerationConfig(gen domain.GenerationConfig) genConfig {
+	cfg := genConfig{
+		temperature:      0.7,
+		maxTokens:        8192,
+		topP:             0.95,
+		frequencyPenalty: 0.0,
+		presencePenalty:  0.0,
+	}
+	if gen.Temperature > 0 {
+		cfg.temperature = gen.Temperature
+	}
+	if gen.MaxTokens > 0 {
+		cfg.maxTokens = gen.MaxTokens
+	}
+	if gen.TopP > 0 {
+		cfg.topP = gen.TopP
+	}
+	if gen.FrequencyPenalty > 0 {
+		cfg.frequencyPenalty = gen.FrequencyPenalty
+	}
+	if gen.PresencePenalty > 0 {
+		cfg.presencePenalty = gen.PresencePenalty
+	}
+	return cfg
 }

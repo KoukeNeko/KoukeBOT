@@ -44,7 +44,8 @@ func (r *Router) registerRoutes() {
 
 	// Chat endpoints (for web-based testing)
 	r.mux.HandleFunc("POST /api/chat", r.handlers.Chat)
-	r.mux.HandleFunc("GET /api/chat/stream", r.handlers.ChatStream)
+	// ChatStream supports both GET (text-only) and POST (with images)
+	r.mux.HandleFunc("/api/chat/stream", r.handlers.ChatStream)
 
 	// Conversations
 	r.mux.HandleFunc("GET /api/conversations", r.handlers.ListConversations)

@@ -47,3 +47,23 @@ func (c *Conversation) AppendAssistantMessage(content string) {
 	})
 	c.UpdatedAt = time.Now()
 }
+
+// ImageInput represents an uploaded image for vision analysis.
+type ImageInput struct {
+	Data     []byte // Raw image bytes
+	MimeType string // e.g., "image/jpeg", "image/png"
+	Filename string // Optional, for logging
+}
+
+// MessagePart represents a part of a multimodal message.
+type MessagePart struct {
+	Text      string      // Text content (if any)
+	ImageData *ImageInput // Image data (if any)
+}
+
+// MultimodalMessage extends Message with support for images and other media.
+type MultimodalMessage struct {
+	Role      Role
+	Parts     []MessagePart
+	Timestamp time.Time
+}

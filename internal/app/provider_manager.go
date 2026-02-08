@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
@@ -42,6 +43,17 @@ func (pm *ProviderManager) StreamChat(ctx context.Context, req llm.ChatRequest) 
 		return nil, ErrProviderNotConfigured
 	}
 	return p.StreamChat(ctx, req)
+}
+
+func (pm *ProviderManager) StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
+	pm.mu.RLock()
+	p := pm.provider
+	pm.mu.RUnlock()
+
+	if p == nil {
+		return nil, ErrProviderNotConfigured
+	}
+	return p.StreamChatMultimodal(ctx, systemPrompt, messages, generation)
 }
 
 func (pm *ProviderManager) ModelInfo() llm.ModelCapabilities {

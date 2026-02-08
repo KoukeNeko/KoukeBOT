@@ -2,13 +2,17 @@ package discord
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
@@ -83,7 +87,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	content := cleanMention(s, m.Content)
-	if strings.TrimSpace(content) == "" {
+	if strings.TrimSpace(content) == "" && len(m.Attachments) == 0 {
 		return
 	}
 
@@ -94,7 +98,31 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	stopTyping := h.keepTyping(ctx, m.ChannelID)
 	defer stopTyping()
 
-	streamCh, err := h.chatService.HandleMessageStream(ctx, m.ChannelID, h.bot.PersonaID(), content)
+	// Check for image attachments
+	var images []domain.ImageInput
+	for _, attachment := range m.Attachments {
+		if isImageAttachment(attachment) {
+			img, err := downloadImage(attachment.URL)
+			if err != nil {
+				log.Printf("failed to download image [%s]: %v", m.ChannelID, err)
+				continue
+			}
+			images = append(images, img)
+		}
+	}
+
+	// Use multimodal handler if images are present
+	var streamCh <-chan llm.StreamChunk
+	var err error
+	if len(images) > 0 {
+		if content == "" {
+			content = "這張圖片顯示了什麼？" // Default prompt if no text provided
+		}
+		streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, m.ChannelID, h.bot.PersonaID(), content, images)
+	} else {
+		streamCh, err = h.chatService.HandleMessageStream(ctx, m.ChannelID, h.bot.PersonaID(), content)
+	}
+
 	if err != nil {
 		log.Printf("chat error [%s]: %v", m.ChannelID, err)
 		_ = h.bot.SendMessage(m.ChannelID, "⚠️ Internal error. Check logs.")
@@ -234,4 +262,48 @@ func splitMessage(text string, maxLen int) []string {
 	}
 
 	return segments
+}
+
+// isImageAttachment checks if a Discord attachment is an image.
+func isImageAttachment(attachment *discordgo.MessageAttachment) bool {
+	contentType := strings.ToLower(attachment.ContentType)
+	return strings.HasPrefix(contentType, "image/")
+}
+
+// downloadImage downloads an image from a URL and returns it as ImageInput.
+func downloadImage(url string) (domain.ImageInput, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return domain.ImageInput{}, fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return domain.ImageInput{}, fmt.Errorf("http status: %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return domain.ImageInput{}, fmt.Errorf("read body: %w", err)
+	}
+
+	mimeType := resp.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "image/jpeg" // default
+	}
+
+	return domain.ImageInput{
+		Data:     data,
+		MimeType: mimeType,
+		Filename: extractFilename(url),
+	}, nil
+}
+
+// extractFilename extracts filename from URL.
+func extractFilename(url string) string {
+	parts := strings.Split(url, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return "image"
 }

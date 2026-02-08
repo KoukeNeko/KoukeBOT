@@ -20,7 +20,9 @@ export default function Chat() {
   const [sending, setSending] = useState(false)
   const [showNewConvModal, setShowNewConvModal] = useState(false)
   const [newConvPersonaId, setNewConvPersonaId] = useState('')
+  const [selectedImages, setSelectedImages] = useState<File[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load personas and conversations on mount
   useEffect(() => {
@@ -106,10 +108,13 @@ export default function Chat() {
 
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || !selectedConv || sending) return
+    if ((!text && selectedImages.length === 0) || !selectedConv || sending) return
 
     setInput('')
-    const userMsg: Message = { role: 'user', content: text }
+    const images = selectedImages
+    setSelectedImages([])
+
+    const userMsg: Message = { role: 'user', content: text || '(含圖片)' }
     setMessages((prev) => [...prev, userMsg])
     setSending(true)
 
@@ -118,53 +123,114 @@ export default function Chat() {
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
 
     try {
-      const params = new URLSearchParams({
-        persona_id: selectedConv.personaId,
-        message: text,
-        channel_id: selectedConv.channelId,
-      })
+      let eventSource: EventSource
 
-      const eventSource = new EventSource(`/api/chat/stream?${params}`)
-      let accumulatedContent = ''
+      if (images.length > 0) {
+        // Use multipart/form-data for images
+        const formData = new FormData()
+        formData.append('persona_id', selectedConv.personaId)
+        formData.append('message', text || '這張圖片顯示了什麼？')
+        formData.append('channel_id', selectedConv.channelId)
+        images.forEach((img) => formData.append('images', img))
 
-      eventSource.onmessage = (event) => {
-        const chunk = event.data
-        accumulatedContent += chunk.replace(/\\n/g, '\n')
+        // Upload via POST, then get response stream URL
+        const uploadResp = await fetch('/api/chat/stream', {
+          method: 'POST',
+          body: formData,
+        })
 
-        // Update the assistant message in real-time
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[assistantMsgIndex] = {
-            role: 'assistant',
-            content: accumulatedContent,
+        if (!uploadResp.ok) {
+          throw new Error(`Upload failed: ${uploadResp.statusText}`)
+        }
+
+        // Read SSE stream from response body
+        const reader = uploadResp.body?.getReader()
+        if (!reader) throw new Error('No response body')
+
+        const decoder = new TextDecoder()
+        let accumulatedContent = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value, { stream: true })
+          const lines = chunk.split('\n')
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).replace(/\\n/g, '\n')
+              accumulatedContent += data
+
+              setMessages((prev) => {
+                const updated = [...prev]
+                updated[assistantMsgIndex] = {
+                  role: 'assistant',
+                  content: accumulatedContent,
+                }
+                return updated
+              })
+            } else if (line.startsWith('event: done')) {
+              setSending(false)
+              loadConversations()
+              return
+            } else if (line.startsWith('event: error')) {
+              throw new Error('Stream error')
+            }
           }
-          return updated
+        }
+
+        setSending(false)
+        loadConversations()
+      } else {
+        // Use query params for text-only (original approach)
+        const params = new URLSearchParams({
+          persona_id: selectedConv.personaId,
+          message: text,
+          channel_id: selectedConv.channelId,
+        })
+
+        eventSource = new EventSource(`/api/chat/stream?${params}`)
+        let accumulatedContent = ''
+
+        eventSource.onmessage = (event) => {
+          const chunk = event.data
+          accumulatedContent += chunk.replace(/\\n/g, '\n')
+
+          setMessages((prev) => {
+            const updated = [...prev]
+            updated[assistantMsgIndex] = {
+              role: 'assistant',
+              content: accumulatedContent,
+            }
+            return updated
+          })
+        }
+
+        eventSource.addEventListener('done', () => {
+          eventSource.close()
+          setSending(false)
+          loadConversations()
+        })
+
+        eventSource.addEventListener('error', (err) => {
+          console.error('SSE error:', err)
+          eventSource.close()
+          setMessages((prev) => {
+            const updated = [...prev]
+            updated[assistantMsgIndex] = {
+              role: 'assistant',
+              content: accumulatedContent || 'Error: Stream connection failed',
+            }
+            return updated
+          })
+          setSending(false)
         })
       }
 
-      eventSource.addEventListener('done', () => {
-        eventSource.close()
-        setSending(false)
-        loadConversations() // Reload conversation list
-      })
-
-      eventSource.addEventListener('error', (err) => {
-        console.error('SSE error:', err)
-        eventSource.close()
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[assistantMsgIndex] = {
-            role: 'assistant',
-            content: accumulatedContent || 'Error: Stream connection failed',
-          }
-          return updated
-        })
-        setSending(false)
-      })
-
     } catch (e) {
       setMessages((prev) => [
-        ...prev.slice(0, -1), // Remove empty assistant message
+        ...prev.slice(0, -1),
         { role: 'assistant', content: `Error: ${e instanceof Error ? e.message : 'Unknown'}` },
       ])
       setSending(false)
@@ -281,28 +347,83 @@ export default function Chat() {
                     <div className="markdown-content">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                     </div>
-                  </div>
-                ))}
-                {sending && (
-                  <div className="chat-bubble assistant">
-                    <p className="meta">Thinking...</p>
-                  </div>
-                )}
-                <div ref={bottomRef} />
-              </div>
+                                  </div>
+                                ))}
+                                {sending && (
+                                  <div style={{ padding: '0.5rem 1rem', opacity: 0.7 }}>
+                                    <p className="meta" style={{ margin: 0, fontSize: '0.85rem' }}>Thinking...</p>
+                                  </div>
+                                )}
+                                <div ref={bottomRef} />              </div>
 
               <div className="chat-input">
-                <textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-                  disabled={sending}
-                  rows={2}
-                />
-                <button onClick={handleSend} disabled={sending || !input.trim()}>
-                  Send
-                </button>
+                {/* Image preview */}
+                {selectedImages.length > 0 && (
+                  <div style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem', flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    {selectedImages.map((img, idx) => (
+                      <div key={idx} style={{ position: 'relative', width: '80px', height: '80px' }}>
+                        <img
+                          src={URL.createObjectURL(img)}
+                          alt={`preview-${idx}`}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px' }}
+                        />
+                        <button
+                          onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== idx))}
+                          style={{
+                            position: 'absolute',
+                            top: '2px',
+                            right: '2px',
+                            padding: '2px 6px',
+                            fontSize: '12px',
+                            background: 'rgba(0,0,0,0.7)',
+                            border: 'none',
+                            borderRadius: '4px',
+                            color: 'white',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        setSelectedImages(prev => [...prev, ...Array.from(e.target.files!)])
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={sending}
+                    style={{ padding: '8px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    title="上傳圖片"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                    </svg>
+                  </button>
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+                    disabled={sending}
+                    rows={2}
+                    style={{ flex: 1 }}
+                  />
+                  <button onClick={handleSend} disabled={sending || (!input.trim() && selectedImages.length === 0)} style={{ flexShrink: 0 }}>
+                    Send
+                  </button>
+                </div>
               </div>
             </>
           )}

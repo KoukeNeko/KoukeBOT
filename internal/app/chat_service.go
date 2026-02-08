@@ -128,6 +128,73 @@ func (s *ChatService) HandleMessageStream(ctx context.Context, channelID, person
 	return outputCh, nil
 }
 
+// HandleMessageStreamWithImages processes a user message with images and returns a streaming channel.
+func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channelID, personaID, userMessage string, images []domain.ImageInput) (<-chan llm.StreamChunk, error) {
+	persona, err := s.resolvePersona(personaID)
+	if err != nil {
+		return nil, err
+	}
+
+	conv, err := s.store.Get(ctx, channelID, personaID)
+	if err != nil {
+		return nil, fmt.Errorf("get conversation: %w", err)
+	}
+
+	// Build multimodal message with text and images
+	userParts := []domain.MessagePart{{Text: userMessage}}
+	for _, img := range images {
+		userParts = append(userParts, domain.MessagePart{ImageData: &img})
+	}
+
+	// Convert conversation history to multimodal format
+	multimodalHistory := make([]domain.MultimodalMessage, 0, len(conv.Messages)+1)
+	for _, msg := range conv.Messages {
+		multimodalHistory = append(multimodalHistory, domain.MultimodalMessage{
+			Role:      msg.Role,
+			Parts:     []domain.MessagePart{{Text: msg.Content}},
+			Timestamp: msg.Timestamp,
+		})
+	}
+	// Append current user message with images
+	multimodalHistory = append(multimodalHistory, domain.MultimodalMessage{
+		Role:  domain.RoleUser,
+		Parts: userParts,
+	})
+
+	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+	if err != nil {
+		return nil, fmt.Errorf("assemble context: %w", err)
+	}
+
+	streamCh, err := s.provider.StreamChatMultimodal(ctx, assembled.SystemPrompt, multimodalHistory, assembled.Generation)
+	if err != nil {
+		return nil, fmt.Errorf("llm multimodal stream: %w", err)
+	}
+
+	// Wrap the stream to capture the full response for persistence
+	outputCh := make(chan llm.StreamChunk, 16)
+	go func() {
+		defer close(outputCh)
+		var fullResponse string
+
+		for chunk := range streamCh {
+			outputCh <- chunk
+			if chunk.Error != nil {
+				return
+			}
+			fullResponse += chunk.Content
+			if chunk.Done {
+				// For now, store text-only representation (flatten images)
+				conv.AppendUserMessage(userMessage) // TODO: enhance storage to support multimodal
+				conv.AppendAssistantMessage(fullResponse)
+				_ = s.store.Save(ctx, conv) // best-effort persist
+			}
+		}
+	}()
+
+	return outputCh, nil
+}
+
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {
 	persona, exists := s.personas[personaID]
 	if !exists {

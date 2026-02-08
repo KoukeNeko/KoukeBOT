@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -237,6 +238,62 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 	return ch, nil
 }
 
+func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan StreamChunk, error) {
+	body, err := json.Marshal(g.buildMultimodalRequest(systemPrompt, messages, generation))
+	if err != nil {
+		return nil, fmt.Errorf("marshal multimodal request: %w", err)
+	}
+
+	url := codeAssistEndpoint + "/v1internal:streamGenerateContent?alt=sse"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create multimodal request: %w", err)
+	}
+	setCodeAssistHeaders(httpReq)
+
+	resp, err := g.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("code assist multimodal stream: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("code assist multimodal stream HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	ch := make(chan StreamChunk, 16)
+	go func() {
+		defer close(ch)
+		defer resp.Body.Close()
+
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
+		for scanner.Scan() {
+			line := scanner.Text()
+			data, ok := parseSSEData(line)
+			if !ok {
+				continue
+			}
+			var chunk caResponseChunk
+			if json.Unmarshal([]byte(data), &chunk) != nil {
+				continue
+			}
+			text, _ := extractCAChunk(chunk)
+			if text != "" {
+				ch <- StreamChunk{Content: text}
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			ch <- StreamChunk{Error: err, Done: true}
+			return
+		}
+		ch <- StreamChunk{Done: true}
+	}()
+
+	return ch, nil
+}
+
 func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 	supportsThinking := strings.Contains(g.model, "2.5") ||
 		strings.Contains(g.model, "3")
@@ -269,7 +326,13 @@ type caContent struct {
 }
 
 type caPart struct {
-	Text string `json:"text"`
+	Text       string        `json:"text,omitempty"`
+	InlineData *caInlineData `json:"inlineData,omitempty"`
+}
+
+type caInlineData struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"` // base64 encoded
 }
 
 type caGenConfig struct {
@@ -337,6 +400,70 @@ func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 	if req.SystemPrompt != "" {
 		caReq.Request.SystemInstruction = &caContent{
 			Parts: []caPart{{Text: req.SystemPrompt}},
+		}
+	}
+
+	return caReq
+}
+
+func (g *GeminiOAuthProvider) buildMultimodalRequest(systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) caRequest {
+	config := buildGenerationConfig(generation)
+	log.Printf("[GeminiOAuth] Multimodal generation config: temp=%.2f, maxTokens=%d, topP=%.2f",
+		config.temperature, config.maxTokens, config.topP)
+
+	var contents []caContent
+	for _, msg := range messages {
+		role := "user"
+		if msg.Role == domain.RoleAssistant {
+			role = "model"
+		}
+
+		var parts []caPart
+		for _, p := range msg.Parts {
+			if p.Text != "" {
+				parts = append(parts, caPart{Text: p.Text})
+			}
+			if p.ImageData != nil {
+				// Encode image data as base64 for inline_data
+				encodedData := base64.StdEncoding.EncodeToString(p.ImageData.Data)
+				parts = append(parts, caPart{
+					InlineData: &caInlineData{
+						MimeType: p.ImageData.MimeType,
+						Data:     encodedData,
+					},
+				})
+			}
+		}
+
+		if len(parts) > 0 {
+			contents = append(contents, caContent{
+				Role:  role,
+				Parts: parts,
+			})
+		}
+	}
+
+	temperature := float32(config.temperature)
+	topP := float32(config.topP)
+
+	genConfig := &caGenConfig{
+		Temperature:     &temperature,
+		MaxOutputTokens: int32(config.maxTokens),
+		TopP:            &topP,
+	}
+
+	caReq := caRequest{
+		Project: g.projectID,
+		Model:   g.model,
+		Request: caRequestBody{
+			Contents:         contents,
+			GenerationConfig: genConfig,
+		},
+	}
+
+	if systemPrompt != "" {
+		caReq.Request.SystemInstruction = &caContent{
+			Parts: []caPart{{Text: systemPrompt}},
 		}
 	}
 
