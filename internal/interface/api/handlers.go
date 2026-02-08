@@ -558,6 +558,12 @@ func (h *Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
 
 	summaries := make([]ConversationSummary, 0, len(conversations))
 	for _, conv := range conversations {
+		// Only show Web UI conversations (channelID = "web-test")
+		// Discord conversations use actual Discord channel IDs
+		if conv.ChannelID != "web-test" {
+			continue
+		}
+
 		if len(conv.Messages) == 0 {
 			continue // Skip empty conversations
 		}
