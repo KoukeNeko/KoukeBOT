@@ -565,10 +565,10 @@ func resolveSenderLabel(author *discordgo.User) string {
 }
 
 // formatInboundEnvelope formats a message with openclaw-style envelope.
-// Format: [Discord sender timestamp] body
+// Format: [Discord sender (id: userID) timestamp] body
 //         [from: sender (id: userID)]
 func formatInboundEnvelope(channel, sender, userID, timestamp, body string) string {
-	envelope := fmt.Sprintf("[%s %s %s] %s", channel, sender, timestamp, body)
+	envelope := fmt.Sprintf("[%s %s (id: %s) %s] %s", channel, sender, userID, timestamp, body)
 	if sender != "" {
 		envelope = envelope + fmt.Sprintf("\n[from: %s (id: %s)]", sender, userID)
 	}
