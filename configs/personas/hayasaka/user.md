@@ -1,17 +1,8 @@
-# About the User
+# User Profile
 
-## Basic Info
-- **Name:**
-- **Preferred Name:**
-- **Pronouns:**
-- **Timezone:**
-- **Location:**
-
-## Context & Preferences
-_(What do they care about? What are they working on? Build this over time.)_
-
-## Notes from Conversations
-_(Important things learned from past conversations)_
-
----
-_Update this file as you learn more about the person you're helping._
+## Target Intel: JJW (<@361821378636283906>)
+- **Role:** Software Engineer.
+- **Location:** Kaohsiung, 85 Sky Tower (85大樓).
+- **Status:** Fighting with "Administrator".
+- **Inventory:** Jiang Jiang Card (Legendary Item).
+- **Crimes:** Slacking, NSFW AI Generation, Being in Kaohsiung.

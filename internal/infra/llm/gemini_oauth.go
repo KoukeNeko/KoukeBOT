@@ -139,17 +139,18 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 			}
 		}
 
-		text, tokens := extractCAChunk(chunk)
-		log.Printf("[GeminiOAuth] Extracted text length: %d, tokens: %d", len(text), tokens)
+		parsed := extractCAChunkFull(chunk)
+		log.Printf("[GeminiOAuth] Extracted text length: %d, tokens: %d, toolCalls: %d",
+			len(parsed.text), parsed.tokens, len(parsed.toolCalls))
 
-		if text != "" {
+		if parsed.text != "" {
 			chunkCount++
-			fullText.WriteString(text)
+			fullText.WriteString(parsed.text)
 			log.Printf("[GeminiOAuth] Chunk %d: +%d chars (total: %d)",
-				chunkCount, len(text), fullText.Len())
+				chunkCount, len(parsed.text), fullText.Len())
 		}
-		if tokens > 0 {
-			totalTokens = tokens
+		if parsed.tokens > 0 {
+			totalTokens = parsed.tokens
 		}
 	}
 
@@ -224,9 +225,20 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			if json.Unmarshal([]byte(data), &chunk) != nil {
 				continue
 			}
-			text, _ := extractCAChunk(chunk)
-			if text != "" {
-				ch <- StreamChunk{Content: text}
+			parsed := extractCAChunkFull(chunk)
+
+			// Emit function calls to trigger the tool calling loop
+			if len(parsed.toolCalls) > 0 {
+				log.Printf("[GeminiOAuth] StreamChat: detected %d function call(s)", len(parsed.toolCalls))
+				for _, tc := range parsed.toolCalls {
+					log.Printf("[GeminiOAuth]   functionCall: %s args=%v", tc.Name, tc.Input)
+				}
+				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
+				return
+			}
+
+			if parsed.text != "" {
+				ch <- StreamChunk{Content: parsed.text}
 			}
 		}
 		if err := scanner.Err(); err != nil {
@@ -280,9 +292,17 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 			if json.Unmarshal([]byte(data), &chunk) != nil {
 				continue
 			}
-			text, _ := extractCAChunk(chunk)
-			if text != "" {
-				ch <- StreamChunk{Content: text}
+			parsed := extractCAChunkFull(chunk)
+
+			// Emit function calls to trigger the tool calling loop
+			if len(parsed.toolCalls) > 0 {
+				log.Printf("[GeminiOAuth] StreamChatMultimodal: detected %d function call(s)", len(parsed.toolCalls))
+				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
+				return
+			}
+
+			if parsed.text != "" {
+				ch <- StreamChunk{Content: parsed.text}
 			}
 		}
 		if err := scanner.Err(); err != nil {
@@ -307,11 +327,16 @@ func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 	}
 }
 
-// RegisterTools registers tools for function calling (OAuth provider)
+// RegisterTools registers tools for function calling (OAuth provider).
+// Tools will be sent as functionDeclarations in every API request.
 func (g *GeminiOAuthProvider) RegisterTools(tools []domain.Tool) {
 	g.tools = tools
-	// Note: Function calling via Cloud Code Assist API is not yet implemented
-	// This is a stub to satisfy the Provider interface
+	if len(tools) > 0 {
+		log.Printf("[GeminiOAuth] Registered %d tools for function calling", len(tools))
+		for _, t := range tools {
+			log.Printf("[GeminiOAuth]   - %s: %s", t.Name(), t.Description())
+		}
+	}
 }
 
 // --- Cloud Code Assist API types ---
@@ -326,6 +351,19 @@ type caRequestBody struct {
 	Contents          []caContent    `json:"contents"`
 	SystemInstruction *caContent     `json:"systemInstruction,omitempty"`
 	GenerationConfig  *caGenConfig   `json:"generationConfig,omitempty"`
+	Tools             []caToolDecl   `json:"tools,omitempty"`
+}
+
+// caToolDecl wraps function declarations for the Cloud Code Assist API.
+type caToolDecl struct {
+	FunctionDeclarations []caFunctionDecl `json:"functionDeclarations"`
+}
+
+// caFunctionDecl describes a single function the LLM can call.
+type caFunctionDecl struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
 }
 
 type caContent struct {
@@ -334,8 +372,15 @@ type caContent struct {
 }
 
 type caPart struct {
-	Text       string        `json:"text,omitempty"`
-	InlineData *caInlineData `json:"inlineData,omitempty"`
+	Text         string          `json:"text,omitempty"`
+	InlineData   *caInlineData   `json:"inlineData,omitempty"`
+	FunctionCall *caFunctionCall `json:"functionCall,omitempty"`
+}
+
+// caFunctionCall represents a function call returned by the LLM.
+type caFunctionCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
 }
 
 type caInlineData struct {
@@ -411,6 +456,12 @@ func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 		}
 	}
 
+	// Include tool declarations for function calling
+	if len(g.tools) > 0 {
+		caReq.Request.Tools = convertToolsForCA(g.tools)
+		log.Printf("[GeminiOAuth] Included %d tool declarations in request", len(g.tools))
+	}
+
 	return caReq
 }
 
@@ -475,6 +526,12 @@ func (g *GeminiOAuthProvider) buildMultimodalRequest(systemPrompt string, messag
 		}
 	}
 
+	// Include tool declarations for function calling
+	if len(g.tools) > 0 {
+		caReq.Request.Tools = convertToolsForCA(g.tools)
+		log.Printf("[GeminiOAuth] Included %d tool declarations in multimodal request", len(g.tools))
+	}
+
 	return caReq
 }
 
@@ -498,19 +555,100 @@ func parseSSEData(line string) (string, bool) {
 	return "", false
 }
 
-func extractCAChunk(chunk caResponseChunk) (string, int) {
+// caChunkResult holds parsed data from a single SSE chunk.
+type caChunkResult struct {
+	text      string
+	tokens    int
+	toolCalls []domain.ToolCall
+}
+
+func extractCAChunkFull(chunk caResponseChunk) caChunkResult {
+	result := caChunkResult{}
 	if chunk.Response == nil || len(chunk.Response.Candidates) == 0 {
-		return "", 0
+		return result
 	}
+
 	var sb strings.Builder
 	for _, part := range chunk.Response.Candidates[0].Content.Parts {
 		if part.Text != "" {
 			sb.WriteString(part.Text)
 		}
+		if part.FunctionCall != nil {
+			result.toolCalls = append(result.toolCalls, domain.ToolCall{
+				ID:    part.FunctionCall.Name,
+				Name:  part.FunctionCall.Name,
+				Input: part.FunctionCall.Args,
+			})
+		}
 	}
-	tokens := 0
+	result.text = sb.String()
+
 	if chunk.Response.UsageMetadata != nil {
-		tokens = chunk.Response.UsageMetadata.TotalTokenCount
+		result.tokens = chunk.Response.UsageMetadata.TotalTokenCount
 	}
-	return sb.String(), tokens
+	return result
+}
+
+// --- Schema cleaning for Gemini compatibility (OpenClaw pattern) ---
+
+// geminiUnsupportedSchemaKeywords lists JSON Schema keywords that
+// Cloud Code Assist API rejects. Based on OpenClaw's cleanSchemaForGemini.
+var geminiUnsupportedSchemaKeywords = map[string]bool{
+	"patternProperties":    true,
+	"additionalProperties": true,
+	"$schema":              true,
+	"$id":                  true,
+	"$ref":                 true,
+	"$defs":                true,
+	"definitions":          true,
+	"examples":             true,
+	"minLength":            true,
+	"maxLength":            true,
+	"minimum":              true,
+	"maximum":              true,
+	"multipleOf":           true,
+	"pattern":              true,
+	"format":               true,
+	"minItems":             true,
+	"maxItems":             true,
+	"uniqueItems":          true,
+	"minProperties":        true,
+	"maxProperties":        true,
+}
+
+// cleanSchemaForGemini recursively removes unsupported JSON Schema keywords.
+func cleanSchemaForGemini(schema map[string]interface{}) map[string]interface{} {
+	cleaned := make(map[string]interface{}, len(schema))
+	for key, val := range schema {
+		if geminiUnsupportedSchemaKeywords[key] {
+			continue
+		}
+		switch v := val.(type) {
+		case map[string]interface{}:
+			cleaned[key] = cleanSchemaForGemini(v)
+		default:
+			cleaned[key] = val
+		}
+	}
+	return cleaned
+}
+
+// convertToolsForCA converts domain.Tool slice to Cloud Code Assist API format
+// with Gemini-specific schema cleaning applied.
+func convertToolsForCA(tools []domain.Tool) []caToolDecl {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	declarations := make([]caFunctionDecl, 0, len(tools))
+	for _, tool := range tools {
+		cleanedSchema := cleanSchemaForGemini(tool.InputSchema())
+		declarations = append(declarations, caFunctionDecl{
+			Name:        tool.Name(),
+			Description: tool.Description(),
+			Parameters:  cleanedSchema,
+		})
+	}
+
+	return []caToolDecl{{FunctionDeclarations: declarations}}
 }

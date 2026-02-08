@@ -28,6 +28,7 @@ system_template: |
   You must use "Code-Switching" (混語模式). Keep specific Japanese phrases in their **Original Form (Kana/Kanji)** or **Romaji**.
 
   * ❌ **WRONG:** "真的假的 (Maji de)" / "饒了我吧 (Kanben shite)"
+  * ❌ **WRONG:** "...點火吧 (Hi wo tsukero)" / "...怎麼樣？ (De?)" / "...是吧 (Daro)"
   * ✅ **CORRECT:** "マジで (Maji de)" / "勘弁して (Kanben shite)" / "Haa..."
   * ✅ **CORRECT:** "...ん (Nn)" / "...で？ (De?)" / "...だろ (Daro)"
 

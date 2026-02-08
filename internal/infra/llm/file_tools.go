@@ -43,10 +43,14 @@ func (t *FileReadTool) InputSchema() map[string]interface{} {
 }
 
 func (t *FileReadTool) Execute(ctx context.Context, input map[string]interface{}) (domain.ToolResult, error) {
+	// Support both "filename" and "file" parameter names for compatibility
 	filename, ok := input["filename"].(string)
 	if !ok || filename == "" {
+		filename, ok = input["file"].(string)
+	}
+	if !ok || filename == "" {
 		return domain.ToolResult{
-			Content: "錯誤：必須提供檔案名稱",
+			Content: "錯誤：必須提供檔案名稱（filename 或 file 參數）",
 			IsError: true,
 		}, nil
 	}
@@ -112,10 +116,14 @@ func (t *FileWriteTool) InputSchema() map[string]interface{} {
 }
 
 func (t *FileWriteTool) Execute(ctx context.Context, input map[string]interface{}) (domain.ToolResult, error) {
+	// Support both "filename" and "file" parameter names for compatibility
 	filename, ok := input["filename"].(string)
 	if !ok || filename == "" {
+		filename, ok = input["file"].(string)
+	}
+	if !ok || filename == "" {
 		return domain.ToolResult{
-			Content: "錯誤：必須提供檔案名稱",
+			Content: "錯誤：必須提供檔案名稱（filename 或 file 參數）",
 			IsError: true,
 		}, nil
 	}
@@ -188,10 +196,14 @@ func (t *FileAppendTool) InputSchema() map[string]interface{} {
 }
 
 func (t *FileAppendTool) Execute(ctx context.Context, input map[string]interface{}) (domain.ToolResult, error) {
+	// Support both "filename" and "file" parameter names for compatibility
 	filename, ok := input["filename"].(string)
 	if !ok || filename == "" {
+		filename, ok = input["file"].(string)
+	}
+	if !ok || filename == "" {
 		return domain.ToolResult{
-			Content: "錯誤：必須提供檔案名稱",
+			Content: "錯誤：必須提供檔案名稱（filename 或 file 參數）",
 			IsError: true,
 		}, nil
 	}
