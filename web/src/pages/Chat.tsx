@@ -235,6 +235,16 @@ export default function Chat() {
     }
   }
 
+  const handleReply = (content: string) => {
+    const quote = content.split('\n').map(line => `> ${line}`).join('\n')
+    setInput((prev) => (prev ? `${prev}\n\n${quote}\n` : `${quote}\n`))
+    // Focus the textarea after a short delay to ensure state update
+    setTimeout(() => {
+      const textarea = document.querySelector('.chat-input textarea') as HTMLTextAreaElement
+      textarea?.focus()
+    }, 0)
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -406,6 +416,21 @@ export default function Chat() {
                                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
                                         </div>
                                       )}
+
+                                      {/* Reply Button */}
+                                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem', opacity: 0.6 }}>
+                                        <button
+                                          onClick={() => handleReply(displayContent || '')}
+                                          className="btn-icon"
+                                          title="引用回覆"
+                                          style={{ padding: '2px', fontSize: '0.75rem', color: '#ccc' }}
+                                        >
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="9 17 4 12 9 7"></polyline>
+                                            <path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>
+                                          </svg>
+                                        </button>
+                                      </div>
 
                                       {/* Raw LLM Data Toggle (only for assistant messages with raw data) */}
                                       {hasRawData && (

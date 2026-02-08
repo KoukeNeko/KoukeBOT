@@ -33,12 +33,14 @@ const (
 type Handler struct {
 	bot         *discordbot.Bot
 	chatService *app.ChatService
+	useReply    bool // Whether to use Discord reply feature
 }
 
-func NewHandler(bot *discordbot.Bot, chatService *app.ChatService) *Handler {
+func NewHandler(bot *discordbot.Bot, chatService *app.ChatService, useReply bool) *Handler {
 	return &Handler{
 		bot:         bot,
 		chatService: chatService,
+		useReply:    useReply,
 	}
 }
 
@@ -154,11 +156,11 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		return
 	}
 
-	h.streamToDiscord(m.ChannelID, streamCh)
+	h.streamToDiscord(m.ChannelID, m.ID, streamCh)
 }
 
 // streamToDiscord collects streaming chunks and updates the Discord message in real-time.
-func (h *Handler) streamToDiscord(channelID string, streamCh <-chan llm.StreamChunk) {
+func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <-chan llm.StreamChunk) {
 	var fullResponse strings.Builder
 	var lastUpdate time.Time
 	var messageID string
@@ -183,8 +185,14 @@ func (h *Handler) streamToDiscord(channelID string, streamCh <-chan llm.StreamCh
 		if len(chunk.ToolCalls) > 0 {
 			toolIndicator := formatToolCallIndicator(chunk.ToolCalls)
 			if messageID == "" {
-				// Create initial message with tool indicator
-				msg, err := h.bot.SendMessageWithReturn(channelID, toolIndicator)
+				// Create initial message with tool indicator (use reply if enabled)
+				var msg *discordgo.Message
+				var err error
+				if h.useReply {
+					msg, err = h.bot.SendMessageReply(channelID, toolIndicator, replyToMessageID)
+				} else {
+					msg, err = h.bot.SendMessageWithReturn(channelID, toolIndicator)
+				}
 				if err != nil {
 					log.Printf("send tool indicator error [%s]: %v", channelID, err)
 				} else {
@@ -225,8 +233,14 @@ func (h *Handler) streamToDiscord(channelID string, streamCh <-chan llm.StreamCh
 		segments := splitMessage(currentContent, discordMaxLength)
 
 		if messageID == "" {
-			// First update: create message
-			msg, err := h.bot.SendMessageWithReturn(channelID, segments[0])
+			// First update: create message (use reply if enabled)
+			var msg *discordgo.Message
+			var err error
+			if h.useReply {
+				msg, err = h.bot.SendMessageReply(channelID, segments[0], replyToMessageID)
+			} else {
+				msg, err = h.bot.SendMessageWithReturn(channelID, segments[0])
+			}
 			if err != nil {
 				log.Printf("send error [%s]: %v", channelID, err)
 				return
@@ -261,9 +275,20 @@ func (h *Handler) streamToDiscord(channelID string, streamCh <-chan llm.StreamCh
 			_ = h.bot.SendMessage(channelID, segments[i])
 		}
 	} else {
-		// Fallback: send all segments
-		for _, segment := range segments {
-			_ = h.bot.SendMessage(channelID, segment)
+		// Fallback: send all segments (use reply for first segment if enabled)
+		if h.useReply && len(segments) > 0 {
+			msg, err := h.bot.SendMessageReply(channelID, segments[0], replyToMessageID)
+			if err == nil {
+				messageID = msg.ID
+			}
+			// Send remaining segments without reply
+			for i := 1; i < len(segments); i++ {
+				_ = h.bot.SendMessage(channelID, segments[i])
+			}
+		} else {
+			for _, segment := range segments {
+				_ = h.bot.SendMessage(channelID, segment)
+			}
 		}
 	}
 }

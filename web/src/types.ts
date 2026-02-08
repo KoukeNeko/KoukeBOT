@@ -49,6 +49,7 @@ export interface SettingsData {
   provider_type: string
   brave_api_key: string
   web_search_enabled: boolean
+  discord_use_reply: boolean
 }
 
 export interface ModelEntry {

@@ -104,6 +104,17 @@ func (b *Bot) SendMessageWithReturn(channelID, content string) (*discordgo.Messa
 	return b.session.ChannelMessageSend(channelID, content)
 }
 
+// SendMessageReply sends a message as a reply to another message.
+func (b *Bot) SendMessageReply(channelID, content, replyToMessageID string) (*discordgo.Message, error) {
+	return b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: content,
+		Reference: &discordgo.MessageReference{
+			MessageID: replyToMessageID,
+			ChannelID: channelID,
+		},
+	})
+}
+
 // EditMessage edits an existing message.
 func (b *Bot) EditMessage(channelID, messageID, newContent string) error {
 	_, err := b.session.ChannelMessageEdit(channelID, messageID, newContent)

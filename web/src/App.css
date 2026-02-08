@@ -815,3 +815,13 @@ section h3 {
   color: #a0a8ff;
   border-bottom-color: #646cff;
 }
+
+/* ===== Checkbox ===== */
+.custom-checkbox:hover .checkbox-box:not(.checked) {
+  border-color: rgba(100, 108, 255, 0.5) !important;
+  background: rgba(100, 108, 255, 0.1) !important;
+}
+
+.custom-checkbox.disabled {
+  opacity: 0.6;
+}

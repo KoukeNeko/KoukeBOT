@@ -26,6 +26,7 @@ export default function Settings() {
     provider_type: "",
     brave_api_key: "",
     web_search_enabled: false,
+    discord_use_reply: false,
   });
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
@@ -406,6 +407,18 @@ export default function Settings() {
           />
           <span className="hint">Discord bot requires restart to apply.</span>
         </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '1rem' }}>
+          <input
+            type="checkbox"
+            checked={form.discord_use_reply}
+            onChange={(e) => setForm({ ...form, discord_use_reply: e.target.checked })}
+          />
+          <span style={{ fontSize: '0.95rem', fontWeight: 500 }}>使用回覆功能回應訊息</span>
+        </label>
+        <p className="hint" style={{ marginTop: '0.25rem', marginLeft: '2rem' }}>
+          啟用後，BOT 會以 Discord 的「回覆」功能回應使用者訊息（顯示引用關係）
+        </p>
 
         <div style={{ marginTop: '1.5rem', background: '#16162a', padding: '1.25rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
           <h4 style={{ margin: '0 0 1rem', fontSize: '0.95rem', color: '#e0e0e0' }}>Discord Bot 設定指引</h4>

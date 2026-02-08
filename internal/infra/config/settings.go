@@ -22,6 +22,7 @@ type Settings struct {
 	ProviderType     string `json:"provider_type"`      // "api-key", "oauth", or "" (auto)
 	BraveAPIKey      string `json:"brave_api_key"`      // Brave Search API key for web search
 	WebSearchEnabled bool   `json:"web_search_enabled"` // Enable/disable web search tool
+	DiscordUseReply  bool   `json:"discord_use_reply"`  // Use reply feature in Discord (default: false)
 }
 
 // SettingsStore reads and writes settings to a JSON file.

@@ -91,7 +91,7 @@ func run() error {
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
-		if err := startDiscordBot(settings.DiscordToken, personaService, chatService, convStore); err != nil {
+		if err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore); err != nil {
 			log.Printf("WARNING: Discord bot failed to start: %v", err)
 			log.Println("continuing without Discord bot — HTTP API will still be available")
 		}
@@ -197,7 +197,7 @@ func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model strin
 	return true
 }
 
-func startDiscordBot(token string, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository) error {
+func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository) error {
 	// Use the first loaded persona as the default
 	var personaID string
 	for id := range personaService.GetAll() {
@@ -215,7 +215,7 @@ func startDiscordBot(token string, personaService *app.PersonaService, chatServi
 	}
 
 	// Register message handler (responds to @mentions and DMs)
-	handler := discordhandler.NewHandler(bot, chatService)
+	handler := discordhandler.NewHandler(bot, chatService, useReply)
 	handler.Register()
 
 	// Connection must be open before registering slash commands
