@@ -130,8 +130,8 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 			}
 			fullResponse += chunk.Content
 			if chunk.Done {
-				// Store the CLEAN message (without channel history markers)
-				conv.AppendUserMessage(messageToStore)
+				// Store CLEAN content for persona assembly + FULL context for UI display
+				conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 				conv.AppendAssistantMessage(fullResponse)
 				_ = s.store.Save(ctx, conv) // best-effort persist
 			}
@@ -204,8 +204,8 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 			}
 			fullResponse += chunk.Content
 			if chunk.Done {
-				// Store the CLEAN message (without channel history markers)
-				conv.AppendUserMessage(messageToStore)
+				// Store CLEAN content for persona assembly + FULL context for UI display
+				conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 				conv.AppendAssistantMessage(fullResponse)
 				_ = s.store.Save(ctx, conv) // best-effort persist
 			}

@@ -13,9 +13,10 @@ const (
 
 // Message is a single turn in a conversation.
 type Message struct {
-	Role      Role      `json:"role"`
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
+	Role        Role      `json:"role"`
+	Content     string    `json:"content"`
+	DisplayText string    `json:"display_text,omitempty"` // Full context for UI display (e.g., with channel history)
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // Conversation tracks the full dialogue state for a channel-persona pair.
@@ -34,6 +35,19 @@ func (c *Conversation) AppendUserMessage(content string) {
 		Role:      RoleUser,
 		Content:   content,
 		Timestamp: time.Now(),
+	})
+	c.UpdatedAt = time.Now()
+}
+
+// AppendUserMessageWithDisplay adds a user message with separate content and display text.
+// content: clean message for LLM context assembly
+// displayText: full context for UI display (e.g., with channel history markers)
+func (c *Conversation) AppendUserMessageWithDisplay(content, displayText string) {
+	c.Messages = append(c.Messages, Message{
+		Role:        RoleUser,
+		Content:     content,
+		DisplayText: displayText,
+		Timestamp:   time.Now(),
 	})
 	c.UpdatedAt = time.Now()
 }

@@ -80,7 +80,8 @@ export interface OAuthStatus {
 export interface Message {
   role: string
   content: string
-  timestamp: string
+  display_text?: string
+  timestamp?: string
 }
 
 export interface Conversation {

@@ -2,14 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { listPersonas, listConversations, getConversation, deleteConversation } from '../api'
-import type { PersonaSummary, ConversationSummary } from '../types'
+import type { PersonaSummary, ConversationSummary, Message } from '../types'
 import { SidebarList, SidebarItem } from '../components/SidebarList'
-
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  timestamp?: string
-}
 
 export default function Chat() {
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
@@ -376,15 +370,16 @@ export default function Chat() {
                     發送訊息開始對話
                   </p>
                 )}
-                                {messages.map((m, i) => (
-                                  m.content ? (
+                                {messages.map((m, i) => {
+                                  const displayContent = m.display_text || m.content
+                                  return displayContent ? (
                                     <div key={i} className={`chat-bubble ${m.role}`}>
                                       <div className="markdown-content">
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
                                       </div>
                                     </div>
                                   ) : null
-                                ))}                                {sending && (
+                                })}                                {sending && (
                                   <div style={{ padding: '0.5rem 1rem', opacity: 0.7 }}>
                                     <p className="meta" style={{ margin: 0, fontSize: '0.85rem' }}>Thinking...</p>
                                   </div>
