@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { listPersonas, sendChat, listConversations, getConversation, deleteConversation } from '../api'
+import { listPersonas, listConversations, getConversation, deleteConversation } from '../api'
 import type { PersonaSummary, ConversationSummary } from '../types'
 import { SidebarList, SidebarItem } from '../components/SidebarList'
 
@@ -113,17 +113,60 @@ export default function Chat() {
     setMessages((prev) => [...prev, userMsg])
     setSending(true)
 
+    // Add empty assistant message for streaming
+    const assistantMsgIndex = messages.length + 1
+    setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
+
     try {
-      const res = await sendChat(selectedConv.personaId, text, selectedConv.channelId)
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.response }])
-      // Reload conversation list to show new/updated conversation
-      await loadConversations()
+      const params = new URLSearchParams({
+        persona_id: selectedConv.personaId,
+        message: text,
+        channel_id: selectedConv.channelId,
+      })
+
+      const eventSource = new EventSource(`/api/chat/stream?${params}`)
+      let accumulatedContent = ''
+
+      eventSource.onmessage = (event) => {
+        const chunk = event.data
+        accumulatedContent += chunk.replace(/\\n/g, '\n')
+
+        // Update the assistant message in real-time
+        setMessages((prev) => {
+          const updated = [...prev]
+          updated[assistantMsgIndex] = {
+            role: 'assistant',
+            content: accumulatedContent,
+          }
+          return updated
+        })
+      }
+
+      eventSource.addEventListener('done', () => {
+        eventSource.close()
+        setSending(false)
+        loadConversations() // Reload conversation list
+      })
+
+      eventSource.addEventListener('error', (err) => {
+        console.error('SSE error:', err)
+        eventSource.close()
+        setMessages((prev) => {
+          const updated = [...prev]
+          updated[assistantMsgIndex] = {
+            role: 'assistant',
+            content: accumulatedContent || 'Error: Stream connection failed',
+          }
+          return updated
+        })
+        setSending(false)
+      })
+
     } catch (e) {
       setMessages((prev) => [
-        ...prev,
+        ...prev.slice(0, -1), // Remove empty assistant message
         { role: 'assistant', content: `Error: ${e instanceof Error ? e.message : 'Unknown'}` },
       ])
-    } finally {
       setSending(false)
     }
   }
