@@ -289,8 +289,22 @@ func (s *ChatService) handleToolCallingStream(
 
 		// Handle tool calls if present
 		if len(pendingToolCalls) > 0 {
+			// Send tool execution start status for each tool
+			for _, call := range pendingToolCalls {
+				outputCh <- llm.StreamChunk{
+					ToolStatus: "tool_start",
+					ToolName:   call.Name,
+					ToolInput:  call.Input,
+				}
+			}
+
 			// Execute tools
 			toolResults := s.executeTools(ctx, pendingToolCalls)
+
+			// Send tool execution done status
+			outputCh <- llm.StreamChunk{
+				ToolStatus: "tool_done",
+			}
 
 			// Build tool results message for LLM
 			toolResultsText := formatToolResults(toolResults)

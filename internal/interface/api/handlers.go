@@ -306,11 +306,29 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Escape newlines for SSE format
-		content := strings.ReplaceAll(chunk.Content, "\n", "\\n")
-		fmt.Fprintf(w, "data: %s\n\n", content)
-		flusher.Flush()
-		totalChunks++
+		// Handle tool status events
+		if chunk.ToolStatus != "" {
+			toolData := map[string]interface{}{
+				"status": chunk.ToolStatus,
+				"name":   chunk.ToolName,
+			}
+			if chunk.ToolInput != nil {
+				toolData["input"] = chunk.ToolInput
+			}
+			toolJSON, _ := json.Marshal(toolData)
+			fmt.Fprintf(w, "event: tool\ndata: %s\n\n", string(toolJSON))
+			flusher.Flush()
+			continue
+		}
+
+		// Regular content chunk
+		if chunk.Content != "" {
+			// Escape newlines for SSE format
+			content := strings.ReplaceAll(chunk.Content, "\n", "\\n")
+			fmt.Fprintf(w, "data: %s\n\n", content)
+			flusher.Flush()
+			totalChunks++
+		}
 	}
 
 	// Send done event

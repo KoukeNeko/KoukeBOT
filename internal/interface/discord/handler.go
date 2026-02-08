@@ -181,7 +181,7 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 			return
 		}
 
-		// Handle tool calls (display indicator)
+		// Handle tool calls (display indicator) - legacy support
 		if len(chunk.ToolCalls) > 0 {
 			toolIndicator := formatToolCallIndicator(chunk.ToolCalls)
 			if messageID == "" {
@@ -206,6 +206,65 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 				} else {
 					_ = h.bot.EditMessage(channelID, messageID, toolIndicator)
 				}
+			}
+			continue
+		}
+
+		// Handle tool status updates (new approach)
+		if chunk.ToolStatus != "" {
+			if chunk.ToolStatus == "tool_start" {
+				// Format tool status message
+				var toolMsg string
+				if chunk.ToolName == "web_search" {
+					query := ""
+					if chunk.ToolInput != nil {
+						if q, ok := chunk.ToolInput["query"].(string); ok {
+							query = q
+						}
+					}
+					if query != "" {
+						toolMsg = fmt.Sprintf("🔍 正在搜尋：%s", query)
+					} else {
+						toolMsg = "🔍 正在搜尋..."
+					}
+				} else if chunk.ToolName == "web_fetch" {
+					url := ""
+					if chunk.ToolInput != nil {
+						if u, ok := chunk.ToolInput["url"].(string); ok {
+							url = u
+						}
+					}
+					if url != "" {
+						toolMsg = fmt.Sprintf("📄 正在擷取網頁：%s", url)
+					} else {
+						toolMsg = "📄 正在擷取網頁..."
+					}
+				} else {
+					toolMsg = fmt.Sprintf("🔧 正在使用工具：%s", chunk.ToolName)
+				}
+
+				if messageID == "" {
+					// Create initial message with tool status (use reply if enabled)
+					var msg *discordgo.Message
+					var err error
+					if h.useReply {
+						msg, err = h.bot.SendMessageReply(channelID, toolMsg, replyToMessageID)
+					} else {
+						msg, err = h.bot.SendMessageWithReturn(channelID, toolMsg)
+					}
+					if err != nil {
+						log.Printf("send tool status error [%s]: %v", channelID, err)
+					} else {
+						messageID = msg.ID
+					}
+				} else {
+					// Update existing message with tool status
+					_ = h.bot.EditMessage(channelID, messageID, toolMsg)
+				}
+			} else if chunk.ToolStatus == "tool_done" {
+				// Tool execution done, ready for LLM response
+				// Clear the accumulated response to prepare for final output
+				fullResponse.Reset()
 			}
 			continue
 		}

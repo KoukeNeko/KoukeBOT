@@ -31,10 +31,13 @@ type ChatResponse struct {
 
 // StreamChunk is a single piece of a streaming response.
 type StreamChunk struct {
-	Content   string
-	Done      bool
-	Error     error
-	ToolCalls []domain.ToolCall // Function calls requested by LLM
+	Content    string
+	Done       bool
+	Error      error
+	ToolCalls  []domain.ToolCall // Function calls requested by LLM
+	ToolStatus string            // Tool execution status: "tool_start", "tool_executing", "tool_done"
+	ToolName   string            // Name of the tool being executed
+	ToolInput  map[string]interface{} // Tool input parameters (optional)
 }
 
 // Provider is the strategy interface for LLM backends.

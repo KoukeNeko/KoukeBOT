@@ -147,6 +147,7 @@ export default function Chat() {
 
         const decoder = new TextDecoder()
         let accumulatedContent = ''
+        let currentEvent = ''
 
         while (true) {
           const { done, value } = await reader.read()
@@ -156,24 +157,57 @@ export default function Chat() {
           const lines = chunk.split('\n')
 
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).replace(/\\n/g, '\n')
-              accumulatedContent += data
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim()
+            } else if (line.startsWith('data: ')) {
+              const data = line.slice(6)
 
-              setMessages((prev) => {
-                const updated = [...prev]
-                updated[assistantMsgIndex] = {
-                  role: 'assistant',
-                  content: accumulatedContent,
+              if (currentEvent === 'tool') {
+                // Handle tool status event
+                try {
+                  const toolData = JSON.parse(data)
+                  if (toolData.status === 'tool_start') {
+                    const query = toolData.input?.query || ''
+                    const toolMsg = query
+                      ? `🔍 正在搜尋：${query}`
+                      : `🔧 正在使用工具：${toolData.name}`
+
+                    setMessages((prev) => {
+                      const updated = [...prev]
+                      updated[assistantMsgIndex] = {
+                        role: 'assistant',
+                        content: toolMsg,
+                      }
+                      return updated
+                    })
+                  } else if (toolData.status === 'tool_done') {
+                    // Tool execution done, ready for LLM response
+                    accumulatedContent = ''
+                  }
+                } catch (e) {
+                  console.error('Failed to parse tool data:', e)
                 }
-                return updated
-              })
-            } else if (line.startsWith('event: done')) {
-              setSending(false)
-              loadConversations()
-              return
-            } else if (line.startsWith('event: error')) {
-              throw new Error('Stream error')
+                currentEvent = ''
+              } else if (currentEvent === 'done') {
+                setSending(false)
+                loadConversations()
+                return
+              } else if (currentEvent === 'error') {
+                throw new Error('Stream error')
+              } else {
+                // Regular data event
+                const content = data.replace(/\\n/g, '\n')
+                accumulatedContent += content
+
+                setMessages((prev) => {
+                  const updated = [...prev]
+                  updated[assistantMsgIndex] = {
+                    role: 'assistant',
+                    content: accumulatedContent,
+                  }
+                  return updated
+                })
+              }
             }
           }
         }
@@ -204,6 +238,32 @@ export default function Chat() {
             return updated
           })
         }
+
+        eventSource.addEventListener('tool', (event: any) => {
+          try {
+            const toolData = JSON.parse(event.data)
+            if (toolData.status === 'tool_start') {
+              const query = toolData.input?.query || ''
+              const toolMsg = query
+                ? `🔍 正在搜尋：${query}`
+                : `🔧 正在使用工具：${toolData.name}`
+
+              setMessages((prev) => {
+                const updated = [...prev]
+                updated[assistantMsgIndex] = {
+                  role: 'assistant',
+                  content: toolMsg,
+                }
+                return updated
+              })
+            } else if (toolData.status === 'tool_done') {
+              // Tool execution done, ready for LLM response
+              accumulatedContent = ''
+            }
+          } catch (e) {
+            console.error('Failed to parse tool data:', e)
+          }
+        })
 
         eventSource.addEventListener('done', () => {
           eventSource.close()
