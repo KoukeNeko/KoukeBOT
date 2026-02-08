@@ -81,6 +81,7 @@ func (c *PerplexityClient) Search(ctx context.Context, req SearchRequest) (Searc
 	cacheKey := c.buildCacheKey(req)
 	if cached, found := c.cache.get(cacheKey); found {
 		cached.Cached = true
+		logSearch.Logf("perplexity: q=%q → %d results (cached)", req.Query, cached.Count)
 		return cached, nil
 	}
 
@@ -170,6 +171,7 @@ func (c *PerplexityClient) Search(ctx context.Context, req SearchRequest) (Searc
 	// 快取結果
 	c.cache.set(cacheKey, result)
 
+	logSearch.Logf("perplexity: q=%q → %d results, %d citations (%dms)", req.Query, result.Count, len(perplexityResp.Citations), result.TookMs)
 	return result, nil
 }
 

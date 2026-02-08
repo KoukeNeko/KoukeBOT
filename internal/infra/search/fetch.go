@@ -45,6 +45,8 @@ func (f *WebFetcher) Fetch(ctx context.Context, req FetchRequest) (FetchResult, 
 		return FetchResult{}, fmt.Errorf("URL is required")
 	}
 
+	start := time.Now()
+
 	// 1. HTTP GET with context
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.URL, nil)
 	if err != nil {
@@ -124,14 +126,17 @@ func (f *WebFetcher) Fetch(ctx context.Context, req FetchRequest) (FetchResult, 
 		truncated = true
 	}
 
-	return FetchResult{
+	result := FetchResult{
 		URL:         req.URL,
 		Title:       title,
 		Content:     markdown,
 		TextLength:  len(markdown),
 		Truncated:   truncated,
 		ExtractMode: extractMode,
-	}, nil
+	}
+
+	logSearch.Logf("fetch: %s → %d chars, mode=%s (%dms)", req.URL, result.TextLength, extractMode, time.Since(start).Milliseconds())
+	return result, nil
 }
 
 // extractTitleFromHTML 從 HTML 中提取 title

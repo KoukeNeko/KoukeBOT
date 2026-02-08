@@ -79,6 +79,8 @@ func (r *ProviderRouter) Name() string {
 
 // Search 路由到對應提供商
 func (r *ProviderRouter) Search(ctx context.Context, req SearchRequest) (SearchResult, error) {
+	logSearch.Logf("query: %q (provider: %s)", req.Query, r.preferredProvider)
+
 	switch r.preferredProvider {
 	case "perplexity":
 		if r.perplexityClient != nil {

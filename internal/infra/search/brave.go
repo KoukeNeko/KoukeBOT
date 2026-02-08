@@ -1,6 +1,7 @@
 package search
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -94,6 +95,7 @@ func (c *BraveSearchClient) Search(ctx context.Context, req SearchRequest) (Sear
 	// Check cache first
 	if cached, found := c.cache.get(cacheKey); found {
 		cached.Cached = true
+		logSearch.Logf("brave: q=%q → %d results (cached)", req.Query, cached.Count)
 		return cached, nil
 	}
 
@@ -129,9 +131,20 @@ func (c *BraveSearchClient) Search(ctx context.Context, req SearchRequest) (Sear
 		return SearchResult{}, fmt.Errorf("Brave API error: %d - %s", resp.StatusCode, string(body))
 	}
 
+	// Handle gzip decompression
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gz, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return SearchResult{}, fmt.Errorf("gzip reader: %w", err)
+		}
+		defer gz.Close()
+		reader = gz
+	}
+
 	// Parse response
 	var braveResp braveAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&braveResp); err != nil {
+	if err := json.NewDecoder(reader).Decode(&braveResp); err != nil {
 		return SearchResult{}, fmt.Errorf("parse response: %w", err)
 	}
 
@@ -171,6 +184,7 @@ func (c *BraveSearchClient) Search(ctx context.Context, req SearchRequest) (Sear
 	// Store in cache
 	c.cache.set(cacheKey, result)
 
+	logSearch.Logf("brave: q=%q → %d results (%dms)", req.Query, result.Count, result.TookMs)
 	return result, nil
 }
 

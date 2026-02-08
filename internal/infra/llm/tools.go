@@ -6,8 +6,11 @@ import (
 	"fmt"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/search"
 )
+
+var logTool = logger.New("tools", logger.Green)
 
 // WebSearchTool implements domain.Tool for web search capability (OpenClaw 相容：支援多提供商)
 type WebSearchTool struct {
@@ -75,8 +78,10 @@ func (t *WebSearchTool) Execute(ctx context.Context, input map[string]interface{
 	}
 
 	// Execute search
+	logTool.Logf("web_search: q=%q", req.Query)
 	result, err := t.searchProvider.Search(ctx, req)
 	if err != nil {
+		logTool.Warnf("web_search failed: %v", err)
 		return domain.ToolResult{
 			Content: fmt.Sprintf("Search failed: %v", err),
 			IsError: true,
@@ -201,8 +206,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, input map[string]interface{}
 	}
 
 	// Execute fetch
+	logTool.Logf("web_fetch: url=%s", req.URL)
 	result, err := t.fetcher.Fetch(ctx, req)
 	if err != nil {
+		logTool.Warnf("web_fetch failed: %v", err)
 		return domain.ToolResult{
 			Content: fmt.Sprintf("Fetch failed: %v", err),
 			IsError: true,
