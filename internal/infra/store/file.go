@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +13,10 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 )
+
+var logStore = logger.New("store", logger.Blue)
 
 // FileStore persists conversations as JSON files in a directory.
 type FileStore struct {
@@ -109,13 +111,13 @@ func (f *FileStore) List(ctx context.Context) ([]*domain.Conversation, error) {
 		path := filepath.Join(f.dataDir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			log.Printf("WARNING: failed to read conversation file %s: %v", path, err)
+			logStore.Warnf("failed to read conversation file %s: %v", path, err)
 			continue
 		}
 
 		var conv domain.Conversation
 		if err := json.Unmarshal(data, &conv); err != nil {
-			log.Printf("WARNING: failed to parse conversation file %s: %v", path, err)
+			logStore.Warnf("failed to parse conversation file %s: %v", path, err)
 			continue
 		}
 

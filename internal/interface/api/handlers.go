@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
@@ -12,8 +11,11 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
+
+var logAPI = logger.New("api", logger.Cyan)
 
 // Handlers implements the REST API endpoints.
 type Handlers struct {
@@ -167,7 +169,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[CHAT] Received request - Channel: %s, Persona: %s, Message: %s",
+	logAPI.Logf("chat: channel=%s persona=%s msg=%s",
 		req.ChannelID, req.PersonaID, truncate(req.Message, 50))
 
 	if req.Message == "" || req.PersonaID == "" {
@@ -181,7 +183,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 
 	response, err := h.chatService.HandleMessage(r.Context(), req.ChannelID, req.PersonaID, req.Message)
 	if err != nil {
-		log.Printf("[CHAT] Error: %v", err)
+		logAPI.Errorf("chat: %v", err)
 		// Distinguish between configuration errors and actual server errors
 		if strings.Contains(err.Error(), "LLM provider not configured") {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -191,7 +193,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[CHAT] Success - Response length: %d chars", len(response))
+	logAPI.Logf("chat: response length=%d chars", len(response))
 	writeJSON(w, http.StatusOK, ChatResponseBody{Response: response})
 }
 
@@ -260,7 +262,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		channelID = "web-test"
 	}
 
-	log.Printf("[CHAT STREAM] Received request - Channel: %s, Persona: %s, Message: %s, Images: %d",
+	logAPI.Logf("chat-stream: channel=%s persona=%s msg=%s images=%d",
 		channelID, personaID, truncate(message, 50), len(images))
 
 	// Validate inputs
@@ -293,7 +295,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		log.Printf("[CHAT STREAM] Error initializing stream: %v", err)
+		logAPI.Errorf("chat-stream: init error: %v", err)
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 		flusher.Flush()
 		return
@@ -303,7 +305,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 	totalChunks := 0
 	for chunk := range streamCh {
 		if chunk.Error != nil {
-			log.Printf("[CHAT STREAM] Stream error: %v", chunk.Error)
+			logAPI.Errorf("chat-stream: %v", chunk.Error)
 			// Format user-friendly error message
 			userFriendlyMsg := formatUserFriendlyError(chunk.Error)
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", userFriendlyMsg)
@@ -337,7 +339,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send done event
-	log.Printf("[CHAT STREAM] Success - Streamed %d chunks", totalChunks)
+	logAPI.Logf("chat-stream: streamed %d chunks", totalChunks)
 	fmt.Fprintf(w, "event: done\ndata: \n\n")
 	flusher.Flush()
 }
@@ -541,7 +543,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	existing.TimeFormat = req.TimeFormat
 	existing.Location = req.Location
 
-	log.Printf("[Settings] Saving settings - Model: %s, ProviderType: %s, WebSearch: %v, DiscordReply: %v",
+	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
 		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)
 
 	if err := h.settingsStore.Save(existing); err != nil {
@@ -551,12 +553,12 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Hot-swap the LLM provider based on selected provider_type.
 	if err := h.activateProvider(existing); err != nil {
-		log.Printf("[Settings] Provider activation failed: %v", err)
+		logAPI.Errorf("settings: provider activation failed: %v", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	log.Printf("[Settings] Settings saved and provider activated successfully")
+	logAPI.Logf("settings: saved and provider activated")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
 
@@ -567,11 +569,11 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 		model = "gemini-2.5-pro"
 	}
 
-	log.Printf("[ActivateProvider] Type: %s, Model: %s", s.ProviderType, model)
+	logAPI.Logf("activate-provider: type=%s model=%s", s.ProviderType, model)
 
 	switch s.ProviderType {
 	case config.ProviderOAuth:
-		log.Printf("[ActivateProvider] Switching to OAuth provider")
+		logAPI.Logf("activate-provider: switching to OAuth")
 		oauthData, err := h.oauthFlow.GetStatus()
 		if err != nil || oauthData == nil {
 			return fmt.Errorf("no OAuth credentials available")
@@ -581,7 +583,7 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 			return fmt.Errorf("create OAuth provider: %w", err)
 		}
 		h.providerManager.Update(provider)
-		log.Printf("provider hot-swapped: gemini-oauth (model: %s)", model)
+		logAPI.Logf("provider hot-swapped: gemini-oauth (model: %s)", model)
 
 	case config.ProviderAPIKey:
 		if s.GeminiAPIKey == "" {
@@ -592,7 +594,7 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 			return fmt.Errorf("invalid API key: %w", err)
 		}
 		h.providerManager.Update(provider)
-		log.Printf("provider hot-swapped: gemini-api (model: %s)", model)
+		logAPI.Logf("provider hot-swapped: gemini-api (model: %s)", model)
 
 	default:
 		// Auto mode: try API key first, then OAuth.
@@ -602,7 +604,7 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 				return fmt.Errorf("invalid API key: %w", err)
 			}
 			h.providerManager.Update(provider)
-			log.Printf("provider hot-swapped: gemini-api (model: %s)", model)
+			logAPI.Logf("provider hot-swapped: gemini-api (model: %s)", model)
 		}
 	}
 	return nil
@@ -744,7 +746,7 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.providerManager.Update(provider)
-	log.Printf("provider hot-swapped: gemini-oauth (project: %s)", tokenData.ProjectID)
+	logAPI.Logf("provider hot-swapped: gemini-oauth (project: %s)", tokenData.ProjectID)
 
 	// Persist provider_type = oauth.
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil {

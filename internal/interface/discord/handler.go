@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -15,7 +14,10 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 )
+
+var logHandler = logger.New("discord", logger.Magenta)
 
 const (
 	// Discord message character limit
@@ -118,7 +120,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		if isImageAttachment(attachment) {
 			img, err := downloadImage(attachment.URL)
 			if err != nil {
-				log.Printf("failed to download image [%s]: %v", m.ChannelID, err)
+				logHandler.Warnf("failed to download image [%s]: %v", m.ChannelID, err)
 				continue
 			}
 			images = append(images, img)
@@ -151,7 +153,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	if err != nil {
-		log.Printf("chat error [%s]: %v", m.ChannelID, err)
+		logHandler.Errorf("chat error [%s]: %v", m.ChannelID, err)
 		_ = h.bot.SendMessage(m.ChannelID, "⚠️ Internal error. Check logs.")
 		return
 	}
@@ -170,7 +172,7 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 
 	for chunk := range streamCh {
 		if chunk.Error != nil {
-			log.Printf("stream error [%s]: %v", channelID, chunk.Error)
+			logHandler.Errorf("stream error [%s]: %v", channelID, chunk.Error)
 
 			// Format user-friendly error message
 			errorMsg := formatDiscordError(chunk.Error)
@@ -197,7 +199,7 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 					msg, err = h.bot.SendMessageWithReturn(channelID, toolIndicator)
 				}
 				if err != nil {
-					log.Printf("send tool indicator error [%s]: %v", channelID, err)
+					logHandler.Errorf("send tool indicator [%s]: %v", channelID, err)
 				} else {
 					messageID = msg.ID
 				}
@@ -295,7 +297,7 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 						msg, err = h.bot.SendMessageWithReturn(channelID, toolMsg)
 					}
 					if err != nil {
-						log.Printf("send tool status error [%s]: %v", channelID, err)
+						logHandler.Errorf("send tool status [%s]: %v", channelID, err)
 					} else {
 						messageID = msg.ID
 					}
@@ -343,14 +345,14 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 				msg, err = h.bot.SendMessageWithReturn(channelID, segments[0])
 			}
 			if err != nil {
-				log.Printf("send error [%s]: %v", channelID, err)
+				logHandler.Errorf("send [%s]: %v", channelID, err)
 				return
 			}
 			messageID = msg.ID
 		} else {
 			// Subsequent updates: edit message
 			if err := h.bot.EditMessage(channelID, messageID, segments[0]); err != nil {
-				log.Printf("edit error [%s]: %v", channelID, err)
+				logHandler.Errorf("edit [%s]: %v", channelID, err)
 				return
 			}
 		}
@@ -656,7 +658,7 @@ func truncateError(msg string, maxLen int) string {
 func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, currentMessageID, currentMessage string) string {
 	messages, err := s.ChannelMessages(channelID, defaultGroupHistoryLimit, currentMessageID, "", "")
 	if err != nil {
-		log.Printf("failed to fetch channel history [%s]: %v", channelID, err)
+		logHandler.Warnf("failed to fetch channel history [%s]: %v", channelID, err)
 		return currentMessage // Fallback to current message only
 	}
 

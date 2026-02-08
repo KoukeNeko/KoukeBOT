@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,7 +22,11 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 )
+
+var logFlow = logger.New("oauth", logger.Yellow)
 
 // OAuth constants matching openclaw/Gemini CLI implementation.
 const (
@@ -297,7 +300,7 @@ func (f *GeminiOAuthFlow) HandleCallback(ctx context.Context, code, state string
 	}
 
 	if err := saveTokenData(f.tokenPath, data); err != nil {
-		log.Printf("WARNING: failed to persist OAuth token: %v", err)
+		logFlow.Warnf("failed to persist OAuth token: %v", err)
 	}
 
 	return data, nil
@@ -358,7 +361,7 @@ func discoverProject(ctx context.Context, accessToken string) (string, error) {
 	if err == nil && projectID != "" {
 		return projectID, nil
 	}
-	log.Printf("loadCodeAssist: %v, trying onboardUser...", err)
+	logFlow.Logf("loadCodeAssist: %v, trying onboardUser...", err)
 
 	// Fall back to onboardUser.
 	return onboardUser(ctx, headers)

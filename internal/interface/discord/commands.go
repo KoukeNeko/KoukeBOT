@@ -3,15 +3,17 @@ package discord
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
+
+var logCmd = logger.New("discord", logger.Magenta)
 
 // SlashCommands manages Discord slash command registration and handling.
 type SlashCommands struct {
@@ -120,7 +122,7 @@ func (sc *SlashCommands) handleReset(s *discordgo.Session, i *discordgo.Interact
 	personaID := sc.bot.PersonaID()
 
 	if err := sc.convStore.Delete(context.Background(), channelID, personaID); err != nil {
-		log.Printf("reset error [%s]: %v", channelID, err)
+		logCmd.Errorf("reset [%s]: %v", channelID, err)
 		respondEphemeral(s, i, "❌ 清除失敗: "+err.Error())
 		return
 	}
@@ -179,6 +181,6 @@ func respondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, cont
 			Flags:   discordgo.MessageFlagsEphemeral,
 		},
 	}); err != nil {
-		log.Printf("interaction respond error: %v", err)
+		logCmd.Errorf("interaction respond: %v", err)
 	}
 }

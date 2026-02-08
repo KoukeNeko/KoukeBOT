@@ -3,8 +3,11 @@ package search
 import (
 	"context"
 	"fmt"
-	"log"
+
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 )
+
+var logSearch = logger.New("search", logger.Green)
 
 // SearchProvider 定義搜尋提供商的統一介面
 type SearchProvider interface {
@@ -83,7 +86,7 @@ func (r *ProviderRouter) Search(ctx context.Context, req SearchRequest) (SearchR
 		}
 		// Fallback to Brave
 		if r.braveClient != nil {
-			log.Println("[ProviderRouter] Perplexity not available, falling back to Brave")
+			logSearch.Warnf("Perplexity not available, falling back to Brave")
 			return r.braveClient.Search(ctx, req)
 		}
 
@@ -93,7 +96,7 @@ func (r *ProviderRouter) Search(ctx context.Context, req SearchRequest) (SearchR
 		}
 		// Fallback to Perplexity
 		if r.perplexityClient != nil {
-			log.Println("[ProviderRouter] Brave not available, falling back to Perplexity")
+			logSearch.Warnf("Brave not available, falling back to Perplexity")
 			return r.perplexityClient.Search(ctx, req)
 		}
 	}

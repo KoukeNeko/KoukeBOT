@@ -8,13 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"golang.org/x/oauth2"
 )
+
+var logOAuth = logger.New("llm", logger.Yellow)
 
 // Cloud Code Assist API — the endpoint used by Gemini CLI OAuth.
 // Reference: github.com/openclaw/openclaw
@@ -43,15 +45,10 @@ func NewGeminiOAuthProvider(ctx context.Context, tokenData *OAuthTokenData, mode
 }
 
 func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	log.Printf("[GeminiOAuth] Starting chat - Model: %s, Project: %s, Messages: %d",
-		g.model, g.projectID, len(req.Messages))
-
 	body, err := json.Marshal(g.buildRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-
-	log.Printf("[GeminiOAuth] Request body size: %d bytes", len(body))
 
 	url := codeAssistEndpoint + "/v1internal:streamGenerateContent?alt=sse"
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -60,122 +57,69 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 	}
 	setCodeAssistHeaders(httpReq)
 
-	log.Printf("[GeminiOAuth] Sending request to %s", url)
-
 	resp, err := g.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("code assist request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[GeminiOAuth] Response status: %d", resp.StatusCode)
-	log.Printf("[GeminiOAuth] Response headers: Content-Type=%s, Transfer-Encoding=%s",
-		resp.Header.Get("Content-Type"), resp.Header.Get("Transfer-Encoding"))
-
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("code assist HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Try to peek at the first few bytes
-	peekBytes := make([]byte, 100)
-	n, peekErr := resp.Body.Read(peekBytes)
-	if peekErr != nil && peekErr != io.EOF {
-		log.Printf("[GeminiOAuth] Error peeking response body: %v", peekErr)
-	} else {
-		log.Printf("[GeminiOAuth] First %d bytes of response: %q", n, string(peekBytes[:n]))
-	}
-
-	// Create a new reader that includes the peeked bytes
-	bodyReader := io.MultiReader(bytes.NewReader(peekBytes[:n]), resp.Body)
-
 	// Collect all SSE chunks into a single response.
 	var fullText strings.Builder
 	var totalTokens int
 	var lastFinishReason string
-	chunkCount := 0
 
-	log.Printf("[GeminiOAuth] Starting SSE stream processing")
-
-	scanner := bufio.NewScanner(bodyReader)
+	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20) // 1 MB max line
-	lineCount := 0
 	for scanner.Scan() {
-		line := scanner.Text()
-		lineCount++
-
-		// Debug: log first few lines
-		if lineCount <= 5 || (lineCount <= 15 && line != "") {
-			truncated := line
-			if len(truncated) > 200 {
-				truncated = truncated[:200] + "..."
-			}
-			log.Printf("[GeminiOAuth] SSE Line %d: %q", lineCount, truncated)
-		}
-
-		data, ok := parseSSEData(line)
+		data, ok := parseSSEData(scanner.Text())
 		if !ok {
 			continue
 		}
 
-		log.Printf("[GeminiOAuth] Parsed SSE data (length: %d)", len(data))
-
 		var chunk caResponseChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			truncated := data
-			if len(truncated) > 200 {
-				truncated = truncated[:200] + "..."
-			}
-			log.Printf("[GeminiOAuth] JSON unmarshal error: %v, data: %s", err, truncated)
 			continue
 		}
 
-		// Track finish reason from candidates
+		// Track finish reason
 		if chunk.Response != nil && len(chunk.Response.Candidates) > 0 {
-			candidate := chunk.Response.Candidates[0]
-			if candidate.FinishReason != "" {
-				lastFinishReason = candidate.FinishReason
-				log.Printf("[GeminiOAuth] Finish reason: %s", lastFinishReason)
+			if fr := chunk.Response.Candidates[0].FinishReason; fr != "" {
+				lastFinishReason = fr
 			}
 		}
 
 		parsed := extractCAChunkFull(chunk)
-		log.Printf("[GeminiOAuth] Extracted text length: %d, tokens: %d, toolCalls: %d",
-			len(parsed.text), parsed.tokens, len(parsed.toolCalls))
-
-		if parsed.text != "" {
-			chunkCount++
-			fullText.WriteString(parsed.text)
-			log.Printf("[GeminiOAuth] Chunk %d: +%d chars (total: %d)",
-				chunkCount, len(parsed.text), fullText.Len())
-		}
+		fullText.WriteString(parsed.text)
 		if parsed.tokens > 0 {
 			totalTokens = parsed.tokens
 		}
 	}
-
-	log.Printf("[GeminiOAuth] Total lines processed: %d", lineCount)
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read SSE stream: %w", err)
 	}
 
 	finalContent := fullText.String()
-	log.Printf("[GeminiOAuth] Stream complete - Total: %d chunks, %d chars, %d tokens, finishReason: %s",
-		chunkCount, len(finalContent), totalTokens, lastFinishReason)
 
-	// Check for truncation
-	if lastFinishReason == "MAX_TOKENS" {
-		log.Printf("[GeminiOAuth] WARNING: Response was truncated due to MAX_TOKENS limit")
-		log.Printf("[GeminiOAuth] Consider increasing max_tokens in persona config or using a shorter prompt")
-	} else if lastFinishReason == "SAFETY" {
+	// Check for abnormal finish reasons
+	switch lastFinishReason {
+	case "MAX_TOKENS":
+		logOAuth.Warnf("response truncated (MAX_TOKENS) — consider increasing max_tokens")
+	case "SAFETY":
 		return nil, fmt.Errorf("response blocked by safety filters")
-	} else if lastFinishReason == "RECITATION" {
+	case "RECITATION":
 		return nil, fmt.Errorf("response blocked due to recitation concerns")
-	} else if lastFinishReason == "BLOCKLIST" {
+	case "BLOCKLIST":
 		return nil, fmt.Errorf("response blocked by content blocklist")
-	} else if lastFinishReason != "" && lastFinishReason != "STOP" {
-		log.Printf("[GeminiOAuth] WARNING: Unexpected finish reason: %s", lastFinishReason)
+	case "", "STOP":
+		// Normal completion
+	default:
+		logOAuth.Warnf("unexpected finish reason: %s", lastFinishReason)
 	}
 
 	return &ChatResponse{
@@ -216,8 +160,7 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for scanner.Scan() {
-			line := scanner.Text()
-			data, ok := parseSSEData(line)
+			data, ok := parseSSEData(scanner.Text())
 			if !ok {
 				continue
 			}
@@ -229,10 +172,7 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 
 			// Emit function calls to trigger the tool calling loop
 			if len(parsed.toolCalls) > 0 {
-				log.Printf("[GeminiOAuth] StreamChat: detected %d function call(s)", len(parsed.toolCalls))
-				for _, tc := range parsed.toolCalls {
-					log.Printf("[GeminiOAuth]   functionCall: %s args=%v", tc.Name, tc.Input)
-				}
+				logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
 				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
 				return
 			}
@@ -283,8 +223,7 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for scanner.Scan() {
-			line := scanner.Text()
-			data, ok := parseSSEData(line)
+			data, ok := parseSSEData(scanner.Text())
 			if !ok {
 				continue
 			}
@@ -296,7 +235,7 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 
 			// Emit function calls to trigger the tool calling loop
 			if len(parsed.toolCalls) > 0 {
-				log.Printf("[GeminiOAuth] StreamChatMultimodal: detected %d function call(s)", len(parsed.toolCalls))
+				logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
 				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
 				return
 			}
@@ -342,10 +281,10 @@ type caRequest struct {
 }
 
 type caRequestBody struct {
-	Contents          []caContent    `json:"contents"`
-	SystemInstruction *caContent     `json:"systemInstruction,omitempty"`
-	GenerationConfig  *caGenConfig   `json:"generationConfig,omitempty"`
-	Tools             []caToolDecl   `json:"tools,omitempty"`
+	Contents          []caContent  `json:"contents"`
+	SystemInstruction *caContent   `json:"systemInstruction,omitempty"`
+	GenerationConfig  *caGenConfig `json:"generationConfig,omitempty"`
+	Tools             []caToolDecl `json:"tools,omitempty"`
 }
 
 // caToolDecl wraps function declarations for the Cloud Code Assist API.
@@ -410,8 +349,6 @@ type caUsage struct {
 
 func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 	config := buildConfig(req)
-	log.Printf("[GeminiOAuth] Generation config: temp=%.2f, maxTokens=%d, topP=%.2f",
-		config.temperature, config.maxTokens, config.topP)
 
 	var contents []caContent
 	for _, msg := range req.Messages {
@@ -432,7 +369,6 @@ func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 		Temperature:     &temperature,
 		MaxOutputTokens: int32(config.maxTokens),
 		TopP:            &topP,
-		// ThinkingConfig removed - not supported by Cloud Code Assist API
 	}
 
 	caReq := caRequest{
@@ -453,16 +389,16 @@ func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 	// Include tool declarations for function calling
 	if len(g.tools) > 0 {
 		caReq.Request.Tools = convertToolsForCA(g.tools)
-		log.Printf("[GeminiOAuth] Included %d tool declarations in request", len(g.tools))
 	}
+
+	logOAuth.Logf("request: messages=%d, tools=%d, temp=%.1f, maxTokens=%d",
+		len(req.Messages), len(g.tools), config.temperature, config.maxTokens)
 
 	return caReq
 }
 
 func (g *GeminiOAuthProvider) buildMultimodalRequest(systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) caRequest {
 	config := buildGenerationConfig(generation)
-	log.Printf("[GeminiOAuth] Multimodal generation config: temp=%.2f, maxTokens=%d, topP=%.2f",
-		config.temperature, config.maxTokens, config.topP)
 
 	var contents []caContent
 	for _, msg := range messages {
@@ -523,8 +459,10 @@ func (g *GeminiOAuthProvider) buildMultimodalRequest(systemPrompt string, messag
 	// Include tool declarations for function calling
 	if len(g.tools) > 0 {
 		caReq.Request.Tools = convertToolsForCA(g.tools)
-		log.Printf("[GeminiOAuth] Included %d tool declarations in multimodal request", len(g.tools))
 	}
+
+	logOAuth.Logf("multimodal request: messages=%d, tools=%d, temp=%.1f, maxTokens=%d",
+		len(messages), len(g.tools), config.temperature, config.maxTokens)
 
 	return caReq
 }
@@ -581,6 +519,15 @@ func extractCAChunkFull(chunk caResponseChunk) caChunkResult {
 		result.tokens = chunk.Response.UsageMetadata.TotalTokenCount
 	}
 	return result
+}
+
+// formatToolCallNames returns a compact string of tool call names.
+func formatToolCallNames(calls []domain.ToolCall) string {
+	names := make([]string, len(calls))
+	for i, c := range calls {
+		names[i] = c.Name
+	}
+	return strings.Join(names, ", ")
 }
 
 // --- Schema cleaning for Gemini compatibility (OpenClaw pattern) ---
