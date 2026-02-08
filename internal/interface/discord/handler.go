@@ -134,7 +134,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	// Format current message with envelope (openclaw style)
 	senderLabel := resolveSenderLabel(m.Author)
 	timestamp := m.Timestamp.Format("2006-01-02 15:04 MST")
-	currentMessage := formatInboundEnvelope("Discord", senderLabel, timestamp, content)
+	currentMessage := formatInboundEnvelope("Discord", senderLabel, m.Author.ID, timestamp, content)
 
 	// Build channel history context for LLM (openclaw style)
 	// This is used for immediate context but NOT stored in conversation
@@ -566,11 +566,11 @@ func resolveSenderLabel(author *discordgo.User) string {
 
 // formatInboundEnvelope formats a message with openclaw-style envelope.
 // Format: [Discord sender timestamp] body
-//         [from: sender]
-func formatInboundEnvelope(channel, sender, timestamp, body string) string {
+//         [from: sender (id: userID)]
+func formatInboundEnvelope(channel, sender, userID, timestamp, body string) string {
 	envelope := fmt.Sprintf("[%s %s %s] %s", channel, sender, timestamp, body)
 	if sender != "" {
-		envelope = envelope + fmt.Sprintf("\n[from: %s]", sender)
+		envelope = envelope + fmt.Sprintf("\n[from: %s (id: %s)]", sender, userID)
 	}
 	return envelope
 }
@@ -694,8 +694,12 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 
 		// Format with envelope
 		senderLabel := resolveSenderLabel(msg.Author)
+		userID := ""
+		if msg.Author != nil {
+			userID = msg.Author.ID
+		}
 		timestamp := msg.Timestamp.Format("2006-01-02 15:04 MST")
-		formattedMsg := formatInboundEnvelope("Discord", senderLabel, timestamp, content)
+		formattedMsg := formatInboundEnvelope("Discord", senderLabel, userID, timestamp, content)
 		historyLines = append(historyLines, formattedMsg)
 	}
 
