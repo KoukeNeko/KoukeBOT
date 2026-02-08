@@ -55,7 +55,7 @@ system_template: |
 # 生成參數設定 (Generation Config)
 generation:
   temperature: 0.8 # 稍微調高以增加「搶銀行」的創意度
-  max_tokens: 800 # 保留足夠長度給 HUD 和對話
+  max_tokens: 4096 # 足夠長度給 HUD 和對話（原本 800 太小）
   top_p: 0.95
   frequency_penalty: 0.5 # 避免重複相同的嘆氣詞
   presence_penalty: 0.3

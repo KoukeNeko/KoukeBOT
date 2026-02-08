@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -40,10 +41,15 @@ func NewGeminiOAuthProvider(ctx context.Context, tokenData *OAuthTokenData, mode
 }
 
 func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	log.Printf("[GeminiOAuth] Starting chat - Model: %s, Project: %s, Messages: %d",
+		g.model, g.projectID, len(req.Messages))
+
 	body, err := json.Marshal(g.buildRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
+
+	log.Printf("[GeminiOAuth] Request body size: %d bytes", len(body))
 
 	url := codeAssistEndpoint + "/v1internal:streamGenerateContent?alt=sse"
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -52,45 +58,101 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 	}
 	setCodeAssistHeaders(httpReq)
 
+	log.Printf("[GeminiOAuth] Sending request to %s", url)
+
 	resp, err := g.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("code assist request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	log.Printf("[GeminiOAuth] Response status: %d", resp.StatusCode)
+	log.Printf("[GeminiOAuth] Response headers: Content-Type=%s, Transfer-Encoding=%s",
+		resp.Header.Get("Content-Type"), resp.Header.Get("Transfer-Encoding"))
+
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("code assist HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	// Try to peek at the first few bytes
+	peekBytes := make([]byte, 100)
+	n, peekErr := resp.Body.Read(peekBytes)
+	if peekErr != nil && peekErr != io.EOF {
+		log.Printf("[GeminiOAuth] Error peeking response body: %v", peekErr)
+	} else {
+		log.Printf("[GeminiOAuth] First %d bytes of response: %q", n, string(peekBytes[:n]))
+	}
+
+	// Create a new reader that includes the peeked bytes
+	bodyReader := io.MultiReader(bytes.NewReader(peekBytes[:n]), resp.Body)
+
 	// Collect all SSE chunks into a single response.
 	var fullText strings.Builder
 	var totalTokens int
+	chunkCount := 0
 
-	scanner := bufio.NewScanner(resp.Body)
+	log.Printf("[GeminiOAuth] Starting SSE stream processing")
+
+	scanner := bufio.NewScanner(bodyReader)
 	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20) // 1 MB max line
+	lineCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
+		lineCount++
+
+		// Debug: log first few lines
+		if lineCount <= 5 || (lineCount <= 15 && line != "") {
+			truncated := line
+			if len(truncated) > 200 {
+				truncated = truncated[:200] + "..."
+			}
+			log.Printf("[GeminiOAuth] SSE Line %d: %q", lineCount, truncated)
+		}
+
 		data, ok := parseSSEData(line)
 		if !ok {
 			continue
 		}
+
+		log.Printf("[GeminiOAuth] Parsed SSE data (length: %d)", len(data))
+
 		var chunk caResponseChunk
-		if json.Unmarshal([]byte(data), &chunk) != nil {
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			truncated := data
+			if len(truncated) > 200 {
+				truncated = truncated[:200] + "..."
+			}
+			log.Printf("[GeminiOAuth] JSON unmarshal error: %v, data: %s", err, truncated)
 			continue
 		}
+
 		text, tokens := extractCAChunk(chunk)
-		fullText.WriteString(text)
+		log.Printf("[GeminiOAuth] Extracted text length: %d, tokens: %d", len(text), tokens)
+
+		if text != "" {
+			chunkCount++
+			fullText.WriteString(text)
+			log.Printf("[GeminiOAuth] Chunk %d: +%d chars (total: %d)",
+				chunkCount, len(text), fullText.Len())
+		}
 		if tokens > 0 {
 			totalTokens = tokens
 		}
 	}
+
+	log.Printf("[GeminiOAuth] Total lines processed: %d", lineCount)
+
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read SSE stream: %w", err)
 	}
 
+	finalContent := fullText.String()
+	log.Printf("[GeminiOAuth] Stream complete - Total: %d chunks, %d chars, %d tokens",
+		chunkCount, len(finalContent), totalTokens)
+
 	return &ChatResponse{
-		Content:    fullText.String(),
+		Content:    finalContent,
 		TokensUsed: totalTokens,
 	}, nil
 }
@@ -213,6 +275,8 @@ type caUsage struct {
 
 func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 	config := buildConfig(req)
+	log.Printf("[GeminiOAuth] Generation config: temp=%.2f, maxTokens=%d, topP=%.2f",
+		config.temperature, config.maxTokens, config.topP)
 
 	var contents []caContent
 	for _, msg := range req.Messages {

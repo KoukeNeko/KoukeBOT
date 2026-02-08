@@ -160,6 +160,9 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[CHAT] Received request - Channel: %s, Persona: %s, Message: %s",
+		req.ChannelID, req.PersonaID, truncate(req.Message, 50))
+
 	if req.Message == "" || req.PersonaID == "" {
 		writeError(w, http.StatusBadRequest, "message and persona_id are required")
 		return
@@ -171,6 +174,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 
 	response, err := h.chatService.HandleMessage(r.Context(), req.ChannelID, req.PersonaID, req.Message)
 	if err != nil {
+		log.Printf("[CHAT] Error: %v", err)
 		// Distinguish between configuration errors and actual server errors
 		if strings.Contains(err.Error(), "LLM provider not configured") {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -180,6 +184,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[CHAT] Success - Response length: %d chars", len(response))
 	writeJSON(w, http.StatusOK, ChatResponseBody{Response: response})
 }
 
@@ -217,6 +222,13 @@ func toSummary(p *domain.PersonaModule) PersonaSummary {
 
 func formatInt(n int) string {
 	return fmt.Sprintf("%d", n)
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // --- Settings endpoints ---
@@ -283,6 +295,9 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		existing.ProviderType = req.ProviderType
 	}
 
+	log.Printf("[Settings] Saving settings - Model: %s, ProviderType: %s",
+		existing.GeminiModel, existing.ProviderType)
+
 	if err := h.settingsStore.Save(existing); err != nil {
 		writeError(w, http.StatusInternalServerError, "save settings: "+err.Error())
 		return
@@ -290,10 +305,12 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Hot-swap the LLM provider based on selected provider_type.
 	if err := h.activateProvider(existing); err != nil {
+		log.Printf("[Settings] Provider activation failed: %v", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	log.Printf("[Settings] Settings saved and provider activated successfully")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
 
@@ -304,8 +321,11 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 		model = "gemini-2.5-pro"
 	}
 
+	log.Printf("[ActivateProvider] Type: %s, Model: %s", s.ProviderType, model)
+
 	switch s.ProviderType {
 	case config.ProviderOAuth:
+		log.Printf("[ActivateProvider] Switching to OAuth provider")
 		oauthData, err := h.oauthFlow.GetStatus()
 		if err != nil || oauthData == nil {
 			return fmt.Errorf("no OAuth credentials available")

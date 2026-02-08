@@ -46,10 +46,17 @@ func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, u
 
 	conv.AppendUserMessage(userMessage)
 
-	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+	modelInfo := s.provider.ModelInfo()
+	fmt.Printf("[ChatService] Assembling context - Provider: %s, SupportsThinking: %v\n",
+		modelInfo.ProviderName, modelInfo.SupportsThinking)
+
+	assembled, err := s.assembler.Assemble(persona, conv, modelInfo)
 	if err != nil {
 		return "", fmt.Errorf("assemble context: %w", err)
 	}
+
+	fmt.Printf("[ChatService] Calling LLM - System prompt length: %d, Messages: %d\n",
+		len(assembled.SystemPrompt), len(assembled.Messages))
 
 	resp, err := s.provider.Chat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
@@ -59,6 +66,8 @@ func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, u
 	if err != nil {
 		return "", fmt.Errorf("llm chat: %w", err)
 	}
+
+	fmt.Printf("[ChatService] LLM response received - Length: %d chars\n", len(resp.Content))
 
 	conv.AppendAssistantMessage(resp.Content)
 

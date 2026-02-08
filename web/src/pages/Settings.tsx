@@ -81,6 +81,9 @@ export default function Settings() {
       const result = await detectGeminiCLI()
       if (result.found && result.client_id) {
         setDetectedClientID(result.client_id)
+        // Auto-fill the client ID so it persists and is used for OAuth
+        // Client secret is not stored in Gemini CLI config
+        setManualClientID(result.client_id)
       } else {
         setDetectError(result.error || 'Gemini CLI not found.')
       }
@@ -216,68 +219,68 @@ export default function Settings() {
                 {oauthStatus.project_id ? ` (project: ${oauthStatus.project_id})` : ''}
               </div>
             ) : (
-              <div className="status-banner warn" style={{ marginBottom: '1rem' }}>
-                Not connected — click below to authenticate with Google.
-              </div>
-            )}
-
-            {/* Detect Gemini CLI */}
-            <div style={{ marginBottom: '1rem' }}>
-              <button onClick={handleDetect} disabled={detecting} className="btn-secondary">
-                {detecting ? 'Detecting...' : 'Detect Gemini CLI'}
-              </button>
-              {detectedClientID && (
-                <p className="success" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
-                  Found: {detectedClientID}
-                </p>
-              )}
-              {detectError && (
-                <p className="error" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
-                  {detectError}
-                </p>
-              )}
-            </div>
-
-            {/* Manual credentials fallback */}
-            {!detectedClientID && (
-              <div style={{ marginBottom: '1rem' }}>
-                <p className="meta" style={{ marginBottom: '0.5rem' }}>
-                  If Gemini CLI is not installed, enter credentials manually:
-                </p>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <label className="form-field">
-                    <span>Client ID</span>
-                    <input
-                      type="text"
-                      value={manualClientID}
-                      onChange={(e) => setManualClientID(e.target.value)}
-                      placeholder="xxx.apps.googleusercontent.com"
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span>Client Secret</span>
-                    <input
-                      type="password"
-                      value={manualClientSecret}
-                      onChange={(e) => setManualClientSecret(e.target.value)}
-                      placeholder="GOCSPX-xxx"
-                    />
-                  </label>
+              <>
+                <div className="status-banner warn" style={{ marginBottom: '1rem' }}>
+                  Not connected — click below to authenticate with Google.
                 </div>
-              </div>
-            )}
 
-            {/* Login button */}
-            <button
-              onClick={handleOAuthLogin}
-              disabled={oauthStarting || (!detectedClientID && !manualClientID)}
-            >
-              {oauthStarting ? 'Waiting for authorization...' : 'Login with Google'}
-            </button>
-            {oauthStarting && (
-              <p className="meta" style={{ marginTop: '0.5rem' }}>
-                Complete the authorization in the popup window...
-              </p>
+                {/* Detect Gemini CLI */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <button onClick={handleDetect} disabled={detecting} className="btn-secondary">
+                    {detecting ? 'Detecting...' : 'Detect Gemini CLI'}
+                  </button>
+                  {detectedClientID && (
+                    <p className="success" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
+                      ✓ Found and auto-filled credentials from Gemini CLI
+                    </p>
+                  )}
+                  {detectError && (
+                    <p className="error" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }}>
+                      {detectError}
+                    </p>
+                  )}
+                </div>
+
+                {/* OAuth Credentials */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <p className="meta" style={{ marginBottom: '0.5rem' }}>
+                    {detectedClientID ? 'Credentials (auto-filled):' : 'OAuth Credentials:'}
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <label className="form-field">
+                      <span>Client ID</span>
+                      <input
+                        type="text"
+                        value={manualClientID}
+                        onChange={(e) => setManualClientID(e.target.value)}
+                        placeholder="xxx.apps.googleusercontent.com"
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>Client Secret</span>
+                      <input
+                        type="password"
+                        value={manualClientSecret}
+                        onChange={(e) => setManualClientSecret(e.target.value)}
+                        placeholder="GOCSPX-xxx"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Login button */}
+                <button
+                  onClick={handleOAuthLogin}
+                  disabled={oauthStarting || (!detectedClientID && !manualClientID)}
+                >
+                  {oauthStarting ? 'Waiting for authorization...' : 'Login with Google'}
+                </button>
+                {oauthStarting && (
+                  <p className="meta" style={{ marginTop: '0.5rem' }}>
+                    Complete the authorization in the popup window...
+                  </p>
+                )}
+              </>
             )}
 
             {/* Model selector + activate */}

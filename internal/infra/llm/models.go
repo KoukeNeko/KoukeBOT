@@ -101,6 +101,8 @@ func supportsGeneration(m *genai.Model) bool {
 
 func defaultModels() []ModelEntry {
 	return []ModelEntry{
+		{ID: "gemini-3-pro-preview", DisplayName: "Gemini 3 Pro (Preview)"},
+		{ID: "gemini-3-flash-preview", DisplayName: "Gemini 3 Flash (Preview)"},
 		{ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro"},
 		{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash"},
 		{ID: "gemini-2.0-flash", DisplayName: "Gemini 2.0 Flash"},
