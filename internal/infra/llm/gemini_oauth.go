@@ -157,6 +157,7 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 		defer close(ch)
 		defer resp.Body.Close()
 
+		var lastUsage *caUsage
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for scanner.Scan() {
@@ -169,10 +170,14 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 				continue
 			}
 			parsed := extractCAChunkFull(chunk)
+			if parsed.usage != nil {
+				lastUsage = parsed.usage
+			}
 
 			// Emit function calls to trigger the tool calling loop
 			if len(parsed.toolCalls) > 0 {
 				logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
+				logUsage(lastUsage)
 				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
 				return
 			}
@@ -185,6 +190,7 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			ch <- StreamChunk{Error: err, Done: true}
 			return
 		}
+		logUsage(lastUsage)
 		ch <- StreamChunk{Done: true}
 	}()
 
@@ -220,6 +226,7 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 		defer close(ch)
 		defer resp.Body.Close()
 
+		var lastUsage *caUsage
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for scanner.Scan() {
@@ -232,10 +239,14 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 				continue
 			}
 			parsed := extractCAChunkFull(chunk)
+			if parsed.usage != nil {
+				lastUsage = parsed.usage
+			}
 
 			// Emit function calls to trigger the tool calling loop
 			if len(parsed.toolCalls) > 0 {
 				logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
+				logUsage(lastUsage)
 				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
 				return
 			}
@@ -248,6 +259,7 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 			ch <- StreamChunk{Error: err, Done: true}
 			return
 		}
+		logUsage(lastUsage)
 		ch <- StreamChunk{Done: true}
 	}()
 
@@ -342,7 +354,9 @@ type caCandidate struct {
 }
 
 type caUsage struct {
-	TotalTokenCount int `json:"totalTokenCount"`
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	TotalTokenCount      int `json:"totalTokenCount"`
 }
 
 // --- Helpers ---
@@ -508,6 +522,7 @@ func parseSSEData(line string) (string, bool) {
 type caChunkResult struct {
 	text      string
 	tokens    int
+	usage     *caUsage // full usage metadata (last chunk only)
 	toolCalls []domain.ToolCall
 }
 
@@ -534,8 +549,18 @@ func extractCAChunkFull(chunk caResponseChunk) caChunkResult {
 
 	if chunk.Response.UsageMetadata != nil {
 		result.tokens = chunk.Response.UsageMetadata.TotalTokenCount
+		result.usage = chunk.Response.UsageMetadata
 	}
 	return result
+}
+
+// logUsage logs token usage summary from the final SSE chunk.
+func logUsage(usage *caUsage) {
+	if usage == nil {
+		return
+	}
+	logOAuth.Logf("tokens: prompt=%d, response=%d, total=%d",
+		usage.PromptTokenCount, usage.CandidatesTokenCount, usage.TotalTokenCount)
 }
 
 // formatToolCallNames returns a compact string of tool call names.
