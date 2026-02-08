@@ -269,34 +269,47 @@ export default function Chat() {
       {/* New conversation modal */}
       {showNewConvModal && (
         <div className="modal-overlay" onClick={() => setShowNewConvModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ width: '400px', height: 'auto', maxHeight: '90vh' }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ width: '450px', height: 'auto', maxHeight: '85vh' }}>
             <div className="modal-header">
               <h3>建立新對話</h3>
               <button onClick={() => setShowNewConvModal(false)} className="close-btn">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
-            <div className="modal-body" style={{ padding: '1.5rem' }}>
-              <div className="form-field">
-                <span>選擇 Persona</span>
-                <select 
-                  value={newConvPersonaId} 
-                  onChange={(e) => setNewConvPersonaId(e.target.value)}
-                  style={{ padding: '0.6rem', background: '#0f0f1a', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }}
-                >
-                  {personas.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+            <div className="modal-body" style={{ padding: '1.25rem', overflowY: 'auto' }}>
+              <p className="meta" style={{ marginBottom: '1.25rem' }}>請選擇一個 Persona 開始新的對話記錄。</p>
+              
+              <div className="persona-selection-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {personas.map((p) => (
+                  <div
+                    key={p.id}
+                    className={`persona-list-item ${newConvPersonaId === p.id ? 'active' : ''}`}
+                    onClick={() => setNewConvPersonaId(p.id)}
+                    style={{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px' }}
+                  >
+                    <div className="persona-item-header">
+                      <span className="persona-name">{p.name}</span>
+                      <span className="persona-version">v{p.version}</span>
+                    </div>
+                    {p.description && (
+                      <div className="persona-item-desc" style={{ WebkitLineClamp: 2, display: '-webkit-box', WebkitBoxOrient: 'vertical', whiteSpace: 'normal' }}>
+                        {p.description}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.75rem', justifyContent: 'flex-end' }}>
                 <button onClick={() => setShowNewConvModal(false)} className="btn-secondary">
                   取消
                 </button>
-                <button onClick={handleNewConv} disabled={!newConvPersonaId}>
-                  建立
+                <button 
+                  onClick={handleNewConv} 
+                  disabled={!newConvPersonaId}
+                  style={{ background: '#646cff', color: '#fff', borderColor: '#646cff' }}
+                >
+                  開始對話
                 </button>
               </div>
             </div>
