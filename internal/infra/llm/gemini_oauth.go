@@ -27,6 +27,7 @@ type GeminiOAuthProvider struct {
 	httpClient *http.Client
 	model      string
 	projectID  string
+	tools      []domain.Tool // Registered tools for function calling
 }
 
 // NewGeminiOAuthProvider creates a provider using OAuth credentials via Cloud Code Assist API.
@@ -304,6 +305,13 @@ func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 		SupportsStreaming: true,
 		ProviderName:     "gemini-oauth",
 	}
+}
+
+// RegisterTools registers tools for function calling (OAuth provider)
+func (g *GeminiOAuthProvider) RegisterTools(tools []domain.Tool) {
+	g.tools = tools
+	// Note: Function calling via Cloud Code Assist API is not yet implemented
+	// This is a stub to satisfy the Provider interface
 }
 
 // --- Cloud Code Assist API types ---

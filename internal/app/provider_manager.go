@@ -80,3 +80,14 @@ func (pm *ProviderManager) IsConfigured() bool {
 	defer pm.mu.RUnlock()
 	return pm.provider != nil
 }
+
+// RegisterTools registers tools that the LLM can call during conversation
+func (pm *ProviderManager) RegisterTools(tools []domain.Tool) {
+	pm.mu.RLock()
+	p := pm.provider
+	pm.mu.RUnlock()
+
+	if p != nil {
+		p.RegisterTools(tools)
+	}
+}

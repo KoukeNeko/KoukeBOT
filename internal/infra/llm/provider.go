@@ -31,9 +31,10 @@ type ChatResponse struct {
 
 // StreamChunk is a single piece of a streaming response.
 type StreamChunk struct {
-	Content string
-	Done    bool
-	Error   error
+	Content   string
+	Done      bool
+	Error     error
+	ToolCalls []domain.ToolCall // Function calls requested by LLM
 }
 
 // Provider is the strategy interface for LLM backends.
@@ -44,4 +45,8 @@ type Provider interface {
 	StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error)
 	StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan StreamChunk, error)
 	ModelInfo() ModelCapabilities
+
+	// RegisterTools registers tools that the LLM can call during conversation.
+	// Not all providers may support function calling.
+	RegisterTools(tools []domain.Tool)
 }
