@@ -35,7 +35,9 @@ export default function App() {
               <Route index element={<div className="empty-state">Select a persona to edit</div>} />
               <Route path=":id" element={<PersonaDetail />} />
             </Route>
-            <Route path="/chat" element={<Chat />} />
+            <Route path="/chat" element={<Chat />}>
+              <Route path=":id" element={<Chat />} />
+            </Route>
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>

@@ -76,3 +76,29 @@ export interface OAuthStatus {
   project_id?: string
   email?: string
 }
+
+export interface Message {
+  role: string
+  content: string
+  timestamp: string
+}
+
+export interface Conversation {
+  id: string
+  channel_id: string
+  persona_id: string
+  messages: Message[]
+  created_at: string
+  updated_at: string
+}
+
+export interface ConversationSummary {
+  id: string
+  channel_id: string
+  persona_id: string
+  persona_name: string
+  message_count: number
+  last_message?: string
+  last_timestamp: string
+  updated_at: string
+}

@@ -1,4 +1,4 @@
-import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, OAuthDetectResult, OAuthStartResult, OAuthStatus, ModelEntry } from './types'
+import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, OAuthDetectResult, OAuthStartResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation } from './types'
 
 const BASE = '/api'
 
@@ -81,4 +81,18 @@ export function getOAuthStatus(): Promise<OAuthStatus> {
 
 export function listModels(): Promise<ModelEntry[]> {
   return fetchJSON(`${BASE}/models`)
+}
+
+export function listConversations(): Promise<ConversationSummary[]> {
+  return fetchJSON(`${BASE}/conversations`)
+}
+
+export function getConversation(channelId: string, personaId: string): Promise<Conversation> {
+  return fetchJSON(`${BASE}/conversations/${encodeURIComponent(channelId)}/${encodeURIComponent(personaId)}`)
+}
+
+export function deleteConversation(channelId: string, personaId: string): Promise<{ status: string }> {
+  return fetchJSON(`${BASE}/conversations/${encodeURIComponent(channelId)}/${encodeURIComponent(personaId)}`, {
+    method: 'DELETE',
+  })
 }
