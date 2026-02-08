@@ -92,7 +92,14 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	content := cleanMention(s, m.Content)
-	if strings.TrimSpace(content) == "" && len(m.Attachments) == 0 {
+
+	// If no text content, use attachment placeholder (openclaw style)
+	if strings.TrimSpace(content) == "" && len(m.Attachments) > 0 {
+		content = buildAttachmentPlaceholder(m.Attachments)
+	}
+
+	// Skip if still empty after placeholder
+	if strings.TrimSpace(content) == "" {
 		return
 	}
 
@@ -286,7 +293,51 @@ func splitMessage(text string, maxLen int) []string {
 // isImageAttachment checks if a Discord attachment is an image.
 func isImageAttachment(attachment *discordgo.MessageAttachment) bool {
 	contentType := strings.ToLower(attachment.ContentType)
-	return strings.HasPrefix(contentType, "image/")
+	if strings.HasPrefix(contentType, "image/") {
+		return true
+	}
+	// Fallback: check file extension
+	filename := strings.ToLower(attachment.Filename)
+	return strings.HasSuffix(filename, ".jpg") ||
+		strings.HasSuffix(filename, ".jpeg") ||
+		strings.HasSuffix(filename, ".png") ||
+		strings.HasSuffix(filename, ".gif") ||
+		strings.HasSuffix(filename, ".webp") ||
+		strings.HasSuffix(filename, ".bmp")
+}
+
+// buildAttachmentPlaceholder builds openclaw-style attachment placeholder.
+// Examples: "<media:image>", "<media:image> (3 images)", "<media:document> (2 files)"
+func buildAttachmentPlaceholder(attachments []*discordgo.MessageAttachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+
+	count := len(attachments)
+	allImages := true
+	for _, att := range attachments {
+		if !isImageAttachment(att) {
+			allImages = false
+			break
+		}
+	}
+
+	var label, suffix, tag string
+	if allImages {
+		label = "image"
+		tag = "<media:image>"
+	} else {
+		label = "file"
+		tag = "<media:document>"
+	}
+
+	if count == 1 {
+		suffix = label
+	} else {
+		suffix = fmt.Sprintf("%d %ss", count, label)
+	}
+
+	return fmt.Sprintf("%s (%s)", tag, suffix)
 }
 
 // downloadImage downloads an image from a URL and returns it as ImageInput.
@@ -394,7 +445,12 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 		msg := messages[i]
 		content := msg.Content
 
-		// Skip empty messages
+		// If no text content, use attachment placeholder (openclaw style)
+		if strings.TrimSpace(content) == "" && len(msg.Attachments) > 0 {
+			content = buildAttachmentPlaceholder(msg.Attachments)
+		}
+
+		// Skip empty messages (no text and no attachments)
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
