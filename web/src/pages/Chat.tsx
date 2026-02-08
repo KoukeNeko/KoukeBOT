@@ -16,6 +16,7 @@ export default function Chat() {
   const [newConvPersonaId, setNewConvPersonaId] = useState('')
   const [selectedImages, setSelectedImages] = useState<File[]>([])
   const [expandedRawData, setExpandedRawData] = useState<Set<number>>(new Set())
+  const [expandedToolUsage, setExpandedToolUsage] = useState<Set<number>>(new Set())
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -447,7 +448,18 @@ export default function Chat() {
                                 {messages.map((m, i) => {
                                   const displayContent = m.display_text || m.content
                                   const hasRawData = m.role === 'assistant' && (m.raw_llm_input || m.raw_llm_output)
-                                  const isExpanded = expandedRawData.has(i)
+                                  const isRawExpanded = expandedRawData.has(i)
+
+                                  // Parse tool usage annotation (split by "---" separator)
+                                  let mainContent = displayContent
+                                  let toolUsageAnnotation = ''
+                                  if (displayContent && displayContent.includes('\n---\n🔧')) {
+                                    const parts = displayContent.split('\n---\n')
+                                    mainContent = parts[0]
+                                    toolUsageAnnotation = '---\n' + parts.slice(1).join('\n---\n')
+                                  }
+                                  const hasToolUsage = toolUsageAnnotation.length > 0
+                                  const isToolExpanded = expandedToolUsage.has(i)
 
                                   return (
                                     <div key={i} className={`chat-bubble ${m.role}`}>
@@ -470,27 +482,78 @@ export default function Chat() {
                                         </div>
                                       )}
 
-                                      {/* Message content */}
-                                      {displayContent && (
+                                      {/* Message content (without tool annotation) */}
+                                      {mainContent && (
                                         <div className="markdown-content">
-                                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
+                                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{mainContent}</ReactMarkdown>
                                         </div>
                                       )}
 
-                                      {/* Reply Button */}
-                                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem', opacity: 0.6 }}>
-                                        <button
-                                          onClick={() => handleReply(displayContent || '')}
-                                          className="btn-icon"
-                                          title="引用回覆"
-                                          style={{ padding: '2px', fontSize: '0.75rem', color: '#ccc' }}
-                                        >
-                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <polyline points="9 17 4 12 9 7"></polyline>
-                                            <path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>
-                                          </svg>
-                                        </button>
-                                      </div>
+                                      {/* Tool Usage Annotation (collapsible) */}
+                                      {hasToolUsage && (
+                                        <div style={{ marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.5rem' }}>
+                                          <button
+                                            onClick={() => {
+                                              const newSet = new Set(expandedToolUsage)
+                                              if (isToolExpanded) {
+                                                newSet.delete(i)
+                                              } else {
+                                                newSet.add(i)
+                                              }
+                                              setExpandedToolUsage(newSet)
+                                            }}
+                                            style={{
+                                              padding: '4px 8px',
+                                              fontSize: '0.75rem',
+                                              background: 'rgba(100,149,237,0.08)',
+                                              border: '1px solid rgba(100,149,237,0.2)',
+                                              borderRadius: '4px',
+                                              cursor: 'pointer',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '0.25rem',
+                                              color: 'rgba(100,149,237,0.9)'
+                                            }}
+                                          >
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                              {isToolExpanded ? (
+                                                <polyline points="18 15 12 9 6 15"></polyline>
+                                              ) : (
+                                                <polyline points="6 9 12 15 18 9"></polyline>
+                                              )}
+                                            </svg>
+                                            {isToolExpanded ? '隱藏工具使用記錄' : '顯示工具使用記錄'}
+                                          </button>
+
+                                          {isToolExpanded && (
+                                            <div style={{
+                                              marginTop: '0.5rem',
+                                              padding: '0.75rem',
+                                              background: 'rgba(100,149,237,0.05)',
+                                              borderRadius: '6px',
+                                              fontSize: '0.85rem',
+                                              color: 'rgba(255,255,255,0.85)',
+                                              border: '1px solid rgba(100,149,237,0.15)'
+                                            }}>
+                                              <div className="markdown-content">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{toolUsageAnnotation}</ReactMarkdown>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Reply Button (visible on hover) */}
+                                      <button
+                                        onClick={() => handleReply(displayContent || '')}
+                                        className="btn-icon reply-btn"
+                                        title="引用回覆"
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                          <polyline points="9 17 4 12 9 7"></polyline>
+                                          <path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>
+                                        </svg>
+                                      </button>
 
                                       {/* Raw LLM Data Toggle (only for assistant messages with raw data) */}
                                       {hasRawData && (
@@ -498,7 +561,7 @@ export default function Chat() {
                                           <button
                                             onClick={() => {
                                               const newSet = new Set(expandedRawData)
-                                              if (isExpanded) {
+                                              if (isRawExpanded) {
                                                 newSet.delete(i)
                                               } else {
                                                 newSet.add(i)
@@ -519,16 +582,16 @@ export default function Chat() {
                                             }}
                                           >
                                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                              {isExpanded ? (
+                                              {isRawExpanded ? (
                                                 <polyline points="18 15 12 9 6 15"></polyline>
                                               ) : (
                                                 <polyline points="6 9 12 15 18 9"></polyline>
                                               )}
                                             </svg>
-                                            {isExpanded ? '隱藏原始資料' : '顯示原始資料'}
+                                            {isRawExpanded ? '隱藏原始資料' : '顯示原始資料'}
                                           </button>
 
-                                          {isExpanded && (
+                                          {isRawExpanded && (
                                             <div style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
                                               {m.raw_llm_input && (
                                                 <div style={{ marginBottom: '0.75rem' }}>

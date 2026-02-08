@@ -307,7 +307,7 @@ func (s *ChatService) handleToolCallingStream(
 			}
 
 			// Build tool results message for LLM
-			toolResultsText := formatToolResults(toolResults)
+			toolResultsText := formatToolResults(pendingToolCalls, toolResults)
 
 			// Append assistant's tool call request to conversation
 			conv.AppendAssistantMessage("[Tool calls executed]")
@@ -346,12 +346,21 @@ func (s *ChatService) handleToolCallingStream(
 				finalResponse += chunk.Content
 			}
 
+			// Append tool usage annotation to final response (for frontend display)
+			toolUsageAnnotation := formatToolUsageAnnotation(pendingToolCalls)
+			finalResponseWithAnnotation := finalResponse + "\n\n" + toolUsageAnnotation
+
+			// Stream the annotation as a separate chunk
+			outputCh <- llm.StreamChunk{
+				Content: "\n\n" + toolUsageAnnotation,
+			}
+
 			// Store final conversation with raw LLM data
 			// For tool calls, the raw output includes the tool execution cycle
 			rawLLMOutput := fmt.Sprintf("[Tool calls executed]\n%s\n\n[Final response]\n%s",
 				toolResultsText, finalResponse)
 			conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-			conv.AppendAssistantMessageWithRaw(finalResponse, rawLLMInput, rawLLMOutput)
+			conv.AppendAssistantMessageWithRaw(finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
 			_ = s.store.Save(ctx, conv)
 
 			outputCh <- llm.StreamChunk{Done: true}
@@ -373,11 +382,24 @@ func (s *ChatService) handleToolCallingStream(
 }
 
 // formatToolResults formats tool results for LLM consumption
-func formatToolResults(results []domain.ToolResult) string {
+func formatToolResults(toolCalls []domain.ToolCall, results []domain.ToolResult) string {
 	var formatted string
 	formatted += "Tool execution results:\n\n"
+
+	// Create a map for quick lookup of tool calls by ID
+	callMap := make(map[string]domain.ToolCall)
+	for _, call := range toolCalls {
+		callMap[call.ID] = call
+	}
+
 	for _, result := range results {
-		formatted += fmt.Sprintf("Tool Call ID: %s\n", result.ToolCallID)
+		call, exists := callMap[result.ToolCallID]
+		toolName := "unknown"
+		if exists {
+			toolName = call.Name
+		}
+
+		formatted += fmt.Sprintf("Tool: %s (ID: %s)\n", toolName, result.ToolCallID)
 		if result.IsError {
 			formatted += fmt.Sprintf("Status: ERROR\n%s\n\n", result.Content)
 		} else {
@@ -385,6 +407,46 @@ func formatToolResults(results []domain.ToolResult) string {
 		}
 	}
 	return formatted
+}
+
+// formatToolUsageAnnotation creates a user-friendly annotation for tool usage
+func formatToolUsageAnnotation(toolCalls []domain.ToolCall) string {
+	if len(toolCalls) == 0 {
+		return ""
+	}
+
+	var annotation strings.Builder
+	annotation.WriteString("---\n")
+	annotation.WriteString("🔧 **使用的工具**：\n")
+
+	for i, call := range toolCalls {
+		// Format tool name
+		toolEmoji := "🔧"
+		toolDisplayName := call.Name
+
+		switch call.Name {
+		case "web_search":
+			toolEmoji = "🔍"
+			toolDisplayName = "網路搜尋"
+			if query, ok := call.Input["query"].(string); ok {
+				annotation.WriteString(fmt.Sprintf("%d. %s **%s**：`%s`\n", i+1, toolEmoji, toolDisplayName, query))
+			} else {
+				annotation.WriteString(fmt.Sprintf("%d. %s **%s**\n", i+1, toolEmoji, toolDisplayName))
+			}
+		case "web_fetch":
+			toolEmoji = "📄"
+			toolDisplayName = "網頁擷取"
+			if url, ok := call.Input["url"].(string); ok {
+				annotation.WriteString(fmt.Sprintf("%d. %s **%s**：`%s`\n", i+1, toolEmoji, toolDisplayName, url))
+			} else {
+				annotation.WriteString(fmt.Sprintf("%d. %s **%s**\n", i+1, toolEmoji, toolDisplayName))
+			}
+		default:
+			annotation.WriteString(fmt.Sprintf("%d. %s **%s**\n", i+1, toolEmoji, toolDisplayName))
+		}
+	}
+
+	return annotation.String()
 }
 
 // formatLLMPrompt builds a complete LLM prompt string for debugging/transparency
