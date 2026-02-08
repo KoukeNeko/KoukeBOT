@@ -158,6 +158,8 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 		defer resp.Body.Close()
 
 		var lastUsage *caUsage
+		var responseLen int
+		var responsePreview string
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for scanner.Scan() {
@@ -183,6 +185,10 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			}
 
 			if parsed.text != "" {
+				responseLen += len(parsed.text)
+				if len(responsePreview) < 80 {
+					responsePreview += parsed.text
+				}
 				ch <- StreamChunk{Content: parsed.text}
 			}
 		}
@@ -190,7 +196,7 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			ch <- StreamChunk{Error: err, Done: true}
 			return
 		}
-		logUsage(lastUsage)
+		logCompletion(lastUsage, responsePreview, responseLen)
 		ch <- StreamChunk{Done: true}
 	}()
 
@@ -227,6 +233,8 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 		defer resp.Body.Close()
 
 		var lastUsage *caUsage
+		var responseLen int
+		var responsePreview string
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for scanner.Scan() {
@@ -252,6 +260,10 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 			}
 
 			if parsed.text != "" {
+				responseLen += len(parsed.text)
+				if len(responsePreview) < 80 {
+					responsePreview += parsed.text
+				}
 				ch <- StreamChunk{Content: parsed.text}
 			}
 		}
@@ -259,7 +271,7 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 			ch <- StreamChunk{Error: err, Done: true}
 			return
 		}
-		logUsage(lastUsage)
+		logCompletion(lastUsage, responsePreview, responseLen)
 		ch <- StreamChunk{Done: true}
 	}()
 
@@ -561,6 +573,18 @@ func logUsage(usage *caUsage) {
 	}
 	logOAuth.Logf("tokens: prompt=%d, response=%d, total=%d",
 		usage.PromptTokenCount, usage.CandidatesTokenCount, usage.TotalTokenCount)
+}
+
+// logCompletion logs token usage and a preview of the response.
+func logCompletion(usage *caUsage, preview string, totalLen int) {
+	logUsage(usage)
+	// Clean preview: collapse newlines to spaces, truncate
+	preview = strings.ReplaceAll(preview, "\n", " ")
+	preview = strings.ReplaceAll(preview, "\r", "")
+	if len(preview) > 80 {
+		preview = preview[:80]
+	}
+	logOAuth.Logf("response: %d chars | %s...", totalLen, strings.TrimSpace(preview))
 }
 
 // formatToolCallNames returns a compact string of tool call names.
