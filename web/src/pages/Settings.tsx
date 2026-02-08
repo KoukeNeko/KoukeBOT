@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { getSettings, updateSettings, getProviderStatus, detectGeminiCLI, startGeminiOAuth, getOAuthStatus, listModels } from '../api'
+import Select from '../components/ui/Select'
 import type { SettingsData, ProviderStatus, OAuthStatus, ModelEntry } from '../types'
 
 type ProviderTab = 'api-key' | 'oauth'
@@ -140,6 +141,10 @@ export default function Settings() {
 
   if (loading) return <p>Loading settings...</p>
 
+  const modelOptions = models.length > 0
+    ? models.map(m => ({ value: m.id, label: m.display_name }))
+    : [{ value: form.gemini_model || 'gemini-2.5-pro', label: form.gemini_model || 'gemini-2.5-pro' }]
+
   return (
     <div className="settings-page">
       <h2>Settings</h2>
@@ -188,22 +193,11 @@ export default function Settings() {
 
             <label className="form-field">
               <span>Model</span>
-              <select
+              <Select
                 value={form.gemini_model}
-                onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
-              >
-                {models.length > 0 ? (
-                  models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.display_name}
-                    </option>
-                  ))
-                ) : (
-                  <option value={form.gemini_model || 'gemini-2.5-pro'}>
-                    {form.gemini_model || 'gemini-2.5-pro'}
-                  </option>
-                )}
-              </select>
+                onChange={(val) => setForm({ ...form, gemini_model: val })}
+                options={modelOptions}
+              />
             </label>
 
             <button onClick={() => handleSave('api-key')} disabled={saving}>
@@ -290,22 +284,11 @@ export default function Settings() {
               <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
                 <label className="form-field">
                   <span>Model</span>
-                  <select
+                  <Select
                     value={form.gemini_model}
-                    onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
-                  >
-                    {models.length > 0 ? (
-                      models.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.display_name}
-                        </option>
-                      ))
-                    ) : (
-                      <option value={form.gemini_model || 'gemini-2.5-pro'}>
-                        {form.gemini_model || 'gemini-2.5-pro'}
-                      </option>
-                    )}
-                  </select>
+                    onChange={(val) => setForm({ ...form, gemini_model: val })}
+                    options={modelOptions}
+                  />
                 </label>
 
                 <button onClick={() => handleSave('oauth')} disabled={saving}>
