@@ -12,6 +12,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
 
 // Handlers implements the REST API endpoints.
@@ -21,6 +22,7 @@ type Handlers struct {
 	settingsStore   *config.SettingsStore
 	providerManager *app.ProviderManager
 	oauthFlow       *llm.GeminiOAuthFlow
+	convStore       store.ConversationRepository
 	ctx             context.Context
 }
 
@@ -30,6 +32,7 @@ func NewHandlers(
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
 	oauthFlow *llm.GeminiOAuthFlow,
+	convStore store.ConversationRepository,
 	ctx context.Context,
 ) *Handlers {
 	return &Handlers{
@@ -38,6 +41,7 @@ func NewHandlers(
 		settingsStore:   settingsStore,
 		providerManager: providerManager,
 		oauthFlow:       oauthFlow,
+		convStore:       convStore,
 		ctx:             ctx,
 	}
 }
@@ -530,4 +534,77 @@ func (h *Handlers) OAuthStatus(w http.ResponseWriter, r *http.Request) {
 		ProjectID:     data.ProjectID,
 		Email:         data.Email,
 	})
+}
+
+// --- Conversation endpoints ---
+
+type ConversationSummary struct {
+	ID            string `json:"id"`
+	ChannelID     string `json:"channel_id"`
+	PersonaID     string `json:"persona_id"`
+	PersonaName   string `json:"persona_name"`
+	MessageCount  int    `json:"message_count"`
+	LastMessage   string `json:"last_message,omitempty"`
+	LastTimestamp string `json:"last_timestamp"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+func (h *Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
+	conversations, err := h.convStore.List(h.ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list conversations: "+err.Error())
+		return
+	}
+
+	summaries := make([]ConversationSummary, 0, len(conversations))
+	for _, conv := range conversations {
+		if len(conv.Messages) == 0 {
+			continue // Skip empty conversations
+		}
+
+		personaName := conv.PersonaID
+		if persona, ok := h.personaService.Get(conv.PersonaID); ok {
+			personaName = persona.Config.Meta.Name
+		}
+
+		lastMsg := conv.Messages[len(conv.Messages)-1]
+		summary := ConversationSummary{
+			ID:            conv.ID,
+			ChannelID:     conv.ChannelID,
+			PersonaID:     conv.PersonaID,
+			PersonaName:   personaName,
+			MessageCount:  len(conv.Messages),
+			LastMessage:   truncate(lastMsg.Content, 100),
+			LastTimestamp: lastMsg.Timestamp.Format("2006-01-02 15:04:05"),
+			UpdatedAt:     conv.UpdatedAt.Format("2006-01-02 15:04:05"),
+		}
+		summaries = append(summaries, summary)
+	}
+
+	writeJSON(w, http.StatusOK, summaries)
+}
+
+func (h *Handlers) GetConversation(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("channelID")
+	personaID := r.PathValue("personaID")
+
+	conv, err := h.convStore.Get(h.ctx, channelID, personaID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get conversation: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, conv)
+}
+
+func (h *Handlers) DeleteConversation(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("channelID")
+	personaID := r.PathValue("personaID")
+
+	if err := h.convStore.Delete(h.ctx, channelID, personaID); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete conversation: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

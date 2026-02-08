@@ -9,6 +9,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
 
 // Router sets up the HTTP API routes.
@@ -23,9 +24,10 @@ func NewRouter(
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
 	oauthFlow *llm.GeminiOAuthFlow,
+	convStore store.ConversationRepository,
 	ctx context.Context,
 ) *Router {
-	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, oauthFlow, ctx)
+	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, ctx)
 	mux := http.NewServeMux()
 
 	r := &Router{mux: mux, handlers: handlers}
@@ -42,6 +44,11 @@ func (r *Router) registerRoutes() {
 
 	// Chat endpoint (for web-based testing)
 	r.mux.HandleFunc("POST /api/chat", r.handlers.Chat)
+
+	// Conversations
+	r.mux.HandleFunc("GET /api/conversations", r.handlers.ListConversations)
+	r.mux.HandleFunc("GET /api/conversations/{channelID}/{personaID}", r.handlers.GetConversation)
+	r.mux.HandleFunc("DELETE /api/conversations/{channelID}/{personaID}", r.handlers.DeleteConversation)
 
 	// Settings
 	r.mux.HandleFunc("GET /api/settings", r.handlers.GetSettings)

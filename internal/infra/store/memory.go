@@ -60,6 +60,27 @@ func (m *MemoryStore) Delete(_ context.Context, channelID, personaID string) err
 	return nil
 }
 
+func (m *MemoryStore) List(_ context.Context) ([]*domain.Conversation, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	conversations := make([]*domain.Conversation, 0, len(m.convs))
+	for _, conv := range m.convs {
+		conversations = append(conversations, conv)
+	}
+
+	// Sort by most recent first
+	for i := 0; i < len(conversations)-1; i++ {
+		for j := i + 1; j < len(conversations); j++ {
+			if conversations[j].UpdatedAt.After(conversations[i].UpdatedAt) {
+				conversations[i], conversations[j] = conversations[j], conversations[i]
+			}
+		}
+	}
+
+	return conversations, nil
+}
+
 func compositeKey(channelID, personaID string) string {
 	return fmt.Sprintf("%s:%s", channelID, personaID)
 }

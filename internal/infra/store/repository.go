@@ -14,4 +14,6 @@ type ConversationRepository interface {
 	Save(ctx context.Context, conv *domain.Conversation) error
 	// Delete removes a conversation.
 	Delete(ctx context.Context, channelID, personaID string) error
+	// List retrieves all conversations.
+	List(ctx context.Context) ([]*domain.Conversation, error)
 }

@@ -68,14 +68,19 @@ func run() error {
 	initProvider(ctx, settings, providerManager, model, port)
 
 	// Init core services
-	convStore := store.NewMemoryStore()
+	convStore, err := store.NewFileStore("data/conversations")
+	if err != nil {
+		return fmt.Errorf("init conversation store: %w", err)
+	}
+	log.Println("Conversation store: data/conversations")
 	assembler := app.NewContextAssembler()
 	chatService := app.NewChatService(providerManager, assembler, convStore, personaService.GetAll())
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
 		if err := startDiscordBot(settings.DiscordToken, personaService, chatService, convStore); err != nil {
-			return fmt.Errorf("start discord bot: %w", err)
+			log.Printf("WARNING: Discord bot failed to start: %v", err)
+			log.Println("continuing without Discord bot — HTTP API will still be available")
 		}
 	} else {
 		log.Println("DISCORD_TOKEN not set — skipping Discord bot")
@@ -86,7 +91,7 @@ func run() error {
 	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthRedirectURL)
 
 	// Start HTTP API server
-	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow)
+	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow, convStore)
 
 	log.Printf("character bot ready — API on :%s", port)
 
@@ -224,8 +229,9 @@ func startAPIServer(
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
 	oauthFlow *llm.GeminiOAuthFlow,
+	convStore store.ConversationRepository,
 ) {
-	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, oauthFlow, ctx)
+	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, ctx)
 	handler := router.Handler()
 
 	// Wrap with SPA static file serving if web/dist exists
