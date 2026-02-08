@@ -98,6 +98,12 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	stopTyping := h.keepTyping(ctx, m.ChannelID)
 	defer stopTyping()
 
+	// Fetch recent channel messages for context (only in guilds, not DMs)
+	var channelContext string
+	if !isDM(m) {
+		channelContext = h.fetchChannelContext(s, m.ChannelID, m.ID, 10)
+	}
+
 	// Check for image attachments
 	var images []domain.ImageInput
 	for _, attachment := range m.Attachments {
@@ -111,6 +117,12 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
+	// Prepend channel context if available
+	finalContent := content
+	if channelContext != "" {
+		finalContent = channelContext + "\n" + content
+	}
+
 	// Use multimodal handler if images are present
 	var streamCh <-chan llm.StreamChunk
 	var err error
@@ -118,9 +130,10 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		if content == "" {
 			content = "這張圖片顯示了什麼？" // Default prompt if no text provided
 		}
+		// For images, use original content without context to avoid confusion
 		streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, m.ChannelID, h.bot.PersonaID(), content, images)
 	} else {
-		streamCh, err = h.chatService.HandleMessageStream(ctx, m.ChannelID, h.bot.PersonaID(), content)
+		streamCh, err = h.chatService.HandleMessageStream(ctx, m.ChannelID, h.bot.PersonaID(), finalContent)
 	}
 
 	if err != nil {
@@ -306,4 +319,43 @@ func extractFilename(url string) string {
 		return parts[len(parts)-1]
 	}
 	return "image"
+}
+
+// fetchChannelContext fetches recent messages from the channel for context.
+// This helps the bot understand the ongoing conversation in the channel.
+func (h *Handler) fetchChannelContext(s *discordgo.Session, channelID, currentMessageID string, limit int) string {
+	messages, err := s.ChannelMessages(channelID, limit, currentMessageID, "", "")
+	if err != nil {
+		log.Printf("failed to fetch channel history [%s]: %v", channelID, err)
+		return ""
+	}
+
+	if len(messages) == 0 {
+		return ""
+	}
+
+	// Build context string from recent messages (reverse order - oldest first)
+	var contextLines []string
+	contextLines = append(contextLines, "[Recent channel messages for context:]")
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		author := msg.Author.Username
+		content := msg.Content
+
+		// Skip empty messages
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		// Truncate long messages
+		if len(content) > 200 {
+			content = content[:200] + "..."
+		}
+
+		contextLines = append(contextLines, fmt.Sprintf("- %s: %s", author, content))
+	}
+
+	contextLines = append(contextLines, "[End of context]\n")
+	return strings.Join(contextLines, "\n")
 }

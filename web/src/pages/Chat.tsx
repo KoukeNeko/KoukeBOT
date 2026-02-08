@@ -342,14 +342,15 @@ export default function Chat() {
                     發送訊息開始對話
                   </p>
                 )}
-                {messages.map((m, i) => (
-                  <div key={i} className={`chat-bubble ${m.role}`}>
-                    <div className="markdown-content">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                    </div>
-                                  </div>
-                                ))}
-                                {sending && (
+                                {messages.map((m, i) => (
+                                  m.content ? (
+                                    <div key={i} className={`chat-bubble ${m.role}`}>
+                                      <div className="markdown-content">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                                      </div>
+                                    </div>
+                                  ) : null
+                                ))}                                {sending && (
                                   <div style={{ padding: '0.5rem 1rem', opacity: 0.7 }}>
                                     <p className="meta" style={{ margin: 0, fontSize: '0.85rem' }}>Thinking...</p>
                                   </div>
