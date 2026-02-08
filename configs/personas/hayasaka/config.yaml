@@ -70,7 +70,7 @@ generation:
 
 # 狀態變數 (可用於程式端動態調整)
 variables:
-  sanity_level: 15 # 初始理智值
+  sanity_level: 127 # 初始理智值
   caffeine_level: 120 # 初始咖啡因
   current_location: "Student Council Server Room"
 
