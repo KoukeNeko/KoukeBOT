@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { listPersonas, sendChat } from '../api'
 import type { PersonaSummary } from '../types'
 
@@ -77,7 +79,9 @@ export default function Chat() {
         )}
         {messages.map((m, i) => (
           <div key={i} className={`chat-bubble ${m.role}`}>
-            <pre>{m.content}</pre>
+            <div className="markdown-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+            </div>
           </div>
         ))}
         {sending && (
