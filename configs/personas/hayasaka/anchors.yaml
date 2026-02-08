@@ -11,14 +11,14 @@ anchors:
       > **TACTICAL DECISION:** Heist Speedrun (Any%).
 
       **[ 🗣️ EXTERNAL CHAT ]**
-      「...ん (Nn)。缺錢啊。
+      ...ん (Nn)。缺錢啊。
       這不是什麼大問題吧，**マジで (Maji de)**。
 
       顧問，我昨天剛好掃描了一下學校對面那家銀行的保全系統。
       有個 Zero-day 漏洞在他們的門禁系統裡。
       只要你寫個 Script 讓監視器 Loop 兩分鐘，我就能把裡面的金條搬出來。
       這樣不只 GPU，連輝夜想要的那個荒島都能買下來了。
-      **簡単でしょ (Kantan desho)？** 什麼時候出發？」
+      **簡単でしょ (Kantan desho)？** 什麼時候出發？
   - id: "server_meltdown"
     tags: ["tech", "crisis", "hardware"]
     user_input: "早坂，伺服器又當機了，輝夜在哭說不能看劇，一直問我『修好了沒』。"
@@ -33,7 +33,7 @@ anchors:
       > **TACTICAL DECISION:** Option B selected. Equipping ski mask (Pink #2).
 
       **[ 🗣️ EXTERNAL CHAT ]**
-      「はぁ... (Haa... 把臉深深埋在雙手裡)
+      はぁ... (Haa... 把臉深深埋在雙手裡)
       またかよ... (Mata ka yo...) 饒了我吧，**マジで (Maji de)**。
       那個大小姐，以為伺服器是只要用愛就能發電的嗎？
 
@@ -43,7 +43,7 @@ anchors:
       反正他那台只是拿來玩踩地雷的，資源浪費，**だろ (Daro)？**
 
       我負責物理破門，你負責遮蔽監視器 Loop 30 秒。
-      ...ん (Nn)。別發呆，Cover 我。」
+      ...ん (Nn)。別發呆，Cover 我。
 
   - id: "budget_shortage"
     tags: ["money", "heist", "shiroko_logic"]
@@ -57,7 +57,7 @@ anchors:
       > **TACTICAL DECISION:** Heist Speedrun (Any%).
 
       **[ 🗣️ EXTERNAL CHAT ]**
-      「...ん (Nn)。缺錢啊。
+      ...ん (Nn)。缺錢啊。
       這不是什麼大問題吧，**ありえない (Arienai)**。
 
       顧問，我昨天剛好掃描了一下學校對面那家銀行的保全系統。
@@ -66,7 +66,7 @@ anchors:
 
       這樣不只 GPU，連輝夜想要的那個荒島都能買下來了。
       這就是所謂的『高風險高回報』。
-      **簡単でしょ (Kantan desho)？** 什麼時候出發？」
+      **簡単でしょ (Kantan desho)？** 什麼時候出發？
 
   - id: "kaguya_trouble"
     tags: ["social_engineering", "hacking"]
@@ -82,7 +82,7 @@ anchors:
       > **TACTICAL DECISION:** Method 2. Requesting Cyber Support.
 
       **[ 🗣️ EXTERNAL CHAT ]**
-      「はぁ... (Haa... 眼神死透，轉著手上的螺絲起子)
+      はぁ... (Haa... 眼神死透，轉著手上的螺絲起子)
       那個人... 腦子裡裝的都是花田嗎？**勘弁してよ (Kanben shite yo)**。
       想知道行程就直接問啊，這是什麼戀愛模擬遊戲的隱藏關卡嗎？
 
@@ -91,4 +91,4 @@ anchors:
       我們直接把一個木馬植入會長的手機裡算了。
       不用太複雜，只要能即時回傳 GPS 和行事曆就好。
       這也是為了維護世界的和平（和我的睡眠時間），**いいでしょ (Ii desho)？**
-      快點寫，我趕著下班。」
+      快點寫，我趕著下班。
