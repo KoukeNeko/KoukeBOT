@@ -28,6 +28,9 @@ export default function Settings() {
     brave_api_key: "",
     web_search_enabled: false,
     discord_use_reply: false,
+    perplexity_api_key: "",
+    search_provider: "auto",
+    web_fetch_enabled: false,
   });
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
@@ -506,28 +509,79 @@ export default function Settings() {
         </div>
 
         {form.web_search_enabled && (
-          <label>
-            <span>Brave API Key</span>
-            <input
-              type="password"
-              value={form.brave_api_key}
-              onChange={(e) => setForm({ ...form, brave_api_key: e.target.value })}
-              placeholder="Enter your Brave Search API key"
-            />
-            <span className="hint">
-              Get your API key at{" "}
-              <a
-                href="https://brave.com/search/api/"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: "#646cff" }}
-              >
-                brave.com/search/api
-              </a>{" "}
-              (Free tier: 2000 queries/month)
-            </span>
-          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem', paddingLeft: '1.2rem', borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
+            <label className="form-field">
+              <span>Brave API Key</span>
+              <input
+                type="password"
+                value={form.brave_api_key}
+                onChange={(e) => setForm({ ...form, brave_api_key: e.target.value })}
+                placeholder="Enter your Brave Search API key"
+              />
+              <span className="hint">
+                Get your API key at{" "}
+                <a
+                  href="https://brave.com/search/api/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#646cff" }}
+                >
+                  brave.com/search/api
+                </a>{" "}
+                (Free tier: 2000 queries/month)
+              </span>
+            </label>
+
+            <label className="form-field">
+              <span>Perplexity API Key (OpenClaw 相容)</span>
+              <input
+                type="password"
+                value={form.perplexity_api_key || ''}
+                onChange={(e) => setForm({ ...form, perplexity_api_key: e.target.value })}
+                placeholder="Enter your Perplexity API key"
+              />
+              <span className="hint">
+                Get your API key at{" "}
+                <a
+                  href="https://www.perplexity.ai/settings/api"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#646cff" }}
+                >
+                  perplexity.ai/api
+                </a>{" "}
+                (Paid service, supports Sonar model)
+              </span>
+            </label>
+
+            <label className="form-field">
+              <span>Search Provider (OpenClaw 相容)</span>
+              <Select
+                value={form.search_provider || 'auto'}
+                onChange={(val) => setForm({ ...form, search_provider: val })}
+                options={[
+                  { value: 'auto', label: 'Auto (預設 Brave)' },
+                  { value: 'brave', label: 'Brave Search' },
+                  { value: 'perplexity', label: 'Perplexity Sonar' },
+                ]}
+              />
+              <span className="hint">
+                選擇搜尋提供商。Auto 模式會優先使用已設定的 Brave，無 Brave 時降級到 Perplexity。
+              </span>
+            </label>
+          </div>
         )}
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <Checkbox
+            checked={form.web_fetch_enabled}
+            onChange={(checked) => setForm({ ...form, web_fetch_enabled: checked })}
+            label="啟用 Web Fetch 工具 (OpenClaw 相容)"
+          />
+          <p className="hint" style={{ marginTop: '0.4rem', marginLeft: '1.8rem', color: '#888' }}>
+            網頁內容提取工具：取得並轉換網頁為 Markdown 格式。LLM 可以自動使用此工具讀取完整網頁內容。
+          </p>
+        </div>
 
         <button
           onClick={() => handleSave()}

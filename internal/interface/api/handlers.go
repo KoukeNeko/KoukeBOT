@@ -372,6 +372,9 @@ type SettingsResponse struct {
 	BraveAPIKey      string `json:"brave_api_key"`
 	WebSearchEnabled bool   `json:"web_search_enabled"`
 	DiscordUseReply  bool   `json:"discord_use_reply"`
+	PerplexityAPIKey string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider   string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled  bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
 }
 
 type SettingsUpdateRequest struct {
@@ -382,6 +385,9 @@ type SettingsUpdateRequest struct {
 	BraveAPIKey      string `json:"brave_api_key"`
 	WebSearchEnabled *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
 	DiscordUseReply  *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
+	PerplexityAPIKey string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider   string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled  *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
 }
 
 type ProviderStatusResponse struct {
@@ -397,6 +403,12 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 確保 SearchProvider 有預設值
+	searchProvider := settings.SearchProvider
+	if searchProvider == "" {
+		searchProvider = "auto"
+	}
+
 	writeJSON(w, http.StatusOK, SettingsResponse{
 		GeminiAPIKey:     maskKey(settings.GeminiAPIKey),
 		GeminiModel:      settings.GeminiModel,
@@ -405,6 +417,9 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		BraveAPIKey:      maskKey(settings.BraveAPIKey),
 		WebSearchEnabled: settings.WebSearchEnabled,
 		DiscordUseReply:  settings.DiscordUseReply,
+		PerplexityAPIKey: maskKey(settings.PerplexityAPIKey),
+		SearchProvider:   searchProvider,
+		WebFetchEnabled:  settings.WebFetchEnabled,
 	})
 }
 
@@ -442,6 +457,14 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DiscordUseReply != nil {
 		existing.DiscordUseReply = *req.DiscordUseReply
+	}
+	if req.PerplexityAPIKey != "" && !isMasked(req.PerplexityAPIKey) {
+		existing.PerplexityAPIKey = req.PerplexityAPIKey
+	}
+	// SearchProvider 總是更新（包括空字串和預設值）
+	existing.SearchProvider = req.SearchProvider
+	if req.WebFetchEnabled != nil {
+		existing.WebFetchEnabled = *req.WebFetchEnabled
 	}
 
 	log.Printf("[Settings] Saving settings - Model: %s, ProviderType: %s, WebSearch: %v, DiscordReply: %v",

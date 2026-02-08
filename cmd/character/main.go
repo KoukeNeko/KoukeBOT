@@ -290,11 +290,27 @@ func withSPA(webDir string, apiHandler http.Handler) http.Handler {
 func initializeTools(settings config.Settings) []domain.Tool {
 	var tools []domain.Tool
 
-	// Web Search Tool (Brave Search API)
-	if settings.WebSearchEnabled && settings.BraveAPIKey != "" {
-		braveClient := search.NewBraveSearchClient(settings.BraveAPIKey)
-		webSearchTool := llm.NewWebSearchTool(braveClient)
-		tools = append(tools, webSearchTool)
+	// Web Search Tool (OpenClaw 相容：支援多提供商)
+	if settings.WebSearchEnabled {
+		router := search.NewProviderRouter(
+			settings.BraveAPIKey,
+			settings.PerplexityAPIKey,
+			settings.SearchProvider,
+		)
+
+		if router.IsConfigured() {
+			webSearchTool := llm.NewWebSearchTool(router)
+			tools = append(tools, webSearchTool)
+			log.Printf("Registered web_search tool (provider: %s)", settings.SearchProvider)
+		}
+	}
+
+	// Web Fetch Tool (OpenClaw 相容：網頁內容提取)
+	if settings.WebFetchEnabled {
+		fetcher := search.NewWebFetcher()
+		webFetchTool := llm.NewWebFetchTool(fetcher)
+		tools = append(tools, webFetchTool)
+		log.Println("Registered web_fetch tool")
 	}
 
 	return tools

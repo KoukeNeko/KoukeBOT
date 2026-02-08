@@ -19,10 +19,13 @@ type Settings struct {
 	GeminiAPIKey     string `json:"gemini_api_key"`
 	GeminiModel      string `json:"gemini_model"`
 	DiscordToken     string `json:"discord_token"`
-	ProviderType     string `json:"provider_type"`      // "api-key", "oauth", or "" (auto)
-	BraveAPIKey      string `json:"brave_api_key"`      // Brave Search API key for web search
-	WebSearchEnabled bool   `json:"web_search_enabled"` // Enable/disable web search tool
-	DiscordUseReply  bool   `json:"discord_use_reply"`  // Use reply feature in Discord (default: false)
+	ProviderType     string `json:"provider_type"`        // "api-key", "oauth", or "" (auto)
+	BraveAPIKey      string `json:"brave_api_key"`        // Brave Search API key for web search
+	WebSearchEnabled bool   `json:"web_search_enabled"`   // Enable/disable web search tool
+	DiscordUseReply  bool   `json:"discord_use_reply"`    // Use reply feature in Discord (default: false)
+	PerplexityAPIKey string `json:"perplexity_api_key"`   // Perplexity API key for Sonar search (OpenClaw 相容)
+	SearchProvider   string `json:"search_provider"`      // "brave" | "perplexity" | "auto" (OpenClaw 相容)
+	WebFetchEnabled  bool   `json:"web_fetch_enabled"`    // Enable/disable web_fetch tool (OpenClaw 相容)
 }
 
 // SettingsStore reads and writes settings to a JSON file.

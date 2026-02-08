@@ -50,6 +50,9 @@ export interface SettingsData {
   brave_api_key: string
   web_search_enabled: boolean
   discord_use_reply: boolean
+  perplexity_api_key: string    // OpenClaw 相容
+  search_provider: string        // OpenClaw 相容
+  web_fetch_enabled: boolean     // OpenClaw 相容
 }
 
 export interface ModelEntry {

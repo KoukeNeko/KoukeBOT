@@ -33,7 +33,7 @@ type SearchRequest struct {
 	Freshness  string // Time filter: "pd", "pw", "pm", "py", or date range
 }
 
-// SearchResult represents the search response
+// SearchResult represents the search response (OpenClaw 相容增強版)
 type SearchResult struct {
 	Query    string             `json:"query"`
 	Provider string             `json:"provider"`
@@ -41,15 +41,17 @@ type SearchResult struct {
 	TookMs   int64              `json:"took_ms"`
 	Results  []SearchResultItem `json:"results"`
 	Cached   bool               `json:"cached,omitempty"`
+	Routing  *RoutingMetadata   `json:"routing,omitempty"` // OpenClaw 相容：路由元資料
 }
 
-// SearchResultItem represents a single search result
+// SearchResultItem represents a single search result (OpenClaw 相容增強版)
 type SearchResultItem struct {
-	Title       string `json:"title"`
-	URL         string `json:"url"`
-	Description string `json:"description"`
-	Published   string `json:"published,omitempty"`
-	SiteName    string `json:"site_name,omitempty"`
+	Title       string  `json:"title"`
+	URL         string  `json:"url"`
+	Description string  `json:"description"`
+	Published   string  `json:"published,omitempty"`
+	SiteName    string  `json:"site_name,omitempty"`
+	Score       float64 `json:"score,omitempty"` // OpenClaw 相容：相關度評分
 }
 
 // braveAPIResponse represents Brave's API response format
@@ -77,6 +79,11 @@ func NewBraveSearchClient(apiKey string) *BraveSearchClient {
 		},
 		cache: newSearchCache(),
 	}
+}
+
+// Name returns the provider name (實作 SearchProvider 介面)
+func (c *BraveSearchClient) Name() string {
+	return "brave"
 }
 
 // Search performs a web search and returns results
@@ -107,6 +114,7 @@ func (c *BraveSearchClient) Search(ctx context.Context, req SearchRequest) (Sear
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Accept-Encoding", "gzip")
 	httpReq.Header.Set("X-Subscription-Token", c.apiKey)
+	httpReq.Header.Set("Cache-Control", "no-cache") // 修正 Brave API 422 錯誤
 
 	// Send request
 	resp, err := c.httpClient.Do(httpReq)
@@ -135,15 +143,28 @@ func (c *BraveSearchClient) Search(ctx context.Context, req SearchRequest) (Sear
 		TookMs:   time.Since(start).Milliseconds(),
 		Results:  make([]SearchResultItem, 0, len(braveResp.Web.Results)),
 		Cached:   false,
+		Routing: &RoutingMetadata{
+			AutoRouted:      false,
+			Provider:        "brave",
+			Confidence:      1.0,
+			ConfidenceLevel: "high",
+		},
 	}
 
-	for _, item := range braveResp.Web.Results {
+	for i, item := range braveResp.Web.Results {
+		// OpenClaw 相容：根據排名計算相關度評分 (1.0 → 0.1)
+		score := 1.0 - (float64(i) * 0.1)
+		if score < 0.1 {
+			score = 0.1
+		}
+
 		result.Results = append(result.Results, SearchResultItem{
 			Title:       item.Title,
 			URL:         item.URL,
 			Description: truncateString(item.Description, 200),
 			Published:   item.Age,
 			SiteName:    item.Meta.SiteName,
+			Score:       score,
 		})
 	}
 
