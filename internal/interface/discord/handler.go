@@ -118,6 +118,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	var images []domain.ImageInput
 	for _, attachment := range m.Attachments {
 		if isImageAttachment(attachment) {
+			logHandler.Logf("downloading image: %s (%s, %d bytes)", attachment.Filename, attachment.ContentType, attachment.Size)
 			img, err := downloadImage(attachment.URL)
 			if err != nil {
 				logHandler.Warnf("failed to download image [%s]: %v", m.ChannelID, err)
@@ -125,6 +126,9 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 			}
 			images = append(images, img)
 		}
+	}
+	if len(images) > 0 {
+		logHandler.Logf("images ready: %d file(s)", len(images))
 	}
 
 	// Format current message with envelope (openclaw style)

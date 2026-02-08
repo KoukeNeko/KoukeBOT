@@ -7,8 +7,11 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
+
+var logChat = logger.New("chat", logger.Cyan)
 
 // ChatService orchestrates the full chat pipeline:
 // receive message → load conversation → assemble context → call LLM → persist → return.
@@ -154,6 +157,13 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 	}
 
 	// Build multimodal message with LLM context (includes channel history) and images
+	totalBytes := 0
+	for _, img := range images {
+		totalBytes += len(img.Data)
+		logChat.Logf("image: %s (%s, %.1fKB)", img.Filename, img.MimeType, float64(len(img.Data))/1024)
+	}
+	logChat.Logf("multimodal: %d image(s), %.1fMB total → LLM", len(images), float64(totalBytes)/(1024*1024))
+
 	userParts := []domain.MessagePart{{Text: contextForLLM}}
 	for _, img := range images {
 		userParts = append(userParts, domain.MessagePart{ImageData: &img})
@@ -232,15 +242,22 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 		}
 
 		// Execute tool
+		logChat.Logf("executing: %s", call.Name)
 		result, err := tool.Execute(ctx, call.Input)
 		if err != nil {
-			// Execution error - wrap in error result
+			logChat.Warnf("tool %s error: %v", call.Name, err)
 			results = append(results, domain.ToolResult{
 				ToolCallID: call.ID,
 				Content:    fmt.Sprintf("Error executing tool: %v", err),
 				IsError:    true,
 			})
 			continue
+		}
+
+		if result.IsError {
+			logChat.Warnf("tool %s failed: %s", call.Name, truncateLog(result.Content, 100))
+		} else {
+			logChat.Logf("tool %s done: %d chars", call.Name, len(result.Content))
 		}
 
 		// Success - set tool call ID
@@ -289,6 +306,13 @@ func (s *ChatService) handleToolCallingStream(
 
 		// Handle tool calls if present
 		if len(pendingToolCalls) > 0 {
+			// Log tool call names
+			names := make([]string, len(pendingToolCalls))
+			for i, c := range pendingToolCalls {
+				names[i] = c.Name
+			}
+			logChat.Logf("tool calls: %s", strings.Join(names, ", "))
+
 			// Send tool execution start status for each tool
 			for _, call := range pendingToolCalls {
 				outputCh <- llm.StreamChunk{
@@ -319,6 +343,7 @@ func (s *ChatService) handleToolCallingStream(
 			})
 
 			// Continue conversation with tool results
+			logChat.Logf("continuing with tool results → LLM")
 			assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
 			if err != nil {
 				outputCh <- llm.StreamChunk{Error: fmt.Errorf("assemble context after tools: %w", err), Done: true}
@@ -464,4 +489,12 @@ func formatLLMPrompt(systemPrompt string, messages []domain.Message) string {
 	}
 
 	return prompt.String()
+}
+
+// truncateLog truncates a string for log output
+func truncateLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

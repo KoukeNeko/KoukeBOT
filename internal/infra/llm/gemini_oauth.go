@@ -461,8 +461,25 @@ func (g *GeminiOAuthProvider) buildMultimodalRequest(systemPrompt string, messag
 		caReq.Request.Tools = convertToolsForCA(g.tools)
 	}
 
-	logOAuth.Logf("multimodal request: messages=%d, tools=%d, temp=%.1f, maxTokens=%d",
-		len(messages), len(g.tools), config.temperature, config.maxTokens)
+	// Count images and total size
+	imageCount := 0
+	totalImageBytes := 0
+	for _, msg := range messages {
+		for _, p := range msg.Parts {
+			if p.ImageData != nil {
+				imageCount++
+				totalImageBytes += len(p.ImageData.Data)
+			}
+		}
+	}
+
+	if imageCount > 0 {
+		logOAuth.Logf("multimodal request: messages=%d, images=%d (%.1fMB), tools=%d, temp=%.1f, maxTokens=%d",
+			len(messages), imageCount, float64(totalImageBytes)/(1024*1024), len(g.tools), config.temperature, config.maxTokens)
+	} else {
+		logOAuth.Logf("multimodal request: messages=%d, tools=%d, temp=%.1f, maxTokens=%d",
+			len(messages), len(g.tools), config.temperature, config.maxTokens)
+	}
 
 	return caReq
 }
