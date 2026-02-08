@@ -127,7 +127,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	// Format current message with envelope (openclaw style)
 	senderLabel := resolveSenderLabel(m.Author)
-	timestamp := m.Timestamp.Format("2006-01-02 15:04")
+	timestamp := m.Timestamp.Format("2006-01-02 15:04 MST")
 	currentMessage := formatInboundEnvelope("Discord", senderLabel, timestamp, content)
 
 	// Build channel history context for LLM (openclaw style)
@@ -649,7 +649,7 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 
 		// Format with envelope
 		senderLabel := resolveSenderLabel(msg.Author)
-		timestamp := msg.Timestamp.Format("2006-01-02 15:04")
+		timestamp := msg.Timestamp.Format("2006-01-02 15:04 MST")
 		formattedMsg := formatInboundEnvelope("Discord", senderLabel, timestamp, content)
 		historyLines = append(historyLines, formattedMsg)
 	}

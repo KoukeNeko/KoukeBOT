@@ -24,6 +24,11 @@ type PersonaConfig struct {
 	SystemTemplate string           `yaml:"system_template" json:"system_template"`
 	Generation     GenerationConfig `yaml:"generation" json:"generation"`
 	Variables      map[string]any   `yaml:"variables" json:"variables"`
+
+	// Time and location settings (optional, overrides global settings)
+	Timezone   string `yaml:"timezone,omitempty" json:"timezone,omitempty"`     // "Asia/Taipei", "America/New_York", "auto"
+	TimeFormat string `yaml:"time_format,omitempty" json:"time_format,omitempty"` // "auto", "12", "24"
+	Location   string `yaml:"location,omitempty" json:"location,omitempty"`     // Optional: explicit location "台北, 台灣"
 }
 
 // Anchor represents a single few-shot example for style anchoring.
@@ -40,9 +45,10 @@ type AnchorFile struct {
 }
 
 // PersonaModule is the fully loaded, runtime-ready persona.
-// Assembled from config.yaml + lore.md + anchors.yaml.
+// Assembled from config.yaml + lore.md + anchors.yaml + user.md.
 type PersonaModule struct {
-	Config  PersonaConfig
-	Lore    string   // raw markdown from lore.md
-	Anchors []Anchor // parsed from anchors.yaml
+	Config      PersonaConfig
+	Lore        string // raw markdown from lore.md
+	UserProfile string // raw markdown from user.md
+	Anchors     []Anchor // parsed from anchors.yaml
 }

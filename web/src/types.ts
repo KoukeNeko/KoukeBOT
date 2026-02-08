@@ -18,6 +18,7 @@ export interface PersonaDetail {
   }
   system_template: string
   lore: string
+  user_profile: string
   anchors: Anchor[]
   generation: GenerationConfig
   variables: Record<string, unknown>
@@ -53,6 +54,11 @@ export interface SettingsData {
   perplexity_api_key: string    // OpenClaw 相容
   search_provider: string        // OpenClaw 相容
   web_fetch_enabled: boolean     // OpenClaw 相容
+
+  // Time and location settings (OpenClaw 相容)
+  timezone: string               // "Asia/Taipei", "America/New_York", "auto"
+  time_format: string            // "auto", "12", "24"
+  location: string               // Optional: explicit location "台北, 台灣"
 }
 
 export interface ModelEntry {

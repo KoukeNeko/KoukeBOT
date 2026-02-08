@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	configFileName  = "config.yaml"
-	loreFileName    = "lore.md"
-	anchorsFileName = "anchors.yaml"
+	configFileName      = "config.yaml"
+	loreFileName        = "lore.md"
+	userProfileFileName = "user.md"
+	anchorsFileName     = "anchors.yaml"
 )
 
 // LoadPersona reads a persona folder and assembles a PersonaModule.
@@ -32,15 +33,21 @@ func LoadPersona(baseDir, id string) (*domain.PersonaModule, error) {
 		return nil, fmt.Errorf("load lore for persona %q: %w", id, err)
 	}
 
+	userProfile, err := loadUserProfile(filepath.Join(personaDir, userProfileFileName))
+	if err != nil {
+		return nil, fmt.Errorf("load user profile for persona %q: %w", id, err)
+	}
+
 	anchors, err := loadAnchors(filepath.Join(personaDir, anchorsFileName))
 	if err != nil {
 		return nil, fmt.Errorf("load anchors for persona %q: %w", id, err)
 	}
 
 	return &domain.PersonaModule{
-		Config:  *config,
-		Lore:    lore,
-		Anchors: anchors,
+		Config:      *config,
+		Lore:        lore,
+		UserProfile: userProfile,
+		Anchors:     anchors,
 	}, nil
 }
 
@@ -89,6 +96,17 @@ func loadLore(path string) (string, error) {
 	return string(data), nil
 }
 
+func loadUserProfile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil // Optional
+	}
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	return string(data), nil
+}
+
 func loadAnchors(path string) ([]domain.Anchor, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -116,6 +134,10 @@ func SavePersona(baseDir, id string, module *domain.PersonaModule) error {
 		return fmt.Errorf("save lore for persona %q: %w", id, err)
 	}
 
+	if err := saveUserProfile(filepath.Join(personaDir, userProfileFileName), module.UserProfile); err != nil {
+		return fmt.Errorf("save user profile for persona %q: %w", id, err)
+	}
+
 	if err := saveAnchors(filepath.Join(personaDir, anchorsFileName), module.Anchors); err != nil {
 		return fmt.Errorf("save anchors for persona %q: %w", id, err)
 	}
@@ -129,6 +151,10 @@ func saveConfig(path string, cfg *domain.PersonaConfig) error {
 
 func saveLore(path, lore string) error {
 	return os.WriteFile(path, []byte(lore), 0o644)
+}
+
+func saveUserProfile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 func saveAnchors(path string, anchors []domain.Anchor) error {

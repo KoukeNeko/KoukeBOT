@@ -64,6 +64,7 @@ type PersonaDetail struct {
 	Meta           domain.PersonaMeta      `json:"meta"`
 	SystemTemplate string                  `json:"system_template"`
 	Lore           string                  `json:"lore"`
+	UserProfile    string                  `json:"user_profile"`
 	Anchors        []domain.Anchor         `json:"anchors"`
 	Generation     domain.GenerationConfig `json:"generation"`
 	Variables      map[string]any          `json:"variables"`
@@ -93,6 +94,7 @@ func (h *Handlers) GetPersona(w http.ResponseWriter, r *http.Request) {
 		Meta:           persona.Config.Meta,
 		SystemTemplate: persona.Config.SystemTemplate,
 		Lore:           persona.Lore,
+		UserProfile:    persona.UserProfile,
 		Anchors:        persona.Anchors,
 		Generation:     persona.Config.Generation,
 		Variables:      persona.Config.Variables,
@@ -121,8 +123,9 @@ func (h *Handlers) UpdatePersona(w http.ResponseWriter, r *http.Request) {
 			Generation:     req.Generation,
 			Variables:      req.Variables,
 		},
-		Lore:    req.Lore,
-		Anchors: req.Anchors,
+		Lore:        req.Lore,
+		UserProfile: req.UserProfile,
+		Anchors:     req.Anchors,
 	}
 
 	if err := h.personaService.Update(id, updated); err != nil {

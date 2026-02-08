@@ -31,6 +31,9 @@ export default function Settings() {
     perplexity_api_key: "",
     search_provider: "auto",
     web_fetch_enabled: false,
+    timezone: "auto",
+    time_format: "auto",
+    location: "",
   });
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
@@ -533,7 +536,10 @@ export default function Settings() {
             </label>
 
             <label className="form-field">
-              <span>Perplexity API Key (OpenClaw 相容)</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>Perplexity API Key</span>
+                <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
+              </div>
               <input
                 type="password"
                 value={form.perplexity_api_key || ''}
@@ -555,7 +561,10 @@ export default function Settings() {
             </label>
 
             <label className="form-field">
-              <span>Search Provider (OpenClaw 相容)</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>Search Provider</span>
+                <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
+              </div>
               <Select
                 value={form.search_provider || 'auto'}
                 onChange={(val) => setForm({ ...form, search_provider: val })}
@@ -573,13 +582,95 @@ export default function Settings() {
         )}
 
         <div style={{ marginBottom: '1.25rem' }}>
-          <Checkbox
-            checked={form.web_fetch_enabled}
-            onChange={(checked) => setForm({ ...form, web_fetch_enabled: checked })}
-            label="啟用 Web Fetch 工具 (OpenClaw 相容)"
-          />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <Checkbox
+                checked={form.web_fetch_enabled}
+                onChange={(checked) => setForm({ ...form, web_fetch_enabled: checked })}
+                label="啟用 Web Fetch 工具"
+              />
+              <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
+            </div>
           <p className="hint" style={{ marginTop: '0.4rem', marginLeft: '1.8rem', color: '#888' }}>
             網頁內容提取工具：取得並轉換網頁為 Markdown 格式。LLM 可以自動使用此工具讀取完整網頁內容。
+          </p>
+        </div>
+
+        <h3 style={{ marginTop: '2.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          ⏰ 時間與地區設定
+          <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
+        </h3>
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <label style={{ display: 'block', marginBottom: '0.5rem' }}>
+            時區
+            <div style={{ marginTop: '0.4rem' }}>
+              <Select
+                value={form.timezone || "auto"}
+                onChange={(val) => setForm({ ...form, timezone: val })}
+                options={[
+                  { value: "auto", label: "自動偵測" },
+                  { value: "Asia/Taipei", label: "Asia/Taipei（台北）" },
+                  { value: "Asia/Tokyo", label: "Asia/Tokyo（東京）" },
+                  { value: "Asia/Hong_Kong", label: "Asia/Hong_Kong（香港）" },
+                  { value: "Asia/Shanghai", label: "Asia/Shanghai（上海）" },
+                  { value: "Asia/Seoul", label: "Asia/Seoul（首爾）" },
+                  { value: "Asia/Singapore", label: "Asia/Singapore（新加坡）" },
+                  { value: "America/New_York", label: "America/New_York（紐約）" },
+                  { value: "America/Los_Angeles", label: "America/Los_Angeles（洛杉磯）" },
+                  { value: "America/Chicago", label: "America/Chicago（芝加哥）" },
+                  { value: "Europe/London", label: "Europe/London（倫敦）" },
+                  { value: "Europe/Paris", label: "Europe/Paris（巴黎）" },
+                  { value: "Australia/Sydney", label: "Australia/Sydney（雪梨）" },
+                ]}
+              />
+            </div>
+          </label>
+          <p className="hint" style={{ marginTop: '0.4rem', color: '#888' }}>
+            設定時區以確保 AI 正確理解時間。時區資訊會注入 system prompt（靜態，不影響 prompt cache）。
+          </p>
+        </div>
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <label style={{ display: 'block', marginBottom: '0.5rem' }}>
+            時間格式
+            <div style={{ marginTop: '0.4rem' }}>
+              <Select
+                value={form.time_format || "auto"}
+                onChange={(val) => setForm({ ...form, time_format: val })}
+                options={[
+                  { value: "auto", label: "自動" },
+                  { value: "24", label: "24 小時制" },
+                  { value: "12", label: "12 小時制（AM/PM）" },
+                ]}
+              />
+            </div>
+          </label>
+          <p className="hint" style={{ marginTop: '0.4rem', color: '#888' }}>
+            選擇時間顯示格式。當 AI 使用 session_status 工具查詢時間時，會使用此格式。
+          </p>
+        </div>
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <label style={{ display: 'block', marginBottom: '0.5rem' }}>
+            地區（可選）
+            <input
+              type="text"
+              placeholder="例如：台北, 台灣"
+              value={form.location || ""}
+              onChange={(e) => setForm({ ...form, location: e.target.value })}
+              style={{
+                marginTop: '0.4rem',
+                width: '100%',
+                padding: '0.5rem',
+                border: '1px solid #444',
+                borderRadius: '4px',
+                background: '#1a1a1a',
+                color: '#fff'
+              }}
+            />
+          </label>
+          <p className="hint" style={{ marginTop: '0.4rem', color: '#888' }}>
+            選填：明確指定你的所在地，幫助 AI 更了解你的地理位置。時區已經隱含地理資訊（如 Asia/Taipei → 台灣）。
           </p>
         </div>
 

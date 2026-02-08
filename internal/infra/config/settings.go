@@ -26,6 +26,11 @@ type Settings struct {
 	PerplexityAPIKey string `json:"perplexity_api_key"`   // Perplexity API key for Sonar search (OpenClaw 相容)
 	SearchProvider   string `json:"search_provider"`      // "brave" | "perplexity" | "auto" (OpenClaw 相容)
 	WebFetchEnabled  bool   `json:"web_fetch_enabled"`    // Enable/disable web_fetch tool (OpenClaw 相容)
+
+	// Time and location settings (OpenClaw 相容)
+	Timezone   string `json:"timezone"`    // "Asia/Taipei", "America/New_York", "auto"
+	TimeFormat string `json:"time_format"` // "auto", "12", "24"
+	Location   string `json:"location"`    // Optional: explicit location "台北, 台灣"
 }
 
 // SettingsStore reads and writes settings to a JSON file.

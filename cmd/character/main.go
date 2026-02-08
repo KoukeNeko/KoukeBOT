@@ -313,5 +313,19 @@ func initializeTools(settings config.Settings) []domain.Tool {
 		log.Println("Registered web_fetch tool")
 	}
 
+	// Session Status Tool (OpenClaw 相容：時間感知)
+	// 使用全域設定的時區和時間格式
+	timezone := settings.Timezone
+	if timezone == "" {
+		timezone = "auto"
+	}
+	timeFormat := settings.TimeFormat
+	if timeFormat == "" {
+		timeFormat = "auto"
+	}
+	sessionStatusTool := llm.NewSessionStatusTool(timezone, timeFormat)
+	tools = append(tools, sessionStatusTool)
+	log.Printf("Registered session_status tool (timezone: %s, format: %s)", timezone, timeFormat)
+
 	return tools
 }

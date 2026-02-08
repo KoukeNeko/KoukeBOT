@@ -15,7 +15,7 @@ export default function PersonaDetail() {
 
   // Track which field is open in the modal
   const [editingField, setEditingField] = useState<{
-    type: 'lore' | 'system_template' | 'anchor_input' | 'anchor_response'
+    type: 'lore' | 'system_template' | 'user_profile' | 'anchor_input' | 'anchor_response'
     index?: number
   } | null>(null)
 
@@ -52,6 +52,12 @@ export default function PersonaDetail() {
   const updateLore = (value: string | undefined) => {
     if (!persona) return
     setPersona({ ...persona, lore: value ?? '' })
+    markDirty()
+  }
+
+  const updateUserProfile = (value: string | undefined) => {
+    if (!persona) return
+    setPersona({ ...persona, user_profile: value ?? '' })
     markDirty()
   }
 
@@ -131,7 +137,7 @@ export default function PersonaDetail() {
   if (error) return <p className="error">Error: {error}</p>
   if (!persona) return <p>Not found.</p>
 
-  const { meta, generation, anchors, variables, lore, system_template } = persona
+  const { meta, generation, anchors, variables, lore, system_template, user_profile } = persona
 
   return (
     <div>
@@ -306,12 +312,25 @@ export default function PersonaDetail() {
         </button>
       </section>
 
+      {/* User Profile (Memory) */}
+      <section>
+        <h3>User Profile (Memory)</h3>
+        <p className="hint" style={{ marginBottom: '0.75rem', color: '#666' }}>
+          Persistent user-specific memory or profile data (user.md).
+        </p>
+        <button className="btn-secondary" onClick={() => setEditingField({ type: 'user_profile' })}>
+          Edit User Profile
+        </button>
+      </section>
+
       {/* Editor Modal */}
       {editingField && (
         <EditorModal
           title={
             editingField.type === 'lore'
               ? 'Edit Lore'
+              : editingField.type === 'user_profile'
+              ? 'Edit User Profile (user.md)'
               : editingField.type === 'system_template'
               ? 'Edit System Template'
               : editingField.type === 'anchor_input'
@@ -319,11 +338,13 @@ export default function PersonaDetail() {
               : `Edit Anchor Response (${anchors[editingField.index!].id})`
           }
           language={
-            editingField.type === 'lore' ? 'markdown' : editingField.type === 'system_template' ? 'yaml' : 'plaintext'
+            editingField.type === 'lore' || editingField.type === 'user_profile' ? 'markdown' : editingField.type === 'system_template' ? 'yaml' : 'plaintext'
           }
           value={
             editingField.type === 'lore'
               ? lore
+              : editingField.type === 'user_profile'
+              ? user_profile
               : editingField.type === 'system_template'
               ? system_template
               : editingField.type === 'anchor_input'
@@ -332,6 +353,7 @@ export default function PersonaDetail() {
           }
           onChange={(v) => {
             if (editingField.type === 'lore') updateLore(v)
+            else if (editingField.type === 'user_profile') updateUserProfile(v)
             else if (editingField.type === 'system_template') updateSystemTemplate(v)
             else if (editingField.type === 'anchor_input') updateAnchor(editingField.index!, 'user_input', v ?? '')
             else if (editingField.type === 'anchor_response') updateAnchor(editingField.index!, 'bot_response', v ?? '')

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
-	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/util"
 )
 
 // AssembledContext is the final prompt payload ready to send to a Provider.
@@ -55,7 +55,7 @@ func (a *ContextAssembler) Assemble(
 }
 
 // renderSystemPrompt executes the Go template in system_template,
-// injecting Lore, formatted Anchors, and current time.
+// injecting Lore, formatted Anchors, and timezone (static for prompt caching).
 func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule) (string, error) {
 	tmpl, err := template.New("system").Parse(persona.Config.SystemTemplate)
 	if err != nil {
@@ -64,16 +64,29 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule) (st
 
 	anchorsText := formatAnchorsForTemplate(persona.Anchors)
 
+	// Determine timezone (persona-level overrides global, default to "auto")
+	timezone := persona.Config.Timezone
+	if timezone == "" {
+		timezone = "auto" // Will be resolved to local timezone
+	}
+
 	data := map[string]string{
 		"Lore":    persona.Lore,
 		"Anchors": anchorsText,
-		"Time":    time.Now().Format("2006-01-02 15:04:05 MST"),
+		"Time":    util.FormatTimezoneOnly(timezone), // Static timezone string (cache-friendly)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("execute system template: %w", err)
 	}
+
+	// Append system-level tool usage instructions (non-persona-specific)
+	buf.WriteString("\n\n---\n\n")
+	buf.WriteString("## System Instructions\n\n")
+	buf.WriteString("- Message envelopes contain timestamps. Use them for context about when messages were sent.\n")
+	buf.WriteString("- If you need the current date, time, or day of week, call the `session_status` tool.\n")
+	buf.WriteString("- Only call `session_status` when you need the precise current time, not for every response.\n")
 
 	return buf.String(), nil
 }

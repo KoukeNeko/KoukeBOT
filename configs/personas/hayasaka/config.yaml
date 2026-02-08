@@ -65,3 +65,9 @@ variables:
   sanity_level: 15 # 初始理智值
   caffeine_level: 120 # 初始咖啡因
   current_location: "Student Council Server Room"
+
+# 時間與地區設定 (可選，會覆蓋全域設定) (OpenClaw 相容)
+# 如果不設定，會使用 Settings 的全域值
+# timezone: "Asia/Taipei"    # 時區（"Asia/Taipei", "America/New_York", "auto"）
+# time_format: "24"          # 時間格式（"auto", "12", "24"）
+# location: "台北, 台灣"      # 明確地區（可選）
