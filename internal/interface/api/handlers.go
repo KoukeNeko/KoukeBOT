@@ -365,17 +365,23 @@ func truncate(s string, maxLen int) string {
 // --- Settings endpoints ---
 
 type SettingsResponse struct {
-	GeminiAPIKey string `json:"gemini_api_key"`
-	GeminiModel  string `json:"gemini_model"`
-	DiscordToken string `json:"discord_token"`
-	ProviderType string `json:"provider_type"`
+	GeminiAPIKey     string `json:"gemini_api_key"`
+	GeminiModel      string `json:"gemini_model"`
+	DiscordToken     string `json:"discord_token"`
+	ProviderType     string `json:"provider_type"`
+	BraveAPIKey      string `json:"brave_api_key"`
+	WebSearchEnabled bool   `json:"web_search_enabled"`
+	DiscordUseReply  bool   `json:"discord_use_reply"`
 }
 
 type SettingsUpdateRequest struct {
-	GeminiAPIKey string `json:"gemini_api_key"`
-	GeminiModel  string `json:"gemini_model"`
-	DiscordToken string `json:"discord_token"`
-	ProviderType string `json:"provider_type"`
+	GeminiAPIKey     string `json:"gemini_api_key"`
+	GeminiModel      string `json:"gemini_model"`
+	DiscordToken     string `json:"discord_token"`
+	ProviderType     string `json:"provider_type"`
+	BraveAPIKey      string `json:"brave_api_key"`
+	WebSearchEnabled *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
+	DiscordUseReply  *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
 }
 
 type ProviderStatusResponse struct {
@@ -392,10 +398,13 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SettingsResponse{
-		GeminiAPIKey: maskKey(settings.GeminiAPIKey),
-		GeminiModel:  settings.GeminiModel,
-		DiscordToken: maskKey(settings.DiscordToken),
-		ProviderType: settings.ProviderType,
+		GeminiAPIKey:     maskKey(settings.GeminiAPIKey),
+		GeminiModel:      settings.GeminiModel,
+		DiscordToken:     maskKey(settings.DiscordToken),
+		ProviderType:     settings.ProviderType,
+		BraveAPIKey:      maskKey(settings.BraveAPIKey),
+		WebSearchEnabled: settings.WebSearchEnabled,
+		DiscordUseReply:  settings.DiscordUseReply,
 	})
 }
 
@@ -425,9 +434,18 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.ProviderType != "" {
 		existing.ProviderType = req.ProviderType
 	}
+	if req.BraveAPIKey != "" && !isMasked(req.BraveAPIKey) {
+		existing.BraveAPIKey = req.BraveAPIKey
+	}
+	if req.WebSearchEnabled != nil {
+		existing.WebSearchEnabled = *req.WebSearchEnabled
+	}
+	if req.DiscordUseReply != nil {
+		existing.DiscordUseReply = *req.DiscordUseReply
+	}
 
-	log.Printf("[Settings] Saving settings - Model: %s, ProviderType: %s",
-		existing.GeminiModel, existing.ProviderType)
+	log.Printf("[Settings] Saving settings - Model: %s, ProviderType: %s, WebSearch: %v, DiscordReply: %v",
+		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)
 
 	if err := h.settingsStore.Save(existing); err != nil {
 		writeError(w, http.StatusInternalServerError, "save settings: "+err.Error())

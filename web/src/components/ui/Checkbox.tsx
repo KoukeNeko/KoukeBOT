@@ -1,5 +1,3 @@
-import React from 'react'
-
 interface CheckboxProps {
   checked: boolean
   onChange: (checked: boolean) => void
@@ -28,7 +26,7 @@ export default function Checkbox({
     >
       <div
         className={`checkbox-box ${checked ? 'checked' : ''}`}
-        onClick={(e) => {
+        onClick={() => {
           if (disabled) return
           // Prevent triggering label click twice if using label tag wrapping
           // But here we rely on the parent label tag behavior or manual
