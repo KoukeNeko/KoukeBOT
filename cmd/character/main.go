@@ -77,7 +77,17 @@ func run() error {
 	log.Println("Conversation store: data/conversations")
 
 	// Initialize tools (OpenClaw-style web search)
-	tools := initializeTools(settings)
+	// Get the first persona directory for file operations (single-persona mode)
+	var firstPersonaDir string
+	entries, _ := os.ReadDir(personasDir)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			firstPersonaDir = entry.Name()
+			break
+		}
+	}
+
+	tools := initializeTools(settings, firstPersonaDir)
 	if len(tools) > 0 {
 		providerManager.RegisterTools(tools)
 		log.Printf("Registered %d tool(s)", len(tools))
@@ -287,7 +297,7 @@ func withSPA(webDir string, apiHandler http.Handler) http.Handler {
 }
 
 // initializeTools creates and returns enabled tools based on settings
-func initializeTools(settings config.Settings) []domain.Tool {
+func initializeTools(settings config.Settings, personaID string) []domain.Tool {
 	var tools []domain.Tool
 
 	// Web Search Tool (OpenClaw 相容：支援多提供商)
@@ -326,6 +336,17 @@ func initializeTools(settings config.Settings) []domain.Tool {
 	sessionStatusTool := llm.NewSessionStatusTool(timezone, timeFormat)
 	tools = append(tools, sessionStatusTool)
 	log.Printf("Registered session_status tool (timezone: %s, format: %s)", timezone, timeFormat)
+
+	// File Operations Tools (OpenClaw 相容：USER.md 支援)
+	if personaID != "" {
+		personaDir := filepath.Join("configs/personas", personaID)
+		fileReadTool := llm.NewFileReadTool(personaDir)
+		fileWriteTool := llm.NewFileWriteTool(personaDir)
+		fileAppendTool := llm.NewFileAppendTool(personaDir)
+
+		tools = append(tools, fileReadTool, fileWriteTool, fileAppendTool)
+		log.Printf("Registered file operations tools for persona: %s", personaID)
+	}
 
 	return tools
 }
