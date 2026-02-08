@@ -140,11 +140,8 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	var streamCh <-chan llm.StreamChunk
 	var err error
 	if len(images) > 0 {
-		if content == "" {
-			content = "這張圖片顯示了什麼？" // Default prompt if no text provided
-		}
-		// For images, use original content without context to avoid confusion
-		streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, m.ChannelID, h.bot.PersonaID(), content, images)
+		// Use finalContent (with history context) for images too (openclaw style)
+		streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, m.ChannelID, h.bot.PersonaID(), finalContent, images)
 	} else {
 		streamCh, err = h.chatService.HandleMessageStream(ctx, m.ChannelID, h.bot.PersonaID(), finalContent)
 	}
