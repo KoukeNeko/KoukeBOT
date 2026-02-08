@@ -331,12 +331,6 @@ func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 // Tools will be sent as functionDeclarations in every API request.
 func (g *GeminiOAuthProvider) RegisterTools(tools []domain.Tool) {
 	g.tools = tools
-	if len(tools) > 0 {
-		log.Printf("[GeminiOAuth] Registered %d tools for function calling", len(tools))
-		for _, t := range tools {
-			log.Printf("[GeminiOAuth]   - %s: %s", t.Name(), t.Description())
-		}
-	}
 }
 
 // --- Cloud Code Assist API types ---

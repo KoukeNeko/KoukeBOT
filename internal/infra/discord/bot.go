@@ -2,10 +2,12 @@ package discord
 
 import (
 	"fmt"
-	"log"
 
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/bwmarrin/discordgo"
 )
+
+var logBot = logger.New("discord", logger.Magenta)
 
 // Bot wraps a discordgo.Session with lifecycle management.
 type Bot struct {
@@ -57,7 +59,7 @@ func (b *Bot) RegisterCommands(commands []*discordgo.ApplicationCommand) error {
 			return fmt.Errorf("register command %q: %w", cmd.Name, err)
 		}
 		b.commandIDs = append(b.commandIDs, registered.ID)
-		log.Printf("registered slash command: /%s", cmd.Name)
+		logBot.Logf("slash command: /%s", cmd.Name)
 	}
 
 	return nil
@@ -68,7 +70,7 @@ func (b *Bot) UnregisterCommands() {
 	appID := b.session.State.User.ID
 	for _, cmdID := range b.commandIDs {
 		if err := b.session.ApplicationCommandDelete(appID, "", cmdID); err != nil {
-			log.Printf("failed to unregister command %s: %v", cmdID, err)
+			logBot.Warnf("failed to unregister command %s: %v", cmdID, err)
 		}
 	}
 }
@@ -78,13 +80,13 @@ func (b *Bot) Start() error {
 	if err := b.session.Open(); err != nil {
 		return fmt.Errorf("open discord connection: %w", err)
 	}
-	log.Printf("discord bot connected as %s#%s", b.session.State.User.Username, b.session.State.User.Discriminator)
+	logBot.Logf("connected as %s#%s", b.session.State.User.Username, b.session.State.User.Discriminator)
 	return nil
 }
 
 // Stop gracefully closes the Discord connection.
 func (b *Bot) Stop() error {
-	log.Println("closing discord connection...")
+	logBot.Log("closing connection...")
 	return b.session.Close()
 }
 

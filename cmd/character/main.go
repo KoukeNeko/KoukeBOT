@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +15,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/search"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 	"github.com/KoukeNeko/KoukeBOT/internal/interface/api"
@@ -30,9 +30,21 @@ const (
 	defaultPort    = "8080"
 )
 
+// Module loggers (Docker Compose style)
+var (
+	logSystem  = logger.New("system", logger.White)
+	logPersona = logger.New("persona", logger.Cyan)
+	logLLM     = logger.New("llm", logger.Yellow)
+	logStore   = logger.New("store", logger.Blue)
+	logTools   = logger.New("tools", logger.Green)
+	logDiscord = logger.New("discord", logger.Magenta)
+	logHTTP    = logger.New("http", logger.Blue)
+)
+
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("fatal: %v", err)
+		logSystem.Errorf("fatal: %v", err)
+		os.Exit(1)
 	}
 }
 
@@ -54,10 +66,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init persona service: %w", err)
 	}
-	log.Printf("loaded %d persona(s)", len(personaService.GetAll()))
-
+	logPersona.Logf("loaded %d persona(s)", len(personaService.GetAll()))
 	for id, p := range personaService.GetAll() {
-		log.Printf("  - %s (%s)", p.Config.Meta.Name, id)
+		logPersona.Logf("  %s [%s]", p.Config.Meta.Name, id)
 	}
 
 	// Init LLM provider (optional — can be configured later via Web UI)
@@ -74,7 +85,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init conversation store: %w", err)
 	}
-	log.Println("Conversation store: data/conversations")
+	logStore.Log("data/conversations")
 
 	// Initialize tools (OpenClaw-style web search)
 	// Get the first persona directory for file operations (single-persona mode)
@@ -90,10 +101,6 @@ func run() error {
 	tools := initializeTools(settings, firstPersonaDir)
 	if len(tools) > 0 {
 		providerManager.RegisterTools(tools)
-		log.Printf("Registered %d tool(s)", len(tools))
-		for _, tool := range tools {
-			log.Printf("  - %s", tool.Name())
-		}
 	}
 
 	assembler := app.NewContextAssembler()
@@ -102,11 +109,11 @@ func run() error {
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
 		if err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore); err != nil {
-			log.Printf("WARNING: Discord bot failed to start: %v", err)
-			log.Println("continuing without Discord bot — HTTP API will still be available")
+			logDiscord.Warnf("failed to start: %v", err)
+			logDiscord.Log("continuing without Discord — HTTP API still available")
 		}
 	} else {
-		log.Println("DISCORD_TOKEN not set — skipping Discord bot")
+		logDiscord.Warnf("DISCORD_TOKEN not set — skipped")
 	}
 
 	// Init OAuth flow for Gemini CLI auth
@@ -116,13 +123,13 @@ func run() error {
 	// Start HTTP API server
 	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow, convStore)
 
-	log.Printf("character bot ready — API on :%s", port)
+	logSystem.Logf("ready — API on :%s", port)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("shutting down...")
+	logSystem.Log("shutting down...")
 	cancel()
 	return nil
 }
@@ -132,7 +139,7 @@ func run() error {
 func resolveSettings(settingsStore *config.SettingsStore) config.Settings {
 	settings, err := settingsStore.Load()
 	if err != nil {
-		log.Printf("WARNING: failed to load settings: %v", err)
+		logSystem.Warnf("failed to load settings: %v", err)
 	}
 
 	if envKey := os.Getenv("GEMINI_API_KEY"); envKey != "" {
@@ -155,13 +162,13 @@ func initProvider(ctx context.Context, settings config.Settings, pm *app.Provide
 		if initOAuthProvider(ctx, pm, model) {
 			return
 		}
-		log.Println("OAuth selected but not available — configure at http://localhost:" + port + "/settings")
+		logLLM.Warnf("OAuth selected but not available — configure at http://localhost:%s/settings", port)
 
 	case config.ProviderAPIKey:
 		if initAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model) {
 			return
 		}
-		log.Println("API key selected but invalid — configure at http://localhost:" + port + "/settings")
+		logLLM.Warnf("API key selected but invalid — configure at http://localhost:%s/settings", port)
 
 	default:
 		// Auto: API key first, then OAuth.
@@ -171,7 +178,7 @@ func initProvider(ctx context.Context, settings config.Settings, pm *app.Provide
 		if initOAuthProvider(ctx, pm, model) {
 			return
 		}
-		log.Println("no LLM credentials — configure at http://localhost:" + port + "/settings")
+		logLLM.Warnf("no LLM credentials — configure at http://localhost:%s/settings", port)
 	}
 }
 
@@ -181,11 +188,11 @@ func initAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderMana
 	}
 	provider, err := llm.NewGeminiAPIProvider(ctx, apiKey, model)
 	if err != nil {
-		log.Printf("WARNING: failed to init Gemini API provider: %v", err)
+		logLLM.Warnf("failed to init Gemini API provider: %v", err)
 		return false
 	}
 	pm.Update(provider)
-	log.Printf("LLM provider: %s (model: %s)", provider.ModelInfo().ProviderName, model)
+	logLLM.Logf("%s (model: %s)", provider.ModelInfo().ProviderName, model)
 	return true
 }
 
@@ -195,15 +202,15 @@ func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model strin
 		return false
 	}
 	if err := llm.RefreshIfNeeded(ctx, oauthData, oauthTokenPath); err != nil {
-		log.Printf("WARNING: OAuth token refresh failed: %v", err)
+		logLLM.Warnf("OAuth token refresh failed: %v", err)
 	}
 	provider, err := llm.NewGeminiOAuthProvider(ctx, oauthData, model)
 	if err != nil {
-		log.Printf("WARNING: failed to init Gemini OAuth provider: %v", err)
+		logLLM.Warnf("failed to init Gemini OAuth provider: %v", err)
 		return false
 	}
 	pm.Update(provider)
-	log.Printf("LLM provider: %s (model: %s, project: %s)", provider.ModelInfo().ProviderName, model, oauthData.ProjectID)
+	logLLM.Logf("%s (model: %s, project: %s)", provider.ModelInfo().ProviderName, model, oauthData.ProjectID)
 	return true
 }
 
@@ -240,7 +247,7 @@ func startDiscordBot(token string, useReply bool, personaService *app.PersonaSer
 		return fmt.Errorf("register slash commands: %w", err)
 	}
 
-	log.Printf("discord bot serving persona: %s", personaID)
+	logDiscord.Logf("serving persona: %s", personaID)
 	return nil
 }
 
@@ -261,14 +268,14 @@ func startAPIServer(
 	webDir := filepath.Join("web", "dist")
 	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
 		handler = withSPA(webDir, handler)
-		log.Printf("serving web frontend from %s", webDir)
+		logHTTP.Logf("frontend: %s", webDir)
 	}
 
 	go func() {
-		addr := ":" + port
-		log.Printf("HTTP listening on %s", addr)
-		if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server error: %v", err)
+		logHTTP.Logf("listening on :%s", port)
+		if err := http.ListenAndServe(":"+port, handler); err != nil && err != http.ErrServerClosed {
+			logHTTP.Errorf("server error: %v", err)
+			os.Exit(1)
 		}
 	}()
 }
@@ -299,32 +306,28 @@ func withSPA(webDir string, apiHandler http.Handler) http.Handler {
 // initializeTools creates and returns enabled tools based on settings
 func initializeTools(settings config.Settings, personaID string) []domain.Tool {
 	var tools []domain.Tool
+	var toolNames []string
 
-	// Web Search Tool (OpenClaw 相容：支援多提供商)
+	// Web Search Tool
 	if settings.WebSearchEnabled {
 		router := search.NewProviderRouter(
 			settings.BraveAPIKey,
 			settings.PerplexityAPIKey,
 			settings.SearchProvider,
 		)
-
 		if router.IsConfigured() {
-			webSearchTool := llm.NewWebSearchTool(router)
-			tools = append(tools, webSearchTool)
-			log.Printf("Registered web_search tool (provider: %s)", settings.SearchProvider)
+			tools = append(tools, llm.NewWebSearchTool(router))
+			toolNames = append(toolNames, fmt.Sprintf("web_search (provider: %s)", settings.SearchProvider))
 		}
 	}
 
-	// Web Fetch Tool (OpenClaw 相容：網頁內容提取)
+	// Web Fetch Tool
 	if settings.WebFetchEnabled {
-		fetcher := search.NewWebFetcher()
-		webFetchTool := llm.NewWebFetchTool(fetcher)
-		tools = append(tools, webFetchTool)
-		log.Println("Registered web_fetch tool")
+		tools = append(tools, llm.NewWebFetchTool(search.NewWebFetcher()))
+		toolNames = append(toolNames, "web_fetch")
 	}
 
-	// Session Status Tool (OpenClaw 相容：時間感知)
-	// 使用全域設定的時區和時間格式
+	// Session Status Tool
 	timezone := settings.Timezone
 	if timezone == "" {
 		timezone = "auto"
@@ -333,20 +336,25 @@ func initializeTools(settings config.Settings, personaID string) []domain.Tool {
 	if timeFormat == "" {
 		timeFormat = "auto"
 	}
-	sessionStatusTool := llm.NewSessionStatusTool(timezone, timeFormat)
-	tools = append(tools, sessionStatusTool)
-	log.Printf("Registered session_status tool (timezone: %s, format: %s)", timezone, timeFormat)
+	tools = append(tools, llm.NewSessionStatusTool(timezone, timeFormat))
+	toolNames = append(toolNames, fmt.Sprintf("session_status (tz: %s)", timezone))
 
-	// File Operations Tools (OpenClaw 相容：USER.md 支援)
+	// File Operations Tools
 	if personaID != "" {
 		personaDir := filepath.Join("configs/personas", personaID)
-		fileReadTool := llm.NewFileReadTool(personaDir)
-		fileWriteTool := llm.NewFileWriteTool(personaDir)
-		fileAppendTool := llm.NewFileAppendTool(personaDir)
-
-		tools = append(tools, fileReadTool, fileWriteTool, fileAppendTool)
-		log.Printf("Registered file operations tools for persona: %s", personaID)
+		tools = append(tools,
+			llm.NewFileReadTool(personaDir),
+			llm.NewFileWriteTool(personaDir),
+			llm.NewFileAppendTool(personaDir),
+		)
+		toolNames = append(toolNames, fmt.Sprintf("file_read, file_write, file_append (persona: %s)", personaID))
 	}
+
+	// Print all tools in compact format
+	for _, name := range toolNames {
+		logTools.Logf("%s", name)
+	}
+	logTools.Logf("total: %d tool(s) registered", len(tools))
 
 	return tools
 }
