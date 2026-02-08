@@ -172,11 +172,14 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 		if chunk.Error != nil {
 			log.Printf("stream error [%s]: %v", channelID, chunk.Error)
 
+			// Format user-friendly error message
+			errorMsg := formatDiscordError(chunk.Error)
+
 			if messageID != "" {
 				// Update existing message with error
-				_ = h.bot.EditMessage(channelID, messageID, "⚠️ Stream error occurred.")
+				_ = h.bot.EditMessage(channelID, messageID, errorMsg)
 			} else {
-				_ = h.bot.SendMessage(channelID, "⚠️ Stream error occurred.")
+				_ = h.bot.SendMessage(channelID, errorMsg)
 			}
 			return
 		}
@@ -552,6 +555,52 @@ func formatToolCallIndicator(toolCalls []domain.ToolCall) string {
 	}
 
 	return strings.Join(indicators, "\n")
+}
+
+// formatDiscordError converts technical errors to user-friendly Discord messages
+func formatDiscordError(err error) string {
+	errMsg := err.Error()
+
+	// Check for quota exhausted (429) error
+	if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "QUOTA_EXHAUSTED") || strings.Contains(errMsg, "exhausted your capacity") {
+		// Extract reset time if available
+		if strings.Contains(errMsg, "quota will reset after") {
+			// Try to extract the time (e.g., "16m9s")
+			start := strings.Index(errMsg, "reset after ") + len("reset after ")
+			end := strings.Index(errMsg[start:], ".")
+			if end > 0 {
+				resetTime := errMsg[start : start+end]
+				return fmt.Sprintf("⏳ **API 配額已用完**\n請等待 **%s** 後重試\n\n💡 提示：可至 Web UI Settings 切換到 API Key 模式", resetTime)
+			}
+		}
+		return "⏳ **API 配額已用完**\n請稍後再試\n\n💡 提示：請至 Web UI Settings 切換到 API Key 模式，或等待配額重置"
+	}
+
+	// Check for authentication errors
+	if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "Unauthorized") || strings.Contains(errMsg, "UNAUTHENTICATED") {
+		return "🔐 **認證失敗**\n請至 Web UI Settings 重新設定 API Key 或 OAuth"
+	}
+
+	// Check for network errors
+	if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "network") {
+		return "🌐 **網路連線失敗**\n請檢查網路連線或稍後再試"
+	}
+
+	// Check for rate limit errors
+	if strings.Contains(errMsg, "rate limit") || strings.Contains(errMsg, "too many requests") {
+		return "⚠️ **請求過於頻繁**\n請稍等片刻後再試"
+	}
+
+	// Generic error fallback
+	return fmt.Sprintf("❌ **發生錯誤**\n%s\n\n💡 請查看後端 log 或至 Web UI 檢查設定", truncateError(errMsg, 200))
+}
+
+// truncateError truncates error message to avoid Discord message length limit
+func truncateError(msg string, maxLen int) string {
+	if len(msg) <= maxLen {
+		return msg
+	}
+	return msg[:maxLen] + "..."
 }
 
 // buildChannelHistoryContext builds openclaw-style channel history context.

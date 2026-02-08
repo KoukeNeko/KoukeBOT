@@ -415,6 +415,40 @@ button:disabled {
   padding: 0.75rem 1rem;
   border-radius: 14px;
   line-height: 1.5;
+  position: relative; /* For positioning reply button */
+}
+
+.chat-bubble .reply-btn {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  background: #2a2a48;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  color: #a0a8ff;
+}
+
+.chat-bubble:hover .reply-btn {
+  opacity: 1;
+  transform: scale(1);
+  top: -12px; /* Slight lift on hover */
+}
+
+.chat-bubble .reply-btn:hover {
+  background: #646cff;
+  color: white;
+  border-color: #646cff;
 }
 
 .chat-bubble pre {
