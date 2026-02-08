@@ -90,6 +90,7 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 	// Collect all SSE chunks into a single response.
 	var fullText strings.Builder
 	var totalTokens int
+	var lastFinishReason string
 	chunkCount := 0
 
 	log.Printf("[GeminiOAuth] Starting SSE stream processing")
@@ -127,6 +128,15 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 			continue
 		}
 
+		// Track finish reason from candidates
+		if chunk.Response != nil && len(chunk.Response.Candidates) > 0 {
+			candidate := chunk.Response.Candidates[0]
+			if candidate.FinishReason != "" {
+				lastFinishReason = candidate.FinishReason
+				log.Printf("[GeminiOAuth] Finish reason: %s", lastFinishReason)
+			}
+		}
+
 		text, tokens := extractCAChunk(chunk)
 		log.Printf("[GeminiOAuth] Extracted text length: %d, tokens: %d", len(text), tokens)
 
@@ -148,8 +158,22 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 	}
 
 	finalContent := fullText.String()
-	log.Printf("[GeminiOAuth] Stream complete - Total: %d chunks, %d chars, %d tokens",
-		chunkCount, len(finalContent), totalTokens)
+	log.Printf("[GeminiOAuth] Stream complete - Total: %d chunks, %d chars, %d tokens, finishReason: %s",
+		chunkCount, len(finalContent), totalTokens, lastFinishReason)
+
+	// Check for truncation
+	if lastFinishReason == "MAX_TOKENS" {
+		log.Printf("[GeminiOAuth] WARNING: Response was truncated due to MAX_TOKENS limit")
+		log.Printf("[GeminiOAuth] Consider increasing max_tokens in persona config or using a shorter prompt")
+	} else if lastFinishReason == "SAFETY" {
+		return nil, fmt.Errorf("response blocked by safety filters")
+	} else if lastFinishReason == "RECITATION" {
+		return nil, fmt.Errorf("response blocked due to recitation concerns")
+	} else if lastFinishReason == "BLOCKLIST" {
+		return nil, fmt.Errorf("response blocked by content blocklist")
+	} else if lastFinishReason != "" && lastFinishReason != "STOP" {
+		log.Printf("[GeminiOAuth] WARNING: Unexpected finish reason: %s", lastFinishReason)
+	}
 
 	return &ChatResponse{
 		Content:    finalContent,
@@ -264,7 +288,8 @@ type caResponseBody struct {
 }
 
 type caCandidate struct {
-	Content caContent `json:"content"`
+	Content      caContent `json:"content"`
+	FinishReason string    `json:"finishReason,omitempty"`
 }
 
 type caUsage struct {
