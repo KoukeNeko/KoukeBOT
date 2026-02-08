@@ -80,6 +80,13 @@ func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, u
 
 // HandleMessageStream processes a user message and returns a streaming channel.
 func (s *ChatService) HandleMessageStream(ctx context.Context, channelID, personaID, userMessage string) (<-chan llm.StreamChunk, error) {
+	return s.HandleMessageStreamWithContext(ctx, channelID, personaID, userMessage, userMessage)
+}
+
+// HandleMessageStreamWithContext processes a user message with separate display and storage versions.
+// contextForLLM: the full message (with channel history) sent to LLM
+// messageToStore: the clean message (without channel history markers) saved to conversation store
+func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string) (<-chan llm.StreamChunk, error) {
 	persona, err := s.resolvePersona(personaID)
 	if err != nil {
 		return nil, err
@@ -90,12 +97,16 @@ func (s *ChatService) HandleMessageStream(ctx context.Context, channelID, person
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
-	conv.AppendUserMessage(userMessage)
+	// Temporarily append the LLM context version for assembly
+	conv.AppendUserMessage(contextForLLM)
 
 	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
 	if err != nil {
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
+
+	// Remove the temporary message - we'll store the clean version later
+	conv.Messages = conv.Messages[:len(conv.Messages)-1]
 
 	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
@@ -119,6 +130,8 @@ func (s *ChatService) HandleMessageStream(ctx context.Context, channelID, person
 			}
 			fullResponse += chunk.Content
 			if chunk.Done {
+				// Store the CLEAN message (without channel history markers)
+				conv.AppendUserMessage(messageToStore)
 				conv.AppendAssistantMessage(fullResponse)
 				_ = s.store.Save(ctx, conv) // best-effort persist
 			}
@@ -130,6 +143,13 @@ func (s *ChatService) HandleMessageStream(ctx context.Context, channelID, person
 
 // HandleMessageStreamWithImages processes a user message with images and returns a streaming channel.
 func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channelID, personaID, userMessage string, images []domain.ImageInput) (<-chan llm.StreamChunk, error) {
+	return s.HandleMessageStreamWithImagesAndContext(ctx, channelID, personaID, userMessage, userMessage, images)
+}
+
+// HandleMessageStreamWithImagesAndContext processes a user message with images and separate display/storage versions.
+// contextForLLM: the full message (with channel history) sent to LLM
+// messageToStore: the clean message (without channel history markers) saved to conversation store
+func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string, images []domain.ImageInput) (<-chan llm.StreamChunk, error) {
 	persona, err := s.resolvePersona(personaID)
 	if err != nil {
 		return nil, err
@@ -140,8 +160,8 @@ func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channel
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
-	// Build multimodal message with text and images
-	userParts := []domain.MessagePart{{Text: userMessage}}
+	// Build multimodal message with LLM context (includes channel history) and images
+	userParts := []domain.MessagePart{{Text: contextForLLM}}
 	for _, img := range images {
 		userParts = append(userParts, domain.MessagePart{ImageData: &img})
 	}
@@ -184,8 +204,8 @@ func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channel
 			}
 			fullResponse += chunk.Content
 			if chunk.Done {
-				// For now, store text-only representation (flatten images)
-				conv.AppendUserMessage(userMessage) // TODO: enhance storage to support multimodal
+				// Store the CLEAN message (without channel history markers)
+				conv.AppendUserMessage(messageToStore)
 				conv.AppendAssistantMessage(fullResponse)
 				_ = s.store.Save(ctx, conv) // best-effort persist
 			}

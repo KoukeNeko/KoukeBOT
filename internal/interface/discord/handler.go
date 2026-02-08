@@ -128,22 +128,24 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	timestamp := m.Timestamp.Format("2006-01-02 15:04")
 	currentMessage := formatInboundEnvelope("Discord", senderLabel, timestamp, content)
 
-	// Build final content with channel history context (only in guilds, not DMs)
-	var finalContent string
+	// Build channel history context for LLM (openclaw style)
+	// This is used for immediate context but NOT stored in conversation
+	var contextForLLM string
 	if !isDM(m) {
-		finalContent = h.buildChannelHistoryContext(s, m.ChannelID, m.ID, currentMessage)
+		contextForLLM = h.buildChannelHistoryContext(s, m.ChannelID, m.ID, currentMessage)
 	} else {
-		finalContent = currentMessage
+		contextForLLM = currentMessage
 	}
 
-	// Use multimodal handler if images are present
+	// Pass both: contextForLLM (with channel history) and currentMessage (for storage)
 	var streamCh <-chan llm.StreamChunk
 	var err error
 	if len(images) > 0 {
-		// Use finalContent (with history context) for images too (openclaw style)
-		streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, m.ChannelID, h.bot.PersonaID(), finalContent, images)
+		streamCh, err = h.chatService.HandleMessageStreamWithImagesAndContext(
+			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, images)
 	} else {
-		streamCh, err = h.chatService.HandleMessageStream(ctx, m.ChannelID, h.bot.PersonaID(), finalContent)
+		streamCh, err = h.chatService.HandleMessageStreamWithContext(
+			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage)
 	}
 
 	if err != nil {
