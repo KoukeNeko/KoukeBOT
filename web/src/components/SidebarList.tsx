@@ -36,7 +36,7 @@ interface SidebarItemProps {
   to?: string
   onClick?: () => void
   active?: boolean
-  title: string
+  title: string | React.ReactNode
   subtitle?: string
   description?: string
   children?: React.ReactNode

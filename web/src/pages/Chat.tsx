@@ -265,6 +265,16 @@ export default function Chat() {
     return date.toLocaleDateString('zh-TW')
   }
 
+  const getConvSource = (channelId: string) => {
+    return channelId === 'web-test' ? 'Web' : 'Discord'
+  }
+
+  const getConvSourceBadge = (channelId: string) => {
+    const source = getConvSource(channelId)
+    const color = source === 'Web' ? '#5865F2' : '#5865F2'
+    return { source, color }
+  }
+
   return (
     <div className="persona-layout">
       {/* Left sidebar: Conversation list */}
@@ -293,28 +303,52 @@ export default function Chat() {
             尚無對話記錄
           </p>
         )}
-        {conversations.map((conv) => (
-          <SidebarItem
-            key={conv.id}
-            active={selectedConv?.channelId === conv.channel_id && selectedConv?.personaId === conv.persona_id}
-            onClick={() => handleSelectConv(conv.channel_id, conv.persona_id)}
-            title={conv.persona_name}
-            description={conv.last_message || '無訊息'}
-            subtitle={formatRelativeTime(conv.last_timestamp)}
-          >
-            <button
-              className="btn-icon"
-              title="刪除對話"
-              onClick={(e) => handleDeleteConv(conv.channel_id, conv.persona_id, e)}
-              style={{ padding: '4px', opacity: 0.6 }}
+        {conversations.map((conv) => {
+          const { source, color } = getConvSourceBadge(conv.channel_id)
+          return (
+            <SidebarItem
+              key={conv.id}
+              active={selectedConv?.channelId === conv.channel_id && selectedConv?.personaId === conv.persona_id}
+              onClick={() => handleSelectConv(conv.channel_id, conv.persona_id)}
+              title={conv.persona_name}
+              subtitle={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '0.5rem' }}>
+                  <span
+                    style={{
+                      fontSize: '0.65rem',
+                      padding: '1px 5px',
+                      borderRadius: '4px',
+                      background: color,
+                      color: 'white',
+                      fontWeight: 500,
+                      opacity: 0.9,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
+                    }}
+                  >
+                    {source}
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: '#666', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    {formatRelativeTime(conv.last_timestamp)}
+                  </span>
+                </div>
+              }
+              description={conv.last_message || '無訊息'}
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-            </button>
-          </SidebarItem>
-        ))}
+              <button
+                className="btn-icon"
+                title="刪除對話"
+                onClick={(e) => handleDeleteConv(conv.channel_id, conv.persona_id, e)}
+                style={{ padding: '4px', opacity: 0.6, marginLeft: 'auto' }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+            </SidebarItem>
+          )
+        })}
       </SidebarList>
 
       {/* Right panel: Chat messages */}
