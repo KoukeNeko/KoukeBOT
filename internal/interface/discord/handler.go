@@ -322,22 +322,21 @@ func buildAttachmentPlaceholder(attachments []*discordgo.MessageAttachment) stri
 		}
 	}
 
-	var label, suffix, tag string
+	// Determine label and tag based on attachment types
+	label := "file"
+	tag := "<media:document>"
 	if allImages {
 		label = "image"
 		tag = "<media:image>"
-	} else {
-		label = "file"
-		tag = "<media:document>"
 	}
 
-	if count == 1 {
-		suffix = label
-	} else {
-		suffix = fmt.Sprintf("%d %ss", count, label)
+	// Build suffix: "image" or "images" (openclaw style)
+	suffix := label
+	if count > 1 {
+		suffix = label + "s"
 	}
 
-	return fmt.Sprintf("%s (%s)", tag, suffix)
+	return fmt.Sprintf("%s (%d %s)", tag, count, suffix)
 }
 
 // downloadImage downloads an image from a URL and returns it as ImageInput.
