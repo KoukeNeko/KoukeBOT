@@ -13,10 +13,12 @@ const (
 
 // Message is a single turn in a conversation.
 type Message struct {
-	Role        Role      `json:"role"`
-	Content     string    `json:"content"`
-	DisplayText string    `json:"display_text,omitempty"` // Full context for UI display (e.g., with channel history)
-	Timestamp   time.Time `json:"timestamp"`
+	Role         Role      `json:"role"`
+	Content      string    `json:"content"`
+	DisplayText  string    `json:"display_text,omitempty"`   // Full context for UI display (e.g., with channel history)
+	RawLLMInput  string    `json:"raw_llm_input,omitempty"`  // Raw prompt sent to LLM (for debugging/transparency)
+	RawLLMOutput string    `json:"raw_llm_output,omitempty"` // Raw response from LLM (for debugging/transparency)
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // Conversation tracks the full dialogue state for a channel-persona pair.
@@ -58,6 +60,18 @@ func (c *Conversation) AppendAssistantMessage(content string) {
 		Role:      RoleAssistant,
 		Content:   content,
 		Timestamp: time.Now(),
+	})
+	c.UpdatedAt = time.Now()
+}
+
+// AppendAssistantMessageWithRaw adds an assistant response with raw LLM input/output for debugging.
+func (c *Conversation) AppendAssistantMessageWithRaw(content, rawInput, rawOutput string) {
+	c.Messages = append(c.Messages, Message{
+		Role:         RoleAssistant,
+		Content:      content,
+		RawLLMInput:  rawInput,
+		RawLLMOutput: rawOutput,
+		Timestamp:    time.Now(),
 	})
 	c.UpdatedAt = time.Now()
 }

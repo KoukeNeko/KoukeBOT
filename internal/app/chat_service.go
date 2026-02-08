@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
@@ -117,6 +118,9 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 	// Remove the temporary message - we'll store the clean version later
 	conv.Messages = conv.Messages[:len(conv.Messages)-1]
 
+	// Build raw LLM input for transparency (before streaming)
+	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+
 	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
 		Messages:     assembled.Messages,
@@ -127,7 +131,7 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 	}
 
 	// Handle tool calling loop and wrap stream for persistence
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, rawLLMInput), nil
 }
 
 // HandleMessageStreamWithImages processes a user message with images and returns a streaming channel.
@@ -175,13 +179,32 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
 
+	// Build raw LLM input for transparency (multimodal messages converted to text representation)
+	var textOnlyMessages []domain.Message
+	for _, mm := range multimodalHistory {
+		var textParts []string
+		for _, part := range mm.Parts {
+			if part.Text != "" {
+				textParts = append(textParts, part.Text)
+			}
+			if part.ImageData != nil {
+				textParts = append(textParts, fmt.Sprintf("[Image: %s]", part.ImageData.Filename))
+			}
+		}
+		textOnlyMessages = append(textOnlyMessages, domain.Message{
+			Role:    mm.Role,
+			Content: strings.Join(textParts, "\n"),
+		})
+	}
+	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, textOnlyMessages)
+
 	streamCh, err := s.provider.StreamChatMultimodal(ctx, assembled.SystemPrompt, multimodalHistory, assembled.Generation)
 	if err != nil {
 		return nil, fmt.Errorf("llm multimodal stream: %w", err)
 	}
 
 	// Handle tool calling loop and wrap stream for persistence
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, rawLLMInput), nil
 }
 
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {
@@ -236,6 +259,7 @@ func (s *ChatService) handleToolCallingStream(
 	conv *domain.Conversation,
 	messageToStore, contextForLLM string,
 	persona *domain.PersonaModule,
+	rawLLMInput string,
 ) <-chan llm.StreamChunk {
 	outputCh := make(chan llm.StreamChunk, 16)
 
@@ -308,19 +332,22 @@ func (s *ChatService) handleToolCallingStream(
 				finalResponse += chunk.Content
 			}
 
-			// Store final conversation
+			// Store final conversation with raw LLM data
+			// For tool calls, the raw output includes the tool execution cycle
+			rawLLMOutput := fmt.Sprintf("[Tool calls executed]\n%s\n\n[Final response]\n%s",
+				toolResultsText, finalResponse)
 			conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-			conv.AppendAssistantMessage(finalResponse)
+			conv.AppendAssistantMessageWithRaw(finalResponse, rawLLMInput, rawLLMOutput)
 			_ = s.store.Save(ctx, conv)
 
 			outputCh <- llm.StreamChunk{Done: true}
 			return
 		}
 
-		// No tool calls - store conversation normally
+		// No tool calls - store conversation normally with raw LLM data
 		if fullResponse != "" || messageToStore != "" {
 			conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-			conv.AppendAssistantMessage(fullResponse)
+			conv.AppendAssistantMessageWithRaw(fullResponse, rawLLMInput, fullResponse)
 			_ = s.store.Save(ctx, conv)
 		}
 
@@ -344,4 +371,21 @@ func formatToolResults(results []domain.ToolResult) string {
 		}
 	}
 	return formatted
+}
+
+// formatLLMPrompt builds a complete LLM prompt string for debugging/transparency
+func formatLLMPrompt(systemPrompt string, messages []domain.Message) string {
+	var prompt strings.Builder
+
+	prompt.WriteString("=== SYSTEM PROMPT ===\n")
+	prompt.WriteString(systemPrompt)
+	prompt.WriteString("\n\n=== CONVERSATION HISTORY ===\n")
+
+	for i, msg := range messages {
+		prompt.WriteString(fmt.Sprintf("\n[Message %d - %s]\n", i+1, msg.Role))
+		prompt.WriteString(msg.Content)
+		prompt.WriteString("\n")
+	}
+
+	return prompt.String()
 }

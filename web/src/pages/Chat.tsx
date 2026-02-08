@@ -15,6 +15,7 @@ export default function Chat() {
   const [showNewConvModal, setShowNewConvModal] = useState(false)
   const [newConvPersonaId, setNewConvPersonaId] = useState('')
   const [selectedImages, setSelectedImages] = useState<File[]>([])
+  const [expandedRawData, setExpandedRawData] = useState<Set<number>>(new Set())
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -63,6 +64,9 @@ export default function Chat() {
       setMessages(conv.messages.map((m) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
+        display_text: m.display_text,
+        raw_llm_input: m.raw_llm_input,
+        raw_llm_output: m.raw_llm_output,
         timestamp: m.timestamp,
       })))
     } catch (e) {
@@ -372,6 +376,8 @@ export default function Chat() {
                 )}
                                 {messages.map((m, i) => {
                                   const displayContent = m.display_text || m.content
+                                  const hasRawData = m.role === 'assistant' && (m.raw_llm_input || m.raw_llm_output)
+                                  const isExpanded = expandedRawData.has(i)
 
                                   return (
                                     <div key={i} className={`chat-bubble ${m.role}`}>
@@ -398,6 +404,101 @@ export default function Chat() {
                                       {displayContent && (
                                         <div className="markdown-content">
                                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
+                                        </div>
+                                      )}
+
+                                      {/* Raw LLM Data Toggle (only for assistant messages with raw data) */}
+                                      {hasRawData && (
+                                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.5rem' }}>
+                                          <button
+                                            onClick={() => {
+                                              const newSet = new Set(expandedRawData)
+                                              if (isExpanded) {
+                                                newSet.delete(i)
+                                              } else {
+                                                newSet.add(i)
+                                              }
+                                              setExpandedRawData(newSet)
+                                            }}
+                                            style={{
+                                              padding: '4px 8px',
+                                              fontSize: '0.75rem',
+                                              background: 'rgba(255,255,255,0.05)',
+                                              border: '1px solid rgba(255,255,255,0.1)',
+                                              borderRadius: '4px',
+                                              cursor: 'pointer',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '0.25rem',
+                                              color: 'rgba(255,255,255,0.7)'
+                                            }}
+                                          >
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                              {isExpanded ? (
+                                                <polyline points="18 15 12 9 6 15"></polyline>
+                                              ) : (
+                                                <polyline points="6 9 12 15 18 9"></polyline>
+                                              )}
+                                            </svg>
+                                            {isExpanded ? '隱藏原始資料' : '顯示原始資料'}
+                                          </button>
+
+                                          {isExpanded && (
+                                            <div style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
+                                              {m.raw_llm_input && (
+                                                <div style={{ marginBottom: '0.75rem' }}>
+                                                  <div style={{
+                                                    fontWeight: 600,
+                                                    marginBottom: '0.25rem',
+                                                    color: 'rgba(255,255,255,0.8)',
+                                                    fontSize: '0.8rem'
+                                                  }}>
+                                                    📥 LLM 輸入 (完整提示詞)
+                                                  </div>
+                                                  <pre style={{
+                                                    background: 'rgba(0,0,0,0.3)',
+                                                    padding: '0.5rem',
+                                                    borderRadius: '4px',
+                                                    overflow: 'auto',
+                                                    maxHeight: '300px',
+                                                    fontSize: '0.7rem',
+                                                    lineHeight: '1.4',
+                                                    color: 'rgba(255,255,255,0.7)',
+                                                    whiteSpace: 'pre-wrap',
+                                                    wordBreak: 'break-word'
+                                                  }}>
+                                                    {m.raw_llm_input}
+                                                  </pre>
+                                                </div>
+                                              )}
+                                              {m.raw_llm_output && (
+                                                <div>
+                                                  <div style={{
+                                                    fontWeight: 600,
+                                                    marginBottom: '0.25rem',
+                                                    color: 'rgba(255,255,255,0.8)',
+                                                    fontSize: '0.8rem'
+                                                  }}>
+                                                    📤 LLM 輸出 (原始回應)
+                                                  </div>
+                                                  <pre style={{
+                                                    background: 'rgba(0,0,0,0.3)',
+                                                    padding: '0.5rem',
+                                                    borderRadius: '4px',
+                                                    overflow: 'auto',
+                                                    maxHeight: '300px',
+                                                    fontSize: '0.7rem',
+                                                    lineHeight: '1.4',
+                                                    color: 'rgba(255,255,255,0.7)',
+                                                    whiteSpace: 'pre-wrap',
+                                                    wordBreak: 'break-word'
+                                                  }}>
+                                                    {m.raw_llm_output}
+                                                  </pre>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
                                         </div>
                                       )}
                                     </div>
