@@ -293,16 +293,19 @@ func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 	temperature := float32(config.temperature)
 	topP := float32(config.topP)
 
+	genConfig := &caGenConfig{
+		Temperature:     &temperature,
+		MaxOutputTokens: int32(config.maxTokens),
+		TopP:            &topP,
+		// ThinkingConfig removed - not supported by Cloud Code Assist API
+	}
+
 	caReq := caRequest{
 		Project: g.projectID,
 		Model:   g.model,
 		Request: caRequestBody{
-			Contents: contents,
-			GenerationConfig: &caGenConfig{
-				Temperature:     &temperature,
-				MaxOutputTokens: int32(config.maxTokens),
-				TopP:            &topP,
-			},
+			Contents:         contents,
+			GenerationConfig: genConfig,
 		},
 	}
 
@@ -319,7 +322,7 @@ func setCodeAssistHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("User-Agent", "google-cloud-sdk vscode_cloudshelleditor/0.1")
-	req.Header.Set("X-Goog-Api-Client", "gl-node/22.17.0")
+	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
 	req.Header.Set("Client-Metadata", `{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}`)
 }
 

@@ -410,9 +410,10 @@ func isMasked(val string) bool {
 // --- OAuth endpoints ---
 
 type OAuthDetectResponse struct {
-	Found    bool   `json:"found"`
-	ClientID string `json:"client_id,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Found        bool   `json:"found"`
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 func (h *Handlers) OAuthDetect(w http.ResponseWriter, r *http.Request) {
@@ -421,7 +422,11 @@ func (h *Handlers) OAuthDetect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, OAuthDetectResponse{Found: false, Error: err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, OAuthDetectResponse{Found: true, ClientID: creds.ClientID})
+	writeJSON(w, http.StatusOK, OAuthDetectResponse{
+		Found:        true,
+		ClientID:     creds.ClientID,
+		ClientSecret: creds.ClientSecret,
+	})
 }
 
 type OAuthStartRequest struct {

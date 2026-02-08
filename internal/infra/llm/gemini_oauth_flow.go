@@ -44,6 +44,8 @@ var oauthScopes = []string{
 	"https://www.googleapis.com/auth/cloud-platform",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
+	// Note: cclog and experimentsandconfigs scopes are not available
+	// for the OAuth client extracted from Gemini CLI (Error 403: restricted_client)
 }
 
 // Regex patterns to extract OAuth credentials from Gemini CLI source.

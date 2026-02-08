@@ -81,9 +81,11 @@ export default function Settings() {
       const result = await detectGeminiCLI()
       if (result.found && result.client_id) {
         setDetectedClientID(result.client_id)
-        // Auto-fill the client ID so it persists and is used for OAuth
-        // Client secret is not stored in Gemini CLI config
+        // Auto-fill both client ID and secret from Gemini CLI
         setManualClientID(result.client_id)
+        if (result.client_secret) {
+          setManualClientSecret(result.client_secret)
+        }
       } else {
         setDetectError(result.error || 'Gemini CLI not found.')
       }

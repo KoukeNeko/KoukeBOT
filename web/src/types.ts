@@ -63,6 +63,7 @@ export interface ProviderStatus {
 export interface OAuthDetectResult {
   found: boolean
   client_id?: string
+  client_secret?: string
   error?: string
 }
 
