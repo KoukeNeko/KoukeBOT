@@ -25,6 +25,7 @@ type Handlers struct {
 	providerManager *app.ProviderManager
 	oauthFlow       *llm.GeminiOAuthFlow
 	convStore       store.ConversationRepository
+	imageStore      *store.ImageStore
 	ctx             context.Context
 }
 
@@ -35,6 +36,7 @@ func NewHandlers(
 	providerManager *app.ProviderManager,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
+	imageStore *store.ImageStore,
 	ctx context.Context,
 ) *Handlers {
 	return &Handlers{
@@ -44,6 +46,7 @@ func NewHandlers(
 		providerManager: providerManager,
 		oauthFlow:       oauthFlow,
 		convStore:       convStore,
+		imageStore:      imageStore,
 		ctx:             ctx,
 	}
 }
@@ -912,6 +915,22 @@ func (h *Handlers) GetConversation(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) DeleteConversation(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("channelID")
 	personaID := r.PathValue("personaID")
+
+	// Clean up stored images before deleting conversation
+	if h.imageStore != nil {
+		if conv, err := h.convStore.Get(h.ctx, channelID, personaID); err == nil {
+			var keys []string
+			for _, msg := range conv.Messages {
+				for _, ref := range msg.ImageRefs {
+					keys = append(keys, ref.StorageKey)
+				}
+			}
+			if len(keys) > 0 {
+				h.imageStore.DeleteKeys(keys)
+				logAPI.Logf("delete-conv: cleaned up %d image(s)", len(keys))
+			}
+		}
+	}
 
 	if err := h.convStore.Delete(h.ctx, channelID, personaID); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete conversation: "+err.Error())

@@ -138,19 +138,24 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	// Build channel history context for LLM (openclaw style)
 	// This is used for immediate context but NOT stored in conversation
+	// Also collects images from recent channel messages
 	var contextForLLM string
+	var historyImages []domain.ImageInput
 	if !isDM(m) {
-		contextForLLM = h.buildChannelHistoryContext(s, m.ChannelID, m.ID, currentMessage)
+		contextForLLM, historyImages = h.buildChannelHistoryContext(s, m.ChannelID, m.ID, currentMessage)
 	} else {
 		contextForLLM = currentMessage
 	}
 
+	// Merge: direct attachments + channel history images
+	allImages := append(images, historyImages...)
+
 	// Pass both: contextForLLM (with channel history) and currentMessage (for storage)
 	var streamCh <-chan llm.StreamChunk
 	var err error
-	if len(images) > 0 {
+	if len(allImages) > 0 {
 		streamCh, err = h.chatService.HandleMessageStreamWithImagesAndContext(
-			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, images)
+			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, allImages)
 	} else {
 		streamCh, err = h.chatService.HandleMessageStreamWithContext(
 			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage)
@@ -649,6 +654,9 @@ func truncateError(msg string, maxLen int) string {
 }
 
 // buildChannelHistoryContext builds openclaw-style channel history context.
+// It also collects images from recent channel messages (up to maxHistoryImages
+// from the most recent maxHistoryImageScan messages) so the LLM can see them.
+//
 // Format:
 // [Chat messages since your last reply - for context]
 // [Discord Alice 2024-01-01 10:25] message 1
@@ -659,20 +667,29 @@ func truncateError(msg string, maxLen int) string {
 // [Current message]
 // [Discord Alice 2024-01-01 10:30] current message
 // [from: Alice]
-func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, currentMessageID, currentMessage string) string {
+func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, currentMessageID, currentMessage string) (string, []domain.ImageInput) {
+	const (
+		maxHistoryImageScan = 10 // only scan last N messages for images
+		maxHistoryImages    = 5  // collect at most this many images
+	)
+
 	messages, err := s.ChannelMessages(channelID, defaultGroupHistoryLimit, currentMessageID, "", "")
 	if err != nil {
 		logHandler.Warnf("failed to fetch channel history [%s]: %v", channelID, err)
-		return currentMessage // Fallback to current message only
+		return currentMessage, nil // Fallback to current message only
 	}
 
 	// If no history, return current message only
 	if len(messages) == 0 {
-		return currentMessage
+		return currentMessage, nil
 	}
 
 	// Build history entries (reverse order - oldest first)
+	// Also collect images from recent messages
 	var historyLines []string
+	var historyImages []domain.ImageInput
+	imageCount := 0
+
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		content := msg.Content
@@ -685,6 +702,30 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 		// Skip empty messages (no text and no attachments)
 		if strings.TrimSpace(content) == "" {
 			continue
+		}
+
+		// Collect images from recent messages (last maxHistoryImageScan msgs)
+		if i < maxHistoryImageScan && imageCount < maxHistoryImages {
+			for _, att := range msg.Attachments {
+				if imageCount >= maxHistoryImages {
+					break
+				}
+				if isImageAttachment(att) {
+					img, err := downloadImage(att.URL)
+					if err != nil {
+						logHandler.Warnf("channel-history image download failed: %s: %v", att.Filename, err)
+						continue
+					}
+					historyImages = append(historyImages, img)
+					imageCount++
+					senderLabel := ""
+					if msg.Author != nil {
+						senderLabel = resolveSenderLabel(msg.Author)
+					}
+					logHandler.Logf("channel-history image: %s from %s (%.1fKB)",
+						att.Filename, senderLabel, float64(len(img.Data))/1024)
+				}
+			}
 		}
 
 		// Truncate long messages to avoid excessive token usage
@@ -713,5 +754,5 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 	result.WriteString("\n")
 	result.WriteString(currentMessage)
 
-	return result.String()
+	return result.String(), historyImages
 }

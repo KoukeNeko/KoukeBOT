@@ -21,6 +21,7 @@ type SlashCommands struct {
 	personaService *app.PersonaService
 	chatService    *app.ChatService
 	convStore      store.ConversationRepository
+	imageStore     *store.ImageStore
 }
 
 func NewSlashCommands(
@@ -28,12 +29,14 @@ func NewSlashCommands(
 	personaService *app.PersonaService,
 	chatService *app.ChatService,
 	convStore store.ConversationRepository,
+	imageStore *store.ImageStore,
 ) *SlashCommands {
 	return &SlashCommands{
 		bot:            bot,
 		personaService: personaService,
 		chatService:    chatService,
 		convStore:      convStore,
+		imageStore:     imageStore,
 	}
 }
 
@@ -120,8 +123,25 @@ func (sc *SlashCommands) handlePersona(s *discordgo.Session, i *discordgo.Intera
 func (sc *SlashCommands) handleReset(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	channelID := i.ChannelID
 	personaID := sc.bot.PersonaID()
+	ctx := context.Background()
 
-	if err := sc.convStore.Delete(context.Background(), channelID, personaID); err != nil {
+	// Clean up stored images before deleting conversation
+	if sc.imageStore != nil {
+		if conv, err := sc.convStore.Get(ctx, channelID, personaID); err == nil {
+			var keys []string
+			for _, msg := range conv.Messages {
+				for _, ref := range msg.ImageRefs {
+					keys = append(keys, ref.StorageKey)
+				}
+			}
+			if len(keys) > 0 {
+				sc.imageStore.DeleteKeys(keys)
+				logCmd.Logf("reset [%s]: cleaned up %d image(s)", channelID, len(keys))
+			}
+		}
+	}
+
+	if err := sc.convStore.Delete(ctx, channelID, personaID); err != nil {
 		logCmd.Errorf("reset [%s]: %v", channelID, err)
 		respondEphemeral(s, i, "❌ 清除失敗: "+err.Error())
 		return

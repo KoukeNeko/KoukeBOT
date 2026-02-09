@@ -11,14 +11,22 @@ const (
 	RoleSystem    Role = "system"
 )
 
+// ImageRef is a lightweight reference to an image stored on disk.
+type ImageRef struct {
+	StorageKey       string `json:"storage_key"`
+	MimeType         string `json:"mime_type"`
+	OriginalFilename string `json:"original_filename"`
+}
+
 // Message is a single turn in a conversation.
 type Message struct {
-	Role         Role      `json:"role"`
-	Content      string    `json:"content"`
-	DisplayText  string    `json:"display_text,omitempty"`   // Full context for UI display (e.g., with channel history)
-	RawLLMInput  string    `json:"raw_llm_input,omitempty"`  // Raw prompt sent to LLM (for debugging/transparency)
-	RawLLMOutput string    `json:"raw_llm_output,omitempty"` // Raw response from LLM (for debugging/transparency)
-	Timestamp    time.Time `json:"timestamp"`
+	Role         Role       `json:"role"`
+	Content      string     `json:"content"`
+	DisplayText  string     `json:"display_text,omitempty"`   // Full context for UI display (e.g., with channel history)
+	RawLLMInput  string     `json:"raw_llm_input,omitempty"`  // Raw prompt sent to LLM (for debugging/transparency)
+	RawLLMOutput string     `json:"raw_llm_output,omitempty"` // Raw response from LLM (for debugging/transparency)
+	Timestamp    time.Time  `json:"timestamp"`
+	ImageRefs    []ImageRef `json:"image_refs,omitempty"`     // References to persisted images
 }
 
 // Conversation tracks the full dialogue state for a channel-persona pair.
@@ -49,6 +57,18 @@ func (c *Conversation) AppendUserMessageWithDisplay(content, displayText string)
 		Role:        RoleUser,
 		Content:     content,
 		DisplayText: displayText,
+		Timestamp:   time.Now(),
+	})
+	c.UpdatedAt = time.Now()
+}
+
+// AppendUserMessageWithImages adds a user message with image references.
+func (c *Conversation) AppendUserMessageWithImages(content, displayText string, imageRefs []ImageRef) {
+	c.Messages = append(c.Messages, Message{
+		Role:        RoleUser,
+		Content:     content,
+		DisplayText: displayText,
+		ImageRefs:   imageRefs,
 		Timestamp:   time.Now(),
 	})
 	c.UpdatedAt = time.Now()

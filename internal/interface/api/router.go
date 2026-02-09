@@ -27,9 +27,10 @@ func NewRouter(
 	providerManager *app.ProviderManager,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
+	imageStore *store.ImageStore,
 	ctx context.Context,
 ) *Router {
-	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, ctx)
+	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, imageStore, ctx)
 	mux := http.NewServeMux()
 
 	r := &Router{mux: mux, handlers: handlers}

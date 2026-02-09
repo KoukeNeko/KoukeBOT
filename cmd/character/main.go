@@ -107,6 +107,12 @@ func run() error {
 	}
 	logStore.Log("data/conversations")
 
+	imageStore, err := store.NewImageStore("data/images")
+	if err != nil {
+		return fmt.Errorf("init image store: %w", err)
+	}
+	logStore.Log("data/images")
+
 	// Initialize tools (OpenClaw-style web search)
 	// Get the first persona directory for file operations (single-persona mode)
 	var firstPersonaDir string
@@ -124,11 +130,11 @@ func run() error {
 	}
 
 	assembler := app.NewContextAssembler()
-	chatService := app.NewChatService(providerManager, assembler, convStore, personaService.GetAll(), tools, memoryExtractor)
+	chatService := app.NewChatService(providerManager, assembler, convStore, imageStore, 0, personaService.GetAll(), tools, memoryExtractor)
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
-		if err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore); err != nil {
+		if err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore, imageStore); err != nil {
 			logDiscord.Warnf("failed to start: %v", err)
 			logDiscord.Log("continuing without Discord — HTTP API still available")
 		}
@@ -141,7 +147,7 @@ func run() error {
 	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthPoolPath, oauthRedirectURL)
 
 	// Start HTTP API server
-	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow, convStore)
+	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, imageStore)
 
 	logSystem.Logf("ready — API on :%s", port)
 
@@ -264,7 +270,7 @@ func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model strin
 	return true
 }
 
-func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository) error {
+func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore) error {
 	// Use the first loaded persona as the default
 	var personaID string
 	for id := range personaService.GetAll() {
@@ -292,7 +298,7 @@ func startDiscordBot(token string, useReply bool, personaService *app.PersonaSer
 	}
 
 	// Register slash commands: /persona, /reset, /status, /reload
-	slashCmds := discordhandler.NewSlashCommands(bot, personaService, chatService, convStore)
+	slashCmds := discordhandler.NewSlashCommands(bot, personaService, chatService, convStore, imageStore)
 	if err := slashCmds.Register(); err != nil {
 		return fmt.Errorf("register slash commands: %w", err)
 	}
@@ -310,8 +316,9 @@ func startAPIServer(
 	providerManager *app.ProviderManager,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
+	imageStore *store.ImageStore,
 ) {
-	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, ctx)
+	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, imageStore, ctx)
 	handler := router.Handler()
 
 	// Wrap with SPA static file serving if web/dist exists
