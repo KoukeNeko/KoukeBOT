@@ -152,18 +152,20 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 	}
 
 	// Handle tool calling loop and wrap stream for persistence
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, nil), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, nil, nil), nil
 }
 
 // HandleMessageStreamWithImages processes a user message with images and returns a streaming channel.
 func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channelID, personaID, userMessage string, images []domain.ImageInput) (<-chan llm.StreamChunk, error) {
-	return s.HandleMessageStreamWithImagesAndContext(ctx, channelID, personaID, userMessage, userMessage, images)
+	return s.HandleMessageStreamWithImagesAndContext(ctx, channelID, personaID, userMessage, userMessage, images, nil)
 }
 
 // HandleMessageStreamWithImagesAndContext processes a user message with images and separate display/storage versions.
 // contextForLLM: the full message (with channel history) sent to LLM
 // messageToStore: the clean message (without channel history markers) saved to conversation store
-func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string, images []domain.ImageInput) (<-chan llm.StreamChunk, error) {
+// images: direct attachment images — persisted to disk and sent to LLM
+// contextImages: ephemeral images (e.g. from channel history) — sent to LLM but NOT persisted
+func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string, images []domain.ImageInput, contextImages []domain.ImageInput) (<-chan llm.StreamChunk, error) {
 	persona, err := s.resolvePersona(personaID)
 	if err != nil {
 		return nil, err
@@ -174,7 +176,7 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
-	// Save images to disk and collect refs
+	// Save only direct attachment images to disk (not context images)
 	var imageRefs []domain.ImageRef
 	if s.imageStore != nil && len(images) > 0 {
 		for _, img := range images {
@@ -188,7 +190,10 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		}
 	}
 
-	return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, images, imageRefs...)
+	// Merge all images for LLM: direct attachments + ephemeral context images
+	allImages := append(images, contextImages...)
+
+	return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, allImages, imageRefs...)
 }
 
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {
@@ -244,6 +249,9 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 
 // handleToolCallingStream handles the tool calling loop with streaming.
 // When the LLM requests tool calls, this executes them and continues the conversation.
+// Supports up to maxToolRounds of chained tool calls.
+// multimodalHistory is non-nil when the conversation includes images; the continuation
+// will use StreamChatMultimodal to preserve image context.
 func (s *ChatService) handleToolCallingStream(
 	ctx context.Context,
 	streamCh <-chan llm.StreamChunk,
@@ -253,41 +261,56 @@ func (s *ChatService) handleToolCallingStream(
 	personaID string,
 	rawLLMInput string,
 	imageRefs []domain.ImageRef, // nil for text-only messages
+	multimodalHistory []domain.MultimodalMessage, // nil for text-only; includes images for multimodal
 ) <-chan llm.StreamChunk {
 	outputCh := make(chan llm.StreamChunk, 16)
 
 	go func() {
 		defer close(outputCh)
 
+		const maxToolRounds = 3
+		var allToolCalls []domain.ToolCall
+		var allToolResultsText string
+
+		currentStream := streamCh
 		var fullResponse string
-		var pendingToolCalls []domain.ToolCall
 
-		// Process initial stream
-		for chunk := range streamCh {
-			// Check for tool calls
-			if len(chunk.ToolCalls) > 0 {
-				pendingToolCalls = chunk.ToolCalls
-				// Forward tool call indicator to frontend
+		for round := 0; round <= maxToolRounds; round++ {
+			var pendingToolCalls []domain.ToolCall
+			fullResponse = ""
+
+			// Consume stream
+			for chunk := range currentStream {
+				if len(chunk.ToolCalls) > 0 {
+					pendingToolCalls = chunk.ToolCalls
+					outputCh <- chunk
+					continue
+				}
 				outputCh <- chunk
-				continue
+				if chunk.Error != nil {
+					return
+				}
+				fullResponse += chunk.Content
 			}
 
-			// Forward chunk to output
-			outputCh <- chunk
-			if chunk.Error != nil {
-				return
+			// No tool calls → we have the final response
+			if len(pendingToolCalls) == 0 {
+				break
 			}
-			fullResponse += chunk.Content
-		}
 
-		// Handle tool calls if present
-		if len(pendingToolCalls) > 0 {
+			// Max rounds reached → stop and use whatever we have
+			if round == maxToolRounds {
+				logChat.Warnf("max tool rounds (%d) reached, stopping", maxToolRounds)
+				break
+			}
+
 			// Log tool call names
 			names := make([]string, len(pendingToolCalls))
 			for i, c := range pendingToolCalls {
 				names[i] = c.Name
 			}
-			logChat.Logf("tool calls: %s", strings.Join(names, ", "))
+			logChat.Logf("tool calls (round %d): %s", round+1, strings.Join(names, ", "))
+			allToolCalls = append(allToolCalls, pendingToolCalls...)
 
 			// Send tool execution start status for each tool
 			for _, call := range pendingToolCalls {
@@ -302,64 +325,71 @@ func (s *ChatService) handleToolCallingStream(
 			toolResults := s.executeTools(ctx, pendingToolCalls)
 
 			// Send tool execution done status
-			outputCh <- llm.StreamChunk{
-				ToolStatus: "tool_done",
-			}
+			outputCh <- llm.StreamChunk{ToolStatus: "tool_done"}
 
 			// Build tool results message for LLM
 			toolResultsText := formatToolResults(pendingToolCalls, toolResults)
+			allToolResultsText += toolResultsText
 
 			// Append assistant's tool call request to conversation
 			conv.AppendAssistantMessage("[Tool calls executed]")
 
-			// Append tool results as system message
+			// Append tool results as user message
 			conv.Messages = append(conv.Messages, domain.Message{
 				Role:    domain.RoleUser,
 				Content: toolResultsText,
 			})
 
+			// Also append to multimodal history if in multimodal mode
+			if multimodalHistory != nil {
+				multimodalHistory = append(multimodalHistory,
+					domain.MultimodalMessage{
+						Role:  domain.RoleAssistant,
+						Parts: []domain.MessagePart{{Text: "[Tool calls executed]"}},
+					},
+					domain.MultimodalMessage{
+						Role:  domain.RoleUser,
+						Parts: []domain.MessagePart{{Text: toolResultsText}},
+					},
+				)
+			}
+
 			// Continue conversation with tool results
-			logChat.Logf("continuing with tool results → LLM")
+			logChat.Logf("continuing with tool results → LLM (round %d)", round+1)
 			assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
 			if err != nil {
 				outputCh <- llm.StreamChunk{Error: fmt.Errorf("assemble context after tools: %w", err), Done: true}
 				return
 			}
 
-			// Call LLM again with tool results
-			continuationStream, err := s.provider.StreamChat(ctx, llm.ChatRequest{
-				SystemPrompt: assembled.SystemPrompt,
-				Messages:     assembled.Messages,
-				Generation:   assembled.Generation,
-			})
+			// Use multimodal continuation when images are present to preserve image context
+			if multimodalHistory != nil {
+				currentStream, err = s.provider.StreamChatMultimodal(ctx, assembled.SystemPrompt, multimodalHistory, assembled.Generation)
+			} else {
+				currentStream, err = s.provider.StreamChat(ctx, llm.ChatRequest{
+					SystemPrompt: assembled.SystemPrompt,
+					Messages:     assembled.Messages,
+					Generation:   assembled.Generation,
+				})
+			}
 			if err != nil {
 				outputCh <- llm.StreamChunk{Error: fmt.Errorf("llm continuation: %w", err), Done: true}
 				return
 			}
+		}
 
-			// Forward continuation stream
-			var finalResponse string
-			for chunk := range continuationStream {
-				outputCh <- chunk
-				if chunk.Error != nil {
-					return
-				}
-				finalResponse += chunk.Content
-			}
-
-			// Append tool usage annotation to final response (for frontend display)
-			toolUsageAnnotation := formatToolUsageAnnotation(pendingToolCalls)
-			finalResponseWithAnnotation := finalResponse + "\n\n" + toolUsageAnnotation
+		// Save conversation and emit final signals
+		if len(allToolCalls) > 0 {
+			// Tool calls were executed — append annotation and save
+			toolUsageAnnotation := formatToolUsageAnnotation(allToolCalls)
+			finalResponseWithAnnotation := fullResponse + "\n\n" + toolUsageAnnotation
 
 			// Stream the annotation as a separate chunk
-			outputCh <- llm.StreamChunk{
-				Content: "\n\n" + toolUsageAnnotation,
-			}
+			outputCh <- llm.StreamChunk{Content: "\n\n" + toolUsageAnnotation}
 
 			// Store final conversation with raw LLM data
-			// For tool calls, the raw output includes the tool execution cycle
 			rawLLMOutput := fmt.Sprintf("[Tool calls executed]\n%s\n\n[Final response]\n%s",
-				toolResultsText, finalResponse)
+				allToolResultsText, fullResponse)
 			if len(imageRefs) > 0 {
 				conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
 			} else {
@@ -370,26 +400,23 @@ func (s *ChatService) handleToolCallingStream(
 
 			// Fire background memory extraction (invisible to user)
 			if s.memoryExtractor != nil {
-				go s.memoryExtractor.Process(context.Background(), persona.DirName, messageToStore, finalResponse, persona)
-			}
-
-			outputCh <- llm.StreamChunk{Done: true}
-			return
-		}
-
-		// No tool calls - store conversation normally with raw LLM data
-		if fullResponse != "" || messageToStore != "" {
-			if len(imageRefs) > 0 {
-				conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
-			} else {
-				conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-			}
-			conv.AppendAssistantMessageWithRaw(fullResponse, rawLLMInput, fullResponse)
-			_ = s.store.Save(ctx, conv)
-
-			// Fire background memory extraction (invisible to user)
-			if s.memoryExtractor != nil {
 				go s.memoryExtractor.Process(context.Background(), persona.DirName, messageToStore, fullResponse, persona)
+			}
+		} else {
+			// No tool calls - store conversation normally with raw LLM data
+			if fullResponse != "" || messageToStore != "" {
+				if len(imageRefs) > 0 {
+					conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
+				} else {
+					conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
+				}
+				conv.AppendAssistantMessageWithRaw(fullResponse, rawLLMInput, fullResponse)
+				_ = s.store.Save(ctx, conv)
+
+				// Fire background memory extraction (invisible to user)
+				if s.memoryExtractor != nil {
+					go s.memoryExtractor.Process(context.Background(), persona.DirName, messageToStore, fullResponse, persona)
+				}
 			}
 		}
 
@@ -482,7 +509,7 @@ func (s *ChatService) streamWithMultimodalHistory(
 		return nil, fmt.Errorf("llm multimodal stream: %w", err)
 	}
 
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, currentImageRefs), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, currentImageRefs, multimodalHistory), nil
 }
 
 // buildMultimodalHistory converts stored messages to MultimodalMessage format,

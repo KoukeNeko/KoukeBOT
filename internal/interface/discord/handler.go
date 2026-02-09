@@ -147,15 +147,13 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		contextForLLM = currentMessage
 	}
 
-	// Merge: direct attachments + channel history images
-	allImages := append(images, historyImages...)
-
 	// Pass both: contextForLLM (with channel history) and currentMessage (for storage)
+	// Direct attachments (images) are persisted; channel history images (historyImages) are ephemeral
 	var streamCh <-chan llm.StreamChunk
 	var err error
-	if len(allImages) > 0 {
+	if len(images) > 0 || len(historyImages) > 0 {
 		streamCh, err = h.chatService.HandleMessageStreamWithImagesAndContext(
-			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, allImages)
+			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, images, historyImages)
 	} else {
 		streamCh, err = h.chatService.HandleMessageStreamWithContext(
 			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage)
