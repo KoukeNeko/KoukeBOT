@@ -431,35 +431,39 @@ func truncate(s string, maxLen int) string {
 // --- Settings endpoints ---
 
 type SettingsResponse struct {
-	GeminiAPIKey     string `json:"gemini_api_key"`
-	GeminiModel      string `json:"gemini_model"`
-	DiscordToken     string `json:"discord_token"`
-	ProviderType     string `json:"provider_type"`
-	BraveAPIKey      string `json:"brave_api_key"`
-	WebSearchEnabled bool   `json:"web_search_enabled"`
-	DiscordUseReply  bool   `json:"discord_use_reply"`
-	PerplexityAPIKey string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider   string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled  bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone         string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat       string `json:"time_format"`        // OpenClaw 相容
-	Location         string `json:"location"`           // OpenClaw 相容
+	GeminiAPIKey             string `json:"gemini_api_key"`
+	GeminiModel              string `json:"gemini_model"`
+	DiscordToken             string `json:"discord_token"`
+	ProviderType             string `json:"provider_type"`
+	BraveAPIKey              string `json:"brave_api_key"`
+	WebSearchEnabled         bool   `json:"web_search_enabled"`
+	DiscordUseReply          bool   `json:"discord_use_reply"`
+	PerplexityAPIKey         string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider           string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled          bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                 string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat               string `json:"time_format"`        // OpenClaw 相容
+	Location                 string `json:"location"`           // OpenClaw 相容
+	MemoryExtractionEnabled  bool   `json:"memory_extraction_enabled"`
+	MemoryExtractionModel    string `json:"memory_extraction_model"`
 }
 
 type SettingsUpdateRequest struct {
-	GeminiAPIKey     string `json:"gemini_api_key"`
-	GeminiModel      string `json:"gemini_model"`
-	DiscordToken     string `json:"discord_token"`
-	ProviderType     string `json:"provider_type"`
-	BraveAPIKey      string `json:"brave_api_key"`
-	WebSearchEnabled *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
-	DiscordUseReply  *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
-	PerplexityAPIKey string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider   string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled  *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone         string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat       string `json:"time_format"`        // OpenClaw 相容
-	Location         string `json:"location"`           // OpenClaw 相容
+	GeminiAPIKey             string `json:"gemini_api_key"`
+	GeminiModel              string `json:"gemini_model"`
+	DiscordToken             string `json:"discord_token"`
+	ProviderType             string `json:"provider_type"`
+	BraveAPIKey              string `json:"brave_api_key"`
+	WebSearchEnabled         *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
+	DiscordUseReply          *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
+	PerplexityAPIKey         string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider           string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled          *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                 string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat               string `json:"time_format"`        // OpenClaw 相容
+	Location                 string `json:"location"`           // OpenClaw 相容
+	MemoryExtractionEnabled  *bool  `json:"memory_extraction_enabled"`
+	MemoryExtractionModel    string `json:"memory_extraction_model"`
 }
 
 type ProviderStatusResponse struct {
@@ -492,9 +496,11 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		PerplexityAPIKey: maskKey(settings.PerplexityAPIKey),
 		SearchProvider:   searchProvider,
 		WebFetchEnabled:  settings.WebFetchEnabled,
-		Timezone:         settings.Timezone,
-		TimeFormat:       settings.TimeFormat,
-		Location:         settings.Location,
+		Timezone:                settings.Timezone,
+		TimeFormat:              settings.TimeFormat,
+		Location:                settings.Location,
+		MemoryExtractionEnabled: settings.MemoryExtractionEnabled,
+		MemoryExtractionModel:   settings.MemoryExtractionModel,
 	})
 }
 
@@ -545,6 +551,11 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	existing.Timezone = req.Timezone
 	existing.TimeFormat = req.TimeFormat
 	existing.Location = req.Location
+	// Memory extraction settings
+	if req.MemoryExtractionEnabled != nil {
+		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
+	}
+	existing.MemoryExtractionModel = req.MemoryExtractionModel
 
 	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
 		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)

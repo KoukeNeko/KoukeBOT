@@ -59,6 +59,10 @@ export interface SettingsData {
   timezone: string               // "Asia/Taipei", "America/New_York", "auto"
   time_format: string            // "auto", "12", "24"
   location: string               // Optional: explicit location "台北, 台灣"
+
+  // Memory extraction settings
+  memory_extraction_enabled: boolean
+  memory_extraction_model: string  // e.g. "gemini-2.0-flash"
 }
 
 export interface ModelEntry {

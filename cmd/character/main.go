@@ -82,7 +82,7 @@ func run() error {
 
 	initProvider(ctx, settings, providerManager, model, port)
 
-	// Init memory extraction provider (cheap model preferred, falls back to main provider)
+	// Init memory extraction provider (dedicated model, separate from main conversation)
 	var memoryExtractor *app.MemoryExtractor
 	if settings.MemoryExtractionEnabled {
 		extractionModel := settings.MemoryExtractionModel
@@ -90,21 +90,29 @@ func run() error {
 			extractionModel = "gemini-2.0-flash"
 		}
 		if settings.GeminiAPIKey != "" {
-			// Dedicated cheap provider with API key
+			// Dedicated provider with API key
 			extractionProvider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, extractionModel)
 			if err != nil {
-				logMemory.Warnf("extraction provider failed: %v — using main provider", err)
-				memoryExtractor = app.NewMemoryExtractor(providerManager, personasDir)
-				logMemory.Logf("enabled (main provider)")
+				logMemory.Warnf("API extraction provider failed: %v", err)
 			} else {
 				memoryExtractor = app.NewMemoryExtractor(extractionProvider, personasDir)
-				logMemory.Logf("enabled (model: %s)", extractionModel)
+				logMemory.Logf("enabled (api-key, model: %s)", extractionModel)
 			}
-		} else if providerManager.IsConfigured() {
-			// No API key — fallback to main provider (e.g., OAuth)
+		}
+		// Try OAuth pool if no extractor yet
+		if memoryExtractor == nil {
+			extractionProvider := initOAuthExtractionProvider(ctx, extractionModel)
+			if extractionProvider != nil {
+				memoryExtractor = app.NewMemoryExtractor(extractionProvider, personasDir)
+				logMemory.Logf("enabled (oauth, model: %s)", extractionModel)
+			}
+		}
+		// Final fallback: use main provider (same model as conversation)
+		if memoryExtractor == nil && providerManager.IsConfigured() {
 			memoryExtractor = app.NewMemoryExtractor(providerManager, personasDir)
-			logMemory.Logf("enabled (main provider)")
-		} else {
+			logMemory.Logf("enabled (main provider fallback)")
+		}
+		if memoryExtractor == nil {
 			logMemory.Warnf("enabled but no provider available — disabled")
 		}
 	} else {
@@ -279,6 +287,34 @@ func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model strin
 	pm.Update(pool)
 	logLLM.Logf("OAuth pool: %d account(s) (model: %s)", pool.Size(), model)
 	return true
+}
+
+// initOAuthExtractionProvider creates a single OAuth provider with the specified model
+// for memory extraction. Uses the first available token from the pool.
+func initOAuthExtractionProvider(ctx context.Context, model string) llm.Provider {
+	llm.MigrateSingleTokenToPool(oauthTokenPath, oauthPoolPath)
+
+	tokens, err := llm.LoadOAuthPool(oauthPoolPath)
+	if err != nil || len(tokens) == 0 {
+		oauthData, err := llm.LoadStoredToken(oauthTokenPath)
+		if err != nil || oauthData == nil {
+			return nil
+		}
+		tokens = []*llm.OAuthTokenData{oauthData}
+	}
+
+	// Use first available token
+	for _, tokenData := range tokens {
+		if err := llm.RefreshIfNeeded(ctx, tokenData, oauthTokenPath); err != nil {
+			continue
+		}
+		provider, err := llm.NewGeminiOAuthProvider(ctx, tokenData, model)
+		if err != nil {
+			continue
+		}
+		return provider
+	}
+	return nil
 }
 
 func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore) error {
