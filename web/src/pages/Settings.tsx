@@ -41,6 +41,7 @@ export default function Settings() {
     location: "",
     memory_extraction_enabled: false,
     memory_extraction_model: "",
+    log_channel_id: "",
   });
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
@@ -489,6 +490,21 @@ export default function Settings() {
             placeholder="Enter your Discord bot token"
           />
           <span className="hint">Discord bot requires restart to apply.</span>
+        </label>
+
+        <label className="form-field">
+          <span>Log Channel ID (可選)</span>
+          <input
+            type="text"
+            value={form.log_channel_id || ""}
+            onChange={(e) =>
+              setForm({ ...form, log_channel_id: e.target.value })
+            }
+            placeholder="例如：1234567890123456789"
+          />
+          <span className="hint">
+            將系統日誌輸出到指定的 Discord 頻道。右鍵頻道 &gt; 複製頻道 ID 取得。留空則不輸出。
+          </span>
         </label>
 
         <div className="form-field-checkbox-row">

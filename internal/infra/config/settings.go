@@ -38,6 +38,9 @@ type Settings struct {
 
 	// Provider pool settings
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
+
+	// Discord logging settings
+	LogChannelID string `json:"log_channel_id"` // Discord channel ID for stdout logs (optional)
 }
 
 // SettingsStore reads and writes settings to a JSON file.

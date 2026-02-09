@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
 
 // ANSI color codes for terminal output.
@@ -22,6 +24,25 @@ const (
 
 // defaultWidth is the fixed padding width for module names (Docker Compose style).
 const defaultWidth = 10
+
+// DiscordSender is an interface for sending messages to Discord.
+type DiscordSender interface {
+	SendMessage(channelID, content string) error
+}
+
+var (
+	discordSender DiscordSender
+	logChannelID  string
+	senderMu      sync.RWMutex
+)
+
+// SetDiscordOutput configures Discord channel output for all loggers.
+func SetDiscordOutput(sender DiscordSender, channelID string) {
+	senderMu.Lock()
+	defer senderMu.Unlock()
+	discordSender = sender
+	logChannelID = channelID
+}
 
 // Module is a lightweight logger that prints messages with a colored module prefix.
 // Styled after Docker Compose's per-container output format.
@@ -43,6 +64,9 @@ func (m *Module) Logf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	padded := m.name + strings.Repeat(" ", max(1, defaultWidth-len(m.name)))
 	fmt.Fprintf(os.Stderr, "%s%s%s%s| %s%s\n", m.color, Bold, padded, Reset+Dim, Reset, msg)
+
+	// Send to Discord if configured
+	m.sendToDiscord("info", msg)
 }
 
 // Log prints a plain message with the colored module prefix.
@@ -55,6 +79,9 @@ func (m *Module) Warnf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	padded := m.name + strings.Repeat(" ", max(1, defaultWidth-len(m.name)))
 	fmt.Fprintf(os.Stderr, "%s%s%s%s| %s%s%s\n", m.color, Bold, padded, Reset+Dim, Reset+Yellow, msg, Reset)
+
+	// Send to Discord if configured
+	m.sendToDiscord("warn", msg)
 }
 
 // Errorf prints an error (red) message.
@@ -62,6 +89,43 @@ func (m *Module) Errorf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	padded := m.name + strings.Repeat(" ", max(1, defaultWidth-len(m.name)))
 	fmt.Fprintf(os.Stderr, "%s%s%s%s| %s%s%s\n", m.color, Bold, padded, Reset+Dim, Reset+Red, msg, Reset)
+
+	// Send to Discord if configured
+	m.sendToDiscord("error", msg)
+}
+
+// sendToDiscord sends log message to Discord channel if configured.
+func (m *Module) sendToDiscord(level, msg string) {
+	senderMu.RLock()
+	sender := discordSender
+	channelID := logChannelID
+	senderMu.RUnlock()
+
+	if sender == nil || channelID == "" {
+		return
+	}
+
+	// Format message with timestamp and module name
+	timestamp := time.Now().Format("15:04:05")
+	var emoji string
+	switch level {
+	case "error":
+		emoji = "🔴"
+	case "warn":
+		emoji = "⚠️"
+	default:
+		emoji = "ℹ️"
+	}
+
+	discordMsg := fmt.Sprintf("`%s` %s **%s** | %s", timestamp, emoji, m.name, msg)
+
+	// Send asynchronously to avoid blocking logs
+	go func() {
+		if err := sender.SendMessage(channelID, discordMsg); err != nil {
+			// Silently ignore Discord send errors to avoid infinite recursion
+			fmt.Fprintf(os.Stderr, "logger: failed to send to Discord: %v\n", err)
+		}
+	}()
 }
 
 func max(a, b int) int {

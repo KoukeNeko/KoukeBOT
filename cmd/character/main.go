@@ -153,9 +153,16 @@ func run() error {
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
-		if err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore, imageStore); err != nil {
+		bot, err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore, imageStore)
+		if err != nil {
 			logDiscord.Warnf("failed to start: %v", err)
 			logDiscord.Log("continuing without Discord — HTTP API still available")
+		} else {
+			// Enable Discord logging if channel ID is configured
+			if settings.LogChannelID != "" {
+				logger.SetDiscordOutput(bot, settings.LogChannelID)
+				logSystem.Logf("stdout → Discord channel %s", settings.LogChannelID)
+			}
 		}
 	} else {
 		logDiscord.Warnf("DISCORD_TOKEN not set — skipped")
@@ -323,7 +330,7 @@ func initOAuthExtractionProvider(ctx context.Context, model string) llm.Provider
 	return nil
 }
 
-func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore) error {
+func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore) (*discordbot.Bot, error) {
 	// Use the first loaded persona as the default
 	var personaID string
 	for id := range personaService.GetAll() {
@@ -332,12 +339,12 @@ func startDiscordBot(token string, useReply bool, personaService *app.PersonaSer
 	}
 
 	if personaID == "" {
-		return fmt.Errorf("no personas loaded for Discord bot")
+		return nil, fmt.Errorf("no personas loaded for Discord bot")
 	}
 
 	bot, err := discordbot.NewBot(token, personaID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Register message handler (responds to @mentions and DMs)
@@ -347,17 +354,17 @@ func startDiscordBot(token string, useReply bool, personaService *app.PersonaSer
 	// Connection must be open before registering slash commands
 	// (RegisterCommands needs session.State.User.ID)
 	if err := bot.Start(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Register slash commands: /persona, /reset, /status, /reload
 	slashCmds := discordhandler.NewSlashCommands(bot, personaService, chatService, convStore, imageStore)
 	if err := slashCmds.Register(); err != nil {
-		return fmt.Errorf("register slash commands: %w", err)
+		return nil, fmt.Errorf("register slash commands: %w", err)
 	}
 
 	logDiscord.Logf("serving persona: %s", personaID)
-	return nil
+	return bot, nil
 }
 
 func startAPIServer(
