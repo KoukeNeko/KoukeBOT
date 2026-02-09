@@ -35,6 +35,9 @@ type Settings struct {
 	// Memory extraction settings
 	MemoryExtractionEnabled bool   `json:"memory_extraction_enabled"` // Enable automatic post-response memory extraction
 	MemoryExtractionModel   string `json:"memory_extraction_model"`   // Model for extraction (default: "gemini-2.0-flash")
+
+	// Provider pool settings
+	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
 }
 
 // SettingsStore reads and writes settings to a JSON file.

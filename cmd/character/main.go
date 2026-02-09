@@ -210,7 +210,7 @@ func resolveSettings(settingsStore *config.SettingsStore) config.Settings {
 func initProvider(ctx context.Context, settings config.Settings, pm *app.ProviderManager, model, port string) {
 	switch settings.ProviderType {
 	case config.ProviderOAuth:
-		if initOAuthProvider(ctx, pm, model) {
+		if initOAuthProvider(ctx, settings, pm, model) {
 			return
 		}
 		logLLM.Warnf("OAuth selected but not available — configure at http://localhost:%s/settings", port)
@@ -226,7 +226,7 @@ func initProvider(ctx context.Context, settings config.Settings, pm *app.Provide
 		if settings.GeminiAPIKey != "" && initAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model) {
 			return
 		}
-		if initOAuthProvider(ctx, pm, model) {
+		if initOAuthProvider(ctx, settings, pm, model) {
 			return
 		}
 		logLLM.Warnf("no LLM credentials — configure at http://localhost:%s/settings", port)
@@ -247,7 +247,7 @@ func initAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderMana
 	return true
 }
 
-func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model string) bool {
+func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.ProviderManager, model string) bool {
 	// Migrate single token to pool if pool doesn't exist yet
 	llm.MigrateSingleTokenToPool(oauthTokenPath, oauthPoolPath)
 
@@ -267,6 +267,12 @@ func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model strin
 	}
 
 	pool := app.NewProviderPool()
+
+	// Configure auto retry count from settings
+	if settings.AutoRetryCount > 0 {
+		pool.SetAutoRetryCount(settings.AutoRetryCount)
+	}
+
 	for _, tokenData := range tokens {
 		if err := llm.RefreshIfNeeded(ctx, tokenData, oauthTokenPath); err != nil {
 			logLLM.Warnf("OAuth token refresh failed for %s: %v", tokenData.Email, err)

@@ -21,6 +21,7 @@ type poolEntry struct {
 	provider       llm.Provider
 	email          string
 	exhaustedUntil time.Time // zero value = available
+	lastUsed       time.Time // for load balancing
 }
 
 // PoolStatus is the public view of a pool entry for API responses.
@@ -34,16 +35,26 @@ type PoolStatus struct {
 // ProviderPool wraps multiple llm.Provider instances with automatic 429 failover.
 // It implements llm.Provider so it can be used as a drop-in replacement.
 type ProviderPool struct {
-	mu            sync.RWMutex
-	entries       []poolEntry
-	current       int // round-robin index
-	lastUsedEmail string
-	tools         []domain.Tool
+	mu             sync.RWMutex
+	entries        []poolEntry
+	current        int // round-robin index
+	lastUsedEmail  string
+	tools          []domain.Tool
+	autoRetryCount int // number of retries for short-delay 429s
 }
 
 // NewProviderPool creates an empty provider pool.
 func NewProviderPool() *ProviderPool {
-	return &ProviderPool{}
+	return &ProviderPool{
+		autoRetryCount: 3, // default: 3 retries for short-delay 429s
+	}
+}
+
+// SetAutoRetryCount configures the number of retries for short-delay 429 errors.
+func (pp *ProviderPool) SetAutoRetryCount(count int) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	pp.autoRetryCount = count
 }
 
 // Add appends a provider to the pool.
@@ -194,15 +205,62 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 		if err == nil {
 			pp.mu.Lock()
 			pp.lastUsedEmail = email
+			// Update lastUsed timestamp for load balancing
+			for i := range pp.entries {
+				if pp.entries[i].email == email {
+					pp.entries[i].lastUsed = time.Now()
+					break
+				}
+			}
 			pp.mu.Unlock()
 			return result, nil
 		}
 
-		// Check if this is a 429/quota error
-		if isQuotaError(err) {
+		// Classify error type
+		errType := classifyError(err)
+
+		switch errType {
+		case errorQuota:
 			resetDuration := parseResetDelay(err.Error())
+
+			// Short-delay 429: wait and retry same account
+			if resetDuration <= 30*time.Second {
+				pp.mu.Lock()
+				retryCount := pp.autoRetryCount
+				pp.mu.Unlock()
+
+				for retry := 0; retry < retryCount; retry++ {
+					logPool.Logf("account %s: short delay (%s), retry %d/%d...", email, formatDuration(resetDuration), retry+1, retryCount)
+					time.Sleep(resetDuration)
+
+					result, err = fn(provider)
+					if err == nil {
+						pp.mu.Lock()
+						pp.lastUsedEmail = email
+						for i := range pp.entries {
+							if pp.entries[i].email == email {
+								pp.entries[i].lastUsed = time.Now()
+								break
+							}
+						}
+						pp.mu.Unlock()
+						return result, nil
+					}
+
+					// Still quota error? Re-parse delay
+					if classifyError(err) == errorQuota {
+						resetDuration = parseResetDelay(err.Error())
+						if resetDuration > 30*time.Second {
+							break // Long delay: switch to next account
+						}
+					} else {
+						break // Non-quota error: stop retrying
+					}
+				}
+			}
+
+			// Long-delay or retry exhausted: mark exhausted and try next account
 			pp.mu.Lock()
-			// Re-find the entry (pool may have changed)
 			for i := range pp.entries {
 				if pp.entries[i].email == email {
 					pp.entries[i].exhaustedUntil = now.Add(resetDuration)
@@ -218,10 +276,16 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 			logPool.Logf("quota error detail: %s", errStr)
 			tried++
 			continue
-		}
 
-		// Non-quota error: return immediately
-		return result, err
+		case errorValidation:
+			// Validation error: don't switch accounts (same payload will fail everywhere)
+			logPool.Warnf("validation error with %s: %v", email, err)
+			return result, err
+
+		default:
+			// Other errors: return immediately
+			return result, err
+		}
 	}
 
 	// All providers exhausted — find the soonest reset
@@ -258,22 +322,59 @@ func (pp *ProviderPool) findEarliestReset() string {
 	return fmt.Sprintf("%s (%s)", formatDuration(earliest.Sub(now)), earliestEmail)
 }
 
-// isQuotaError checks if an error indicates a 429/RESOURCE_EXHAUSTED response.
-func isQuotaError(err error) bool {
+// errorType classifies errors for appropriate failover handling.
+type errorType int
+
+const (
+	errorNone       errorType = iota // not an error
+	errorQuota                       // 429 rate limit / RESOURCE_EXHAUSTED
+	errorValidation                  // format/validation errors (don't switch accounts)
+	errorOther                       // other errors (return immediately)
+)
+
+// classifyError determines the error type for failover logic.
+func classifyError(err error) errorType {
 	if err == nil {
-		return false
+		return errorNone
 	}
 	s := err.Error()
-	return strings.Contains(s, "429") || strings.Contains(s, "RESOURCE_EXHAUSTED")
+
+	// Quota/rate-limit errors → retry with next account
+	if strings.Contains(s, "429") || strings.Contains(s, "RESOURCE_EXHAUSTED") {
+		return errorQuota
+	}
+
+	// Validation errors → don't switch accounts (same payload will fail everywhere)
+	if strings.Contains(s, "tool_use_id") ||
+		strings.Contains(s, "invalid_request_error") ||
+		strings.Contains(s, "validation") {
+		return errorValidation
+	}
+
+	// Other errors → return immediately
+	return errorOther
+}
+
+// isQuotaError checks if an error indicates a 429/RESOURCE_EXHAUSTED response.
+func isQuotaError(err error) bool {
+	return classifyError(err) == errorQuota
 }
 
 // quotaResetDelayRe matches "quotaResetDelay":"123s" in JSON error bodies.
 var quotaResetDelayRe = regexp.MustCompile(`"quotaResetDelay"\s*:\s*"(\d+)s"`)
 
+// humanResetDelayRe matches "reset after 1h38m34s" or "reset in 5m" in error messages.
+// Captures the duration string (e.g., "1h38m34s", "5m", "2h").
+var humanResetDelayRe = regexp.MustCompile(`reset (?:after|in) ((?:\d+h)?(?:\d+m)?(?:\d+s)?)`)
+
 // parseResetDelay extracts the quota reset duration from an error message.
-// Falls back to 2 minutes if unparseable (conservative enough to avoid hammering,
-// short enough to recover from transient per-minute rate limits).
+// Supports:
+//  1. JSON format: "quotaResetDelay":"123s"
+//  2. Human-readable: "reset after 1h38m34s" or "reset in 5m"
+//  3. "No capacity available" → 30 seconds (short retry for transient overload)
+// Falls back to 2 minutes if unparseable.
 func parseResetDelay(errMsg string) time.Duration {
+	// Try JSON format first
 	matches := quotaResetDelayRe.FindStringSubmatch(errMsg)
 	if len(matches) >= 2 {
 		seconds, err := strconv.Atoi(matches[1])
@@ -281,6 +382,20 @@ func parseResetDelay(errMsg string) time.Duration {
 			return time.Duration(seconds) * time.Second
 		}
 	}
+
+	// Try human-readable format (e.g., "reset after 1h38m34s")
+	matches = humanResetDelayRe.FindStringSubmatch(errMsg)
+	if len(matches) >= 2 {
+		if d, err := time.ParseDuration(matches[1]); err == nil && d > 0 {
+			return d
+		}
+	}
+
+	// Special case: "No capacity available" → short retry (transient overload)
+	if strings.Contains(errMsg, "No capacity available") {
+		return 30 * time.Second
+	}
+
 	// Default: 2 minutes (short enough to recover from per-minute rate limits)
 	return 2 * time.Minute
 }
