@@ -446,6 +446,7 @@ type SettingsResponse struct {
 	Location                 string `json:"location"`           // OpenClaw 相容
 	MemoryExtractionEnabled  bool   `json:"memory_extraction_enabled"`
 	MemoryExtractionModel    string `json:"memory_extraction_model"`
+	LogChannelID             string `json:"log_channel_id"` // Discord channel ID for stdout logs
 }
 
 type SettingsUpdateRequest struct {
@@ -464,6 +465,7 @@ type SettingsUpdateRequest struct {
 	Location                 string `json:"location"`           // OpenClaw 相容
 	MemoryExtractionEnabled  *bool  `json:"memory_extraction_enabled"`
 	MemoryExtractionModel    string `json:"memory_extraction_model"`
+	LogChannelID             string `json:"log_channel_id"` // Discord channel ID for stdout logs
 }
 
 type ProviderStatusResponse struct {
@@ -501,6 +503,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		Location:                settings.Location,
 		MemoryExtractionEnabled: settings.MemoryExtractionEnabled,
 		MemoryExtractionModel:   settings.MemoryExtractionModel,
+		LogChannelID:            settings.LogChannelID,
 	})
 }
 
@@ -556,6 +559,8 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
 	}
 	existing.MemoryExtractionModel = req.MemoryExtractionModel
+	// Discord logging settings
+	existing.LogChannelID = req.LogChannelID
 
 	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
 		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)

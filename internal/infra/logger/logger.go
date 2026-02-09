@@ -122,8 +122,9 @@ func (m *Module) sendToDiscord(level, msg string) {
 	// Send asynchronously to avoid blocking logs
 	go func() {
 		if err := sender.SendMessage(channelID, discordMsg); err != nil {
-			// Silently ignore Discord send errors to avoid infinite recursion
-			fmt.Fprintf(os.Stderr, "logger: failed to send to Discord: %v\n", err)
+			// Log Discord send errors with proper formatting (avoid infinite recursion by using stderr directly)
+			padded := "logger" + strings.Repeat(" ", max(1, defaultWidth-len("logger")))
+			fmt.Fprintf(os.Stderr, "%s%s%s%s| %s%s%s\n", Yellow, Bold, padded, Reset+Dim, Reset+Red, "Discord send failed: "+err.Error(), Reset)
 		}
 	}()
 }
