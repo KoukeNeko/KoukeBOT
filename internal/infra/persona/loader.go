@@ -58,6 +58,7 @@ func LoadPersona(baseDir, id string) (*domain.PersonaModule, error) {
 	}
 
 	return &domain.PersonaModule{
+		DirName:        id,
 		Config:         *config,
 		Lore:           lore,
 		UserProfile:    userProfile,

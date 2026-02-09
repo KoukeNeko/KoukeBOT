@@ -31,6 +31,10 @@ type Settings struct {
 	Timezone   string `json:"timezone"`    // "Asia/Taipei", "America/New_York", "auto"
 	TimeFormat string `json:"time_format"` // "auto", "12", "24"
 	Location   string `json:"location"`    // Optional: explicit location "台北, 台灣"
+
+	// Memory extraction settings
+	MemoryExtractionEnabled bool   `json:"memory_extraction_enabled"` // Enable automatic post-response memory extraction
+	MemoryExtractionModel   string `json:"memory_extraction_model"`   // Model for extraction (default: "gemini-2.0-flash")
 }
 
 // SettingsStore reads and writes settings to a JSON file.

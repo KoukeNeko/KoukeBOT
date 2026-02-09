@@ -47,6 +47,7 @@ type AnchorFile struct {
 // PersonaModule is the fully loaded, runtime-ready persona.
 // Assembled from config.yaml + lore.md + anchors.yaml + user.md + memory/.
 type PersonaModule struct {
+	DirName         string   // folder name under configs/personas/ (e.g., "hayasaka")
 	Config          PersonaConfig
 	Lore            string   // raw markdown from lore.md
 	UserProfile     string   // raw markdown from user.md

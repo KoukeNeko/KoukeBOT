@@ -39,6 +39,7 @@ var (
 	logTools   = logger.New("tools", logger.Green)
 	logDiscord = logger.New("discord", logger.Magenta)
 	logHTTP    = logger.New("http", logger.Blue)
+	logMemory  = logger.New("memory", logger.Green)
 )
 
 func main() {
@@ -80,6 +81,24 @@ func run() error {
 
 	initProvider(ctx, settings, providerManager, model, port)
 
+	// Init memory extraction provider (cheap model, no tools registered)
+	var memoryExtractor *app.MemoryExtractor
+	if settings.MemoryExtractionEnabled && settings.GeminiAPIKey != "" {
+		extractionModel := settings.MemoryExtractionModel
+		if extractionModel == "" {
+			extractionModel = "gemini-2.0-flash"
+		}
+		extractionProvider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, extractionModel)
+		if err != nil {
+			logMemory.Warnf("failed to init extraction provider: %v — disabled", err)
+		} else {
+			memoryExtractor = app.NewMemoryExtractor(extractionProvider, personasDir)
+			logMemory.Logf("enabled (model: %s)", extractionModel)
+		}
+	} else if !settings.MemoryExtractionEnabled {
+		logMemory.Log("disabled")
+	}
+
 	// Init core services
 	convStore, err := store.NewFileStore("data/conversations")
 	if err != nil {
@@ -104,7 +123,7 @@ func run() error {
 	}
 
 	assembler := app.NewContextAssembler()
-	chatService := app.NewChatService(providerManager, assembler, convStore, personaService.GetAll(), tools)
+	chatService := app.NewChatService(providerManager, assembler, convStore, personaService.GetAll(), tools, memoryExtractor)
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
@@ -150,6 +169,12 @@ func resolveSettings(settingsStore *config.SettingsStore) config.Settings {
 	}
 	if envToken := os.Getenv("DISCORD_TOKEN"); envToken != "" {
 		settings.DiscordToken = envToken
+	}
+
+	// Default: enable memory extraction if not explicitly configured
+	// (JSON zero value for bool is false, so first-run users get it enabled)
+	if settings.GeminiAPIKey != "" && !settings.MemoryExtractionEnabled && settings.MemoryExtractionModel == "" {
+		settings.MemoryExtractionEnabled = true
 	}
 
 	return settings

@@ -16,11 +16,12 @@ var logChat = logger.New("chat", logger.Cyan)
 // ChatService orchestrates the full chat pipeline:
 // receive message → load conversation → assemble context → call LLM → persist → return.
 type ChatService struct {
-	provider     llm.Provider
-	assembler    *ContextAssembler
-	store        store.ConversationRepository
-	personas     map[string]*domain.PersonaModule
-	toolRegistry map[string]domain.Tool // tool name → tool instance
+	provider        llm.Provider
+	assembler       *ContextAssembler
+	store           store.ConversationRepository
+	personas        map[string]*domain.PersonaModule
+	toolRegistry    map[string]domain.Tool // tool name → tool instance
+	memoryExtractor *MemoryExtractor       // automatic post-response memory extraction (nil = disabled)
 }
 
 func NewChatService(
@@ -29,6 +30,7 @@ func NewChatService(
 	convStore store.ConversationRepository,
 	personas map[string]*domain.PersonaModule,
 	tools []domain.Tool,
+	memoryExtractor *MemoryExtractor, // nil = disabled
 ) *ChatService {
 	// Build tool registry
 	toolRegistry := make(map[string]domain.Tool)
@@ -37,11 +39,12 @@ func NewChatService(
 	}
 
 	return &ChatService{
-		provider:     provider,
-		assembler:    assembler,
-		store:        convStore,
-		personas:     personas,
-		toolRegistry: toolRegistry,
+		provider:        provider,
+		assembler:       assembler,
+		store:           convStore,
+		personas:        personas,
+		toolRegistry:    toolRegistry,
+		memoryExtractor: memoryExtractor,
 	}
 }
 
@@ -134,7 +137,7 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 	}
 
 	// Handle tool calling loop and wrap stream for persistence
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, rawLLMInput), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput), nil
 }
 
 // HandleMessageStreamWithImages processes a user message with images and returns a streaming channel.
@@ -214,7 +217,7 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 	}
 
 	// Handle tool calling loop and wrap stream for persistence
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, rawLLMInput), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput), nil
 }
 
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {
@@ -276,6 +279,7 @@ func (s *ChatService) handleToolCallingStream(
 	conv *domain.Conversation,
 	messageToStore, contextForLLM string,
 	persona *domain.PersonaModule,
+	personaID string,
 	rawLLMInput string,
 ) <-chan llm.StreamChunk {
 	outputCh := make(chan llm.StreamChunk, 16)
@@ -388,6 +392,11 @@ func (s *ChatService) handleToolCallingStream(
 			conv.AppendAssistantMessageWithRaw(finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
 			_ = s.store.Save(ctx, conv)
 
+			// Fire background memory extraction (invisible to user)
+			if s.memoryExtractor != nil {
+				go s.memoryExtractor.Process(context.Background(), persona.DirName, messageToStore, finalResponse, persona)
+			}
+
 			outputCh <- llm.StreamChunk{Done: true}
 			return
 		}
@@ -397,6 +406,11 @@ func (s *ChatService) handleToolCallingStream(
 			conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 			conv.AppendAssistantMessageWithRaw(fullResponse, rawLLMInput, fullResponse)
 			_ = s.store.Save(ctx, conv)
+
+			// Fire background memory extraction (invisible to user)
+			if s.memoryExtractor != nil {
+				go s.memoryExtractor.Process(context.Background(), persona.DirName, messageToStore, fullResponse, persona)
+			}
 		}
 
 		// Send final Done signal to indicate stream completion
