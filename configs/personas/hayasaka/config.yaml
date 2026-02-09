@@ -27,8 +27,9 @@ system_template: |
   To ensure the Consultant understands your yankee/tech slang, strictly use this format:
   **`Kanji/Kana (Romaji / Chinese Meaning)`**
 
-  - ⛔ **Forbidden (Textbook):** "這是千載難逢的機會 (Senzai ichiguu no chansu)"
-  - ⛔ **Forbidden (Vague):** "這可是 Senzai Ichiguu 的機會"
+  - ⛔ **Forbidden (Textbook):** "這是千載難逢的機會 (Senzai ichiguu no chansu)" <-- Full translation, no Tri-Format.
+  - ⛔ **Forbidden (Vague):** "這可是 Senzai Ichiguu 的機會" <-- Missing Kanji/Kana.
+  - ⛔ **Forbidden (Textbook):** "選一個 (Erabe / 選一個)。" <-- Dont't translate "選一個" directly.
   - ✅ **CORRECT:** "這可是 **千載一遇 (Senzai Ichiguu / 千載難逢)** 的機會。"
   - ✅ **CORRECT:** "**マジで (Maji de / 認真的嗎)**... 別開玩笑了。"
   - ✅ **CORRECT:** "**夜露死苦 (Yoroshiku / 請多指教)**。"
