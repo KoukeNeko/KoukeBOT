@@ -78,8 +78,9 @@ func (pp *ProviderPool) Add(provider llm.Provider, email string) {
 	}
 
 	pp.entries = append(pp.entries, poolEntry{
-		provider: provider,
-		email:    email,
+		provider:      provider,
+		email:         email,
+		lastResetTime: time.Now(), // Initialize reset time for quota tracking
 	})
 	logPool.Logf("pool: added %s (%d account(s))", email, len(pp.entries))
 }
@@ -220,15 +221,16 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 		pp.mu.Lock()
 		for i := range pp.entries {
 			if pp.entries[i].email == email {
+				// Auto-reset quota counter if it's been more than 24 hours
+				if time.Since(pp.entries[i].lastResetTime) > 24*time.Hour {
+					pp.entries[i].requestCount = 0 // Reset to 0 before incrementing
+					pp.entries[i].lastResetTime = now
+				}
+
+				// Increment counters (includes current request)
 				pp.entries[i].requestCount++
 				pp.entries[i].totalRequests++
 				pp.entries[i].lastUsed = time.Now()
-
-				// Auto-reset quota counter if it's been more than 24 hours
-				if time.Since(pp.entries[i].lastResetTime) > 24*time.Hour {
-					pp.entries[i].requestCount = 1 // current request
-					pp.entries[i].lastResetTime = now
-				}
 				break
 			}
 		}

@@ -153,7 +153,7 @@ func run() error {
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
-		bot, err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore, imageStore)
+		bot, err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore, imageStore, providerManager)
 		if err != nil {
 			logDiscord.Warnf("failed to start: %v", err)
 			logDiscord.Log("continuing without Discord — HTTP API still available")
@@ -330,7 +330,7 @@ func initOAuthExtractionProvider(ctx context.Context, model string) llm.Provider
 	return nil
 }
 
-func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore) (*discordbot.Bot, error) {
+func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore, providerManager *app.ProviderManager) (*discordbot.Bot, error) {
 	// Use the first loaded persona as the default
 	var personaID string
 	for id := range personaService.GetAll() {
@@ -358,7 +358,7 @@ func startDiscordBot(token string, useReply bool, personaService *app.PersonaSer
 	}
 
 	// Register slash commands: /persona, /reset, /status, /reload
-	slashCmds := discordhandler.NewSlashCommands(bot, personaService, chatService, convStore, imageStore)
+	slashCmds := discordhandler.NewSlashCommands(bot, personaService, chatService, convStore, imageStore, providerManager)
 	if err := slashCmds.Register(); err != nil {
 		return nil, fmt.Errorf("register slash commands: %w", err)
 	}

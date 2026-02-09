@@ -17,11 +17,12 @@ var logCmd = logger.New("discord", logger.Magenta)
 
 // SlashCommands manages Discord slash command registration and handling.
 type SlashCommands struct {
-	bot            *discordbot.Bot
-	personaService *app.PersonaService
-	chatService    *app.ChatService
-	convStore      store.ConversationRepository
-	imageStore     *store.ImageStore
+	bot             *discordbot.Bot
+	personaService  *app.PersonaService
+	chatService     *app.ChatService
+	convStore       store.ConversationRepository
+	imageStore      *store.ImageStore
+	providerManager *app.ProviderManager
 }
 
 func NewSlashCommands(
@@ -30,13 +31,15 @@ func NewSlashCommands(
 	chatService *app.ChatService,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
+	providerManager *app.ProviderManager,
 ) *SlashCommands {
 	return &SlashCommands{
-		bot:            bot,
-		personaService: personaService,
-		chatService:    chatService,
-		convStore:      convStore,
-		imageStore:     imageStore,
+		bot:             bot,
+		personaService:  personaService,
+		chatService:     chatService,
+		convStore:       convStore,
+		imageStore:      imageStore,
+		providerManager: providerManager,
 	}
 }
 
@@ -158,7 +161,7 @@ func (sc *SlashCommands) handleStatus(s *discordgo.Session, i *discordgo.Interac
 	}
 
 	var sb strings.Builder
-	sb.WriteString("📊 **System Status**\n")
+	sb.WriteString("📊 **System Status**\n\n")
 	sb.WriteString(fmt.Sprintf("**角色:** %s (`%s`)\n", persona.Config.Meta.Name, persona.Config.Meta.ID))
 	sb.WriteString(fmt.Sprintf("**版本:** %s\n", persona.Config.Meta.Version))
 	sb.WriteString(fmt.Sprintf("**Anchors:** %d 組\n", len(persona.Anchors)))
@@ -166,7 +169,67 @@ func (sc *SlashCommands) handleStatus(s *discordgo.Session, i *discordgo.Interac
 	sb.WriteString(fmt.Sprintf("**Temperature:** %.2f\n", persona.Config.Generation.Temperature))
 	sb.WriteString(fmt.Sprintf("**Max Tokens:** %d\n", persona.Config.Generation.MaxTokens))
 
+	// Add OAuth pool quota information if available
+	if sc.providerManager != nil {
+		if pool := sc.providerManager.GetPool(); pool != nil && pool.Size() > 0 {
+		sb.WriteString("\n**🔐 OAuth Pool Status**\n")
+		entries := pool.Entries()
+		for _, entry := range entries {
+			maskedEmail := maskEmail(entry.Email)
+			status := "✅"
+			if entry.Status == "exhausted" {
+				status = "⏳"
+			}
+			if entry.Current {
+				status += " [使用中]"
+			}
+
+			sb.WriteString(fmt.Sprintf("%s `%s`", status, maskedEmail))
+			if entry.RequestCount > 0 {
+				sb.WriteString(fmt.Sprintf(" • 24h: %d", entry.RequestCount))
+			}
+			sb.WriteString("\n")
+		}
+		}
+	}
+
 	respondEphemeral(s, i, sb.String())
+}
+
+// maskEmail hides part of the email address for privacy.
+// Example: "example@gmail.com" -> "e***e@g***l.com"
+func maskEmail(email string) string {
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return email // Invalid email, return as-is
+	}
+
+	local := parts[0]
+	domain := parts[1]
+
+	// Mask local part (e.g., "example" -> "e***e")
+	maskedLocal := local
+	if len(local) > 2 {
+		maskedLocal = string(local[0]) + "***" + string(local[len(local)-1])
+	} else if len(local) == 2 {
+		maskedLocal = string(local[0]) + "*"
+	}
+
+	// Mask domain part (e.g., "gmail.com" -> "g***l.com")
+	domainParts := strings.Split(domain, ".")
+	if len(domainParts) >= 2 {
+		name := domainParts[0]
+		maskedName := name
+		if len(name) > 2 {
+			maskedName = string(name[0]) + "***" + string(name[len(name)-1])
+		} else if len(name) == 2 {
+			maskedName = string(name[0]) + "*"
+		}
+		domainParts[0] = maskedName
+		domain = strings.Join(domainParts, ".")
+	}
+
+	return maskedLocal + "@" + domain
 }
 
 func (sc *SlashCommands) handleReload(s *discordgo.Session, i *discordgo.InteractionCreate) {
