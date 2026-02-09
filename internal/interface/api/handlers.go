@@ -588,16 +588,35 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 	switch s.ProviderType {
 	case config.ProviderOAuth:
 		logAPI.Logf("activate-provider: switching to OAuth")
-		oauthData, err := h.oauthFlow.GetStatus()
-		if err != nil || oauthData == nil {
-			return fmt.Errorf("no OAuth credentials available")
+		// Load all pool tokens and build a ProviderPool (not just a single token)
+		poolPath := h.oauthFlow.PoolPath()
+		tokens, err := llm.LoadOAuthPool(poolPath)
+		if err != nil || len(tokens) == 0 {
+			// Fallback to single token
+			oauthData, err := h.oauthFlow.GetStatus()
+			if err != nil || oauthData == nil {
+				return fmt.Errorf("no OAuth credentials available")
+			}
+			tokens = []*llm.OAuthTokenData{oauthData}
 		}
-		provider, err := llm.NewGeminiOAuthProvider(h.ctx, oauthData, model)
-		if err != nil {
-			return fmt.Errorf("create OAuth provider: %w", err)
+		pool := app.NewProviderPool()
+		for _, tokenData := range tokens {
+			if err := llm.RefreshIfNeeded(h.ctx, tokenData, ""); err != nil {
+				logAPI.Warnf("activate-provider: token refresh failed for %s: %v", tokenData.Email, err)
+				continue
+			}
+			p, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
+			if err != nil {
+				logAPI.Warnf("activate-provider: provider init failed for %s: %v", tokenData.Email, err)
+				continue
+			}
+			pool.Add(p, tokenData.Email)
 		}
-		h.providerManager.Update(provider)
-		logAPI.Logf("provider hot-swapped: gemini-oauth (model: %s)", model)
+		if pool.Size() == 0 {
+			return fmt.Errorf("no OAuth accounts available")
+		}
+		h.providerManager.Update(pool)
+		logAPI.Logf("provider hot-swapped: OAuth pool (%d accounts, model: %s)", pool.Size(), model)
 
 	case config.ProviderAPIKey:
 		if s.GeminiAPIKey == "" {
