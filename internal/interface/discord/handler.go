@@ -158,7 +158,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	if err != nil {
 		logHandler.Errorf("chat error [%s]: %v", m.ChannelID, err)
-		_ = h.bot.SendMessage(m.ChannelID, "⚠️ Internal error. Check logs.")
+		_ = h.bot.SendMessage(m.ChannelID, formatDiscordError(err))
 		return
 	}
 
