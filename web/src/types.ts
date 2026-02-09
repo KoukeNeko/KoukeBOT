@@ -87,6 +87,15 @@ export interface OAuthStatus {
   authenticated: boolean
   project_id?: string
   email?: string
+  pool?: PoolEntry[]
+  pool_size?: number
+}
+
+export interface PoolEntry {
+  email: string
+  status: 'available' | 'exhausted'
+  exhausted_until?: string
+  current?: boolean
 }
 
 export interface Message {

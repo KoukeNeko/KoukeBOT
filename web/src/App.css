@@ -859,3 +859,129 @@ section h3 {
 .custom-checkbox.disabled {
   opacity: 0.6;
 }
+
+/* ===== OAuth Pool Cards ===== */
+.pool-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pool-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  background: #16162a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pool-card:hover {
+  border-color: rgba(100, 108, 255, 0.2);
+}
+
+.pool-card.exhausted {
+  opacity: 0.65;
+  border-color: rgba(255, 152, 0, 0.15);
+}
+
+.pool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.pool-card-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #646cff 0%, #8b5cf6 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.pool-card.exhausted .pool-card-avatar {
+  background: linear-gradient(135deg, #7a7a9a 0%, #5a5a7a 100%);
+}
+
+.pool-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.pool-card-email {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #e0e0e0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pool-card-status {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: #7a7a9a;
+}
+
+.pool-card-status.available {
+  color: #4caf50;
+}
+
+.pool-card-status.exhausted {
+  color: #ff9800;
+}
+
+.pool-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.pool-dot.available {
+  background: #4caf50;
+  box-shadow: 0 0 4px rgba(76, 175, 80, 0.4);
+}
+
+.pool-dot.exhausted {
+  background: #ff9800;
+  box-shadow: 0 0 4px rgba(255, 152, 0, 0.4);
+}
+
+.pool-card-remove {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: transparent;
+  color: #7a7a9a;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.pool-card-remove:hover:not(:disabled) {
+  color: #ef5350;
+  border-color: rgba(239, 83, 80, 0.3);
+  background: rgba(239, 83, 80, 0.08);
+}

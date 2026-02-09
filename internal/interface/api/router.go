@@ -66,6 +66,10 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/oauth/gemini/callback", r.handlers.OAuthCallback)
 	r.mux.HandleFunc("GET /api/oauth/gemini/status", r.handlers.OAuthStatus)
 
+	// OAuth Pool
+	r.mux.HandleFunc("GET /api/oauth/pool", r.handlers.OAuthPoolList)
+	r.mux.HandleFunc("DELETE /api/oauth/pool/{email}", r.handlers.OAuthPoolRemove)
+
 	// Health
 	r.mux.HandleFunc("GET /api/health", r.handlers.Health)
 }

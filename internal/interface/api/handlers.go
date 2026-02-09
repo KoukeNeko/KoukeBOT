@@ -732,7 +732,6 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hot-swap the provider and save provider_type.
 	model := "gemini-2.5-pro"
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil && s.GeminiModel != "" {
 		model = s.GeminiModel
@@ -745,8 +744,16 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `<!doctype html><html><body><h2>Provider Creation Failed</h2><p>%s</p></body></html>`, err.Error())
 		return
 	}
-	h.providerManager.Update(provider)
-	logAPI.Logf("provider hot-swapped: gemini-oauth (project: %s)", tokenData.ProjectID)
+
+	// Add to pool (or create pool if provider is not yet a pool)
+	pool := h.providerManager.GetPool()
+	if pool == nil {
+		pool = app.NewProviderPool()
+		h.providerManager.Update(pool)
+	}
+	pool.Add(provider, tokenData.Email)
+	logAPI.Logf("OAuth account added to pool: %s (project: %s, pool size: %d)",
+		tokenData.Email, tokenData.ProjectID, pool.Size())
 
 	// Persist provider_type = oauth.
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
@@ -755,28 +762,87 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8"/></head>`+
+	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"/></head>`+
 		`<body><h2>Gemini OAuth Complete</h2>`+
-		`<p>You can close this window and return to KoukeBOT.</p>`+
-		`<script>window.close()</script></body></html>`)
+		`<p>Account <b>%s</b> added to pool. You can close this window and return to KoukeBOT.</p>`+
+		`<script>window.close()</script></body></html>`, tokenData.Email)
 }
 
 type OAuthStatusResponse struct {
-	Authenticated bool   `json:"authenticated"`
-	ProjectID     string `json:"project_id,omitempty"`
-	Email         string `json:"email,omitempty"`
+	Authenticated bool              `json:"authenticated"`
+	ProjectID     string            `json:"project_id,omitempty"`
+	Email         string            `json:"email,omitempty"`
+	Pool          []app.PoolStatus  `json:"pool,omitempty"`
+	PoolSize      int               `json:"pool_size"`
 }
 
 func (h *Handlers) OAuthStatus(w http.ResponseWriter, r *http.Request) {
-	data, err := h.oauthFlow.GetStatus()
-	if err != nil || data == nil {
-		writeJSON(w, http.StatusOK, OAuthStatusResponse{Authenticated: false})
+	resp := OAuthStatusResponse{}
+
+	// Check pool status
+	if pool := h.providerManager.GetPool(); pool != nil {
+		entries := pool.Entries()
+		resp.Pool = entries
+		resp.PoolSize = len(entries)
+		resp.Authenticated = len(entries) > 0
+		if len(entries) > 0 {
+			resp.Email = entries[0].Email
+		}
+	} else {
+		// Fall back to single token status
+		data, err := h.oauthFlow.GetStatus()
+		if err == nil && data != nil {
+			resp.Authenticated = data.AccessToken != ""
+			resp.ProjectID = data.ProjectID
+			resp.Email = data.Email
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// OAuthPoolList returns the status of all accounts in the OAuth pool.
+func (h *Handlers) OAuthPoolList(w http.ResponseWriter, r *http.Request) {
+	pool := h.providerManager.GetPool()
+	if pool == nil {
+		writeJSON(w, http.StatusOK, []app.PoolStatus{})
 		return
 	}
-	writeJSON(w, http.StatusOK, OAuthStatusResponse{
-		Authenticated: data.AccessToken != "",
-		ProjectID:     data.ProjectID,
-		Email:         data.Email,
+	writeJSON(w, http.StatusOK, pool.Entries())
+}
+
+// OAuthPoolRemove removes an account from the OAuth pool by email.
+func (h *Handlers) OAuthPoolRemove(w http.ResponseWriter, r *http.Request) {
+	email := r.PathValue("email")
+	if email == "" {
+		writeError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+
+	pool := h.providerManager.GetPool()
+	if pool == nil {
+		writeError(w, http.StatusNotFound, "no OAuth pool active")
+		return
+	}
+
+	if !pool.Remove(email) {
+		writeError(w, http.StatusNotFound, "account not found in pool: "+email)
+		return
+	}
+
+	// Also remove from pool storage file
+	poolPath := h.oauthFlow.PoolPath()
+	if poolPath != "" {
+		if err := llm.RemoveFromOAuthPool(poolPath, email); err != nil {
+			logAPI.Warnf("failed to remove %s from pool file: %v", email, err)
+		}
+	}
+
+	logAPI.Logf("OAuth account removed from pool: %s (remaining: %d)", email, pool.Size())
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":    "removed",
+		"email":     email,
+		"pool_size": pool.Size(),
 	})
 }
 

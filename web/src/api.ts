@@ -1,4 +1,4 @@
-import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, OAuthDetectResult, OAuthStartResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation } from './types'
+import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, OAuthDetectResult, OAuthStartResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation, PoolEntry } from './types'
 
 const BASE = '/api'
 
@@ -93,6 +93,17 @@ export function getConversation(channelId: string, personaId: string): Promise<C
 
 export function deleteConversation(channelId: string, personaId: string): Promise<{ status: string }> {
   return fetchJSON(`${BASE}/conversations/${encodeURIComponent(channelId)}/${encodeURIComponent(personaId)}`, {
+    method: 'DELETE',
+  })
+}
+
+// OAuth Pool
+export function getOAuthPool(): Promise<PoolEntry[]> {
+  return fetchJSON(`${BASE}/oauth/pool`)
+}
+
+export function removeOAuthPoolAccount(email: string): Promise<{ status: string; pool_size: number }> {
+  return fetchJSON(`${BASE}/oauth/pool/${encodeURIComponent(email)}`, {
     method: 'DELETE',
   })
 }

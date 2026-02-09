@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   getSettings,
   updateSettings,
@@ -6,6 +6,8 @@ import {
   detectGeminiCLI,
   startGeminiOAuth,
   getOAuthStatus,
+  getOAuthPool,
+  removeOAuthPoolAccount,
   listModels,
 } from "../api";
 import Select from "../components/ui/Select";
@@ -15,9 +17,12 @@ import type {
   ProviderStatus,
   OAuthStatus,
   ModelEntry,
+  PoolEntry,
 } from "../types";
 
-type ProviderTab = "api-key" | "oauth";
+import "./Settings.css"; // Import the new CSS file
+
+type ProviderTab = "api-key" | "oauth" | "pool";
 
 export default function Settings() {
   const [form, setForm] = useState<SettingsData>({
@@ -46,7 +51,7 @@ export default function Settings() {
 
   // OAuth state
   const [providerTab, setProviderTab] = useState<ProviderTab>("api-key");
-  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus | null>(null);
+  const [, setOAuthStatus] = useState<OAuthStatus | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [detectedClientID, setDetectedClientID] = useState("");
   const [detectError, setDetectError] = useState("");
@@ -54,6 +59,20 @@ export default function Settings() {
   const [manualClientSecret, setManualClientSecret] = useState("");
   const [oauthStarting, setOAuthStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [addAccountOpen, setAddAccountOpen] = useState(false);
+
+  // Pool state
+  const [pool, setPool] = useState<PoolEntry[]>([]);
+  const [removingEmail, setRemovingEmail] = useState<string | null>(null);
+
+  const refreshPool = useCallback(async () => {
+    try {
+      const entries = await getOAuthPool();
+      setPool(entries);
+    } catch {
+      // Pool endpoint may not be available if no pool is active
+    }
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -61,16 +80,15 @@ export default function Settings() {
       getProviderStatus(),
       getOAuthStatus(),
       listModels(),
+      getOAuthPool().catch(() => [] as PoolEntry[]),
     ])
-      .then(([s, st, oauth, modelList]) => {
+      .then(([s, st, oauth, modelList, poolEntries]) => {
         setForm(s);
         setStatus(st);
         setOAuthStatus(oauth);
         setModels(modelList);
-        if (
-          s.provider_type === "oauth" ||
-          (oauth.authenticated && st.provider_name === "gemini-oauth")
-        ) {
+        setPool(poolEntries);
+        if (s.provider_type === "oauth") {
           setProviderTab("oauth");
         } else if (s.provider_type === "api-key") {
           setProviderTab("api-key");
@@ -161,11 +179,13 @@ export default function Settings() {
           if (oauth.authenticated) {
             if (pollRef.current) clearInterval(pollRef.current);
             pollRef.current = null;
+            await refreshPool();
             setMessage({
               type: "ok",
               text: "OAuth authentication successful!",
             });
             setOAuthStarting(false);
+            setAddAccountOpen(false);
           }
         } catch {
           // Ignore polling errors.
@@ -216,14 +236,20 @@ export default function Settings() {
         </div>
       )}
 
-      {message && (
-        <p className={message.type === "ok" ? "success" : "error"}>
-          {message.text}
-        </p>
-      )}
+            {message && (
 
-      <section>
-        <h3>LLM Provider</h3>
+              <p className={message.type === "ok" ? "success message" : "error message"}>
+
+                {message.text}
+
+              </p>
+
+            )
+
+      }
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">LLM Provider</h3>
 
         <div className="provider-tabs">
           <button
@@ -238,169 +264,217 @@ export default function Settings() {
           >
             Gemini OAuth
           </button>
+
         </div>
 
-        {providerTab === "api-key" && (
-          <div style={{ marginTop: "1rem" }}>
-            <label className="form-field">
-              <span>Gemini API Key</span>
-              <input
-                type="password"
-                value={form.gemini_api_key}
-                onChange={(e) =>
-                  setForm({ ...form, gemini_api_key: e.target.value })
-                }
-                placeholder="Enter your Gemini API key"
-              />
-            </label>
-
-            <label className="form-field">
-              <span>Model</span>
-              <Select
-                value={form.gemini_model}
-                onChange={(val) => setForm({ ...form, gemini_model: val })}
-                options={modelOptions}
-              />
-            </label>
-
-            <button onClick={() => handleSave("api-key")} disabled={saving}>
-              {saving ? "Saving..." : "Save"}
-            </button>
-          </div>
-        )}
-
-        {providerTab === "oauth" && (
-          <div style={{ marginTop: "1rem" }}>
-            {/* OAuth Status */}
-            {oauthStatus?.authenticated ? (
-              <div
-                className="status-banner ok"
-                style={{ marginBottom: "1rem" }}
-              >
-                Connected{oauthStatus.email ? ` as ${oauthStatus.email}` : ""}
-                {oauthStatus.project_id
-                  ? ` (project: ${oauthStatus.project_id})`
-                  : ""}
-              </div>
-            ) : (
-              <>
-                <div
-                  className="status-banner warn"
-                  style={{ marginBottom: "1rem" }}
-                >
-                  Not connected — click below to authenticate with Google.
-                </div>
-
-                {/* Detect Gemini CLI */}
-                <div style={{ marginBottom: "1rem" }}>
-                  <button
-                    onClick={handleDetect}
-                    disabled={detecting}
-                    className="btn-secondary"
-                  >
-                    {detecting ? "Detecting..." : "Detect Gemini CLI"}
-                  </button>
-                  {detectedClientID && (
-                    <p
-                      className="success"
-                      style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}
-                    >
-                      ✓ Found and auto-filled credentials from Gemini CLI
-                    </p>
-                  )}
-                  {detectError && (
-                    <p
-                      className="error"
-                      style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}
-                    >
-                      {detectError}
-                    </p>
-                  )}
-                </div>
-
-                {/* OAuth Credentials */}
-                <div style={{ marginBottom: "1rem" }}>
-                  <p className="meta" style={{ marginBottom: "0.5rem" }}>
-                    {detectedClientID
-                      ? "Credentials (auto-filled):"
-                      : "OAuth Credentials:"}
-                  </p>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "1rem",
-                    }}
-                  >
-                    <label className="form-field">
-                      <span>Client ID</span>
-                      <input
-                        type="text"
-                        value={manualClientID}
-                        onChange={(e) => setManualClientID(e.target.value)}
-                        placeholder="xxx.apps.googleusercontent.com"
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>Client Secret</span>
-                      <input
-                        type="password"
-                        value={manualClientSecret}
-                        onChange={(e) => setManualClientSecret(e.target.value)}
-                        placeholder="GOCSPX-xxx"
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                {/* Login button */}
-                <button
-                  onClick={handleOAuthLogin}
-                  disabled={
-                    oauthStarting || (!detectedClientID && !manualClientID)
+        <div className="provider-content">
+          {providerTab === "api-key" && (
+            <>
+              <label className="form-field">
+                <span>Gemini API Key</span>
+                <input
+                  type="password"
+                  value={form.gemini_api_key}
+                  onChange={(e) =>
+                    setForm({ ...form, gemini_api_key: e.target.value })
                   }
-                >
-                  {oauthStarting
-                    ? "Waiting for authorization..."
-                    : "Login with Google"}
-                </button>
-                {oauthStarting && (
-                  <p className="meta" style={{ marginTop: "0.5rem" }}>
-                    Complete the authorization in the popup window...
-                  </p>
-                )}
-              </>
-            )}
+                  placeholder="Enter your Gemini API key"
+                />
+              </label>
 
-            {/* Model selector + activate */}
-            {oauthStatus?.authenticated && (
-              <div
-                style={{
-                  marginTop: "1.5rem",
-                  borderTop: "1px solid var(--border)",
-                  paddingTop: "1rem",
-                }}
+              <label className="form-field">
+                <span>Model</span>
+                <Select
+                  value={form.gemini_model}
+                  onChange={(val) => setForm({ ...form, gemini_model: val })}
+                  options={modelOptions}
+                />
+              </label>
+
+              <button onClick={() => handleSave("api-key")} disabled={saving} className="btn-save-bottom">
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </>
+          )}
+
+          {providerTab === "oauth" && (
+            <>
+              {/* Pool accounts list */}
+              {pool.length > 0 && (
+                <div className="pool-cards compact">
+                  {pool.map((entry) => (
+                    <div key={entry.email} className={`pool-card ${entry.status === "exhausted" ? "exhausted" : ""} ${entry.current ? "current" : ""}`}>
+                      <div className="pool-card-header">
+                        <div className="pool-card-avatar">
+                          {entry.email.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="pool-card-info">
+                          <div className="pool-card-email">
+                            {entry.email}
+                            {entry.current && <span className="pool-current-badge">使用中</span>}
+                          </div>
+                          <div className={`pool-card-status ${entry.status}`}>
+                            {entry.status === "available" ? (
+                              <><span className="pool-dot available" /> 可用</>
+                            ) : (
+                              <><span className="pool-dot exhausted" /> 配額耗盡
+                                {entry.exhausted_until && (
+                                  <span className="pool-reset-hint">
+                                    (重置於 {new Date(entry.exhausted_until).toLocaleTimeString()})
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        className="pool-card-remove"
+                        onClick={async () => {
+                          if (!confirm(`確定要移除帳號 ${entry.email}？`)) return;
+                          setRemovingEmail(entry.email);
+                          try {
+                            await removeOAuthPoolAccount(entry.email);
+                            await refreshPool();
+                            const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
+                            setOAuthStatus(oauth);
+                            setStatus(st);
+                            setMessage({ type: "ok", text: `已移除 ${entry.email}` });
+                          } catch (e) {
+                            setMessage({ type: "err", text: e instanceof Error ? e.message : "移除失敗" });
+                          } finally {
+                            setRemovingEmail(null);
+                          }
+                        }}
+                        disabled={removingEmail === entry.email}
+                        title="移除此帳號"
+                      >
+                        {removingEmail === entry.email ? "..." : "×"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add account button */}
+              <button
+                className="btn-secondary pool-add-account-button"
+                onClick={() => setAddAccountOpen(true)}
+                style={{ marginTop: pool.length > 0 ? "0.75rem" : 0 }}
               >
-                <label className="form-field">
-                  <span>Model</span>
-                  <Select
-                    value={form.gemini_model}
-                    onChange={(val) => setForm({ ...form, gemini_model: val })}
-                    options={modelOptions}
-                  />
-                </label>
+                <span style={{ fontSize: "1.1rem" }}>+</span> 新增帳號
+              </button>
 
-                <button onClick={() => handleSave("oauth")} disabled={saving}>
-                  {saving ? "Saving..." : "Use OAuth Provider"}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              {/* Model selector + activate */}
+              {pool.length > 0 && (
+                <div className="oauth-section-subtle">
+                  <label className="form-field">
+                    <span>Model</span>
+                    <Select
+                      value={form.gemini_model}
+                      onChange={(val) => setForm({ ...form, gemini_model: val })}
+                      options={modelOptions}
+                    />
+                  </label>
+
+                  <button onClick={() => handleSave("oauth")} disabled={saving} className="btn-save-bottom">
+                    {saving ? "Saving..." : "Use OAuth Provider"}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+
+        </div>
       </section>
 
-      <section>
-        <h3>Discord Bot</h3>
+
+
+      {/* Add Account Modal */}
+      {addAccountOpen && (
+        <div className="modal-overlay" onClick={() => !oauthStarting && setAddAccountOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">新增 Google 帳號</h3>
+              <button
+                className="modal-close"
+                onClick={() => !oauthStarting && setAddAccountOpen(false)}
+                disabled={oauthStarting}
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {/* Detect Gemini CLI */}
+              <div className="oauth-detect-block">
+                <button
+                  onClick={handleDetect}
+                  disabled={detecting || oauthStarting}
+                  className="btn-secondary"
+                >
+                  {detecting ? "Detecting..." : "Detect Gemini CLI"}
+                </button>
+                {detectedClientID && (
+                  <p className="success oauth-meta">
+                    Found and auto-filled credentials from Gemini CLI
+                  </p>
+                )}
+                {detectError && (
+                  <p className="error oauth-meta">{detectError}</p>
+                )}
+              </div>
+
+              {/* OAuth Credentials */}
+              <div className="oauth-credentials-block">
+                <p className="meta oauth-meta">
+                  {detectedClientID ? "Credentials (auto-filled):" : "OAuth Credentials:"}
+                </p>
+                <div className="oauth-credentials-grid">
+                  <label className="form-field">
+                    <span>Client ID</span>
+                    <input
+                      type="text"
+                      value={manualClientID}
+                      onChange={(e) => setManualClientID(e.target.value)}
+                      placeholder="xxx.apps.googleusercontent.com"
+                      disabled={oauthStarting}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Client Secret</span>
+                    <input
+                      type="password"
+                      value={manualClientSecret}
+                      onChange={(e) => setManualClientSecret(e.target.value)}
+                      placeholder="GOCSPX-xxx"
+                      disabled={oauthStarting}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Login button */}
+              <button
+                onClick={handleOAuthLogin}
+                disabled={oauthStarting || (!detectedClientID && !manualClientID)}
+                className="btn-primary"
+              >
+                {oauthStarting ? "Waiting for authorization..." : "Login with Google"}
+              </button>
+              {oauthStarting && (
+                <p className="meta oauth-meta">
+                  Complete the authorization in the popup window...
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">Discord Bot</h3>
 
         <label className="form-field">
           <span>Discord Token</span>
@@ -415,54 +489,54 @@ export default function Settings() {
           <span className="hint">Discord bot requires restart to apply.</span>
         </label>
 
-        <div style={{ marginTop: '1rem', marginBottom: '1.5rem' }}>
+        <div className="form-field-checkbox-row">
           <Checkbox
             checked={form.discord_use_reply}
             onChange={(checked) => setForm({ ...form, discord_use_reply: checked })}
             label="使用回覆功能回應訊息"
           />
-          <p className="hint" style={{ marginTop: '0.4rem', marginLeft: '1.8rem', color: '#888' }}>
+          <p className="hint-block">
             啟用後，BOT 會以 Discord 的「回覆」功能回應使用者訊息（顯示引用關係）
           </p>
         </div>
 
-        <div style={{ marginTop: '1.5rem', background: '#16162a', padding: '1.25rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <h4 style={{ margin: '0 0 1rem', fontSize: '0.95rem', color: '#e0e0e0' }}>Discord Bot 設定指引</h4>
+        <div className="discord-guide-block">
+          <h4 className="discord-guide-title">Discord Bot 設定指引</h4>
           
-          <div style={{ marginBottom: '1.5rem' }}>
-            <h5 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem', color: '#a0a8ff' }}>Gateway Intents (開發者後台設定)</h5>
-            <p className="meta" style={{ marginBottom: '0.5rem' }}>
-              請至 <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" style={{ color: '#646cff' }}>Discord Developer Portal</a> &gt; Bot &gt; Privileged Gateway Intents 啟用：
+          <div className="settings-group">
+            <h5 className="discord-guide-subtitle">Gateway Intents (開發者後台設定)</h5>
+            <p className="meta discord-guide-meta">
+              請至 <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="link">Discord Developer Portal</a> &gt; Bot &gt; Privileged Gateway Intents 啟用：
             </p>
-            <ul style={{ paddingLeft: '0', margin: '0', listStyle: 'none' }}>
-              <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem', fontSize: '0.85rem', color: '#ccc' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <ul className="discord-guide-list">
+              <li className="discord-guide-list-item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 <span>MESSAGE CONTENT INTENT (讀取訊息內容)</span>
               </li>
-              <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem', fontSize: '0.85rem', color: '#ccc' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <li className="discord-guide-list-item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 <span>SERVER MEMBERS INTENT (如果需要)</span>
               </li>
-              <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: '#ccc' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <li className="discord-guide-list-item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 <span>PRESENCE INTENT (如果需要)</span>
               </li>
             </ul>
           </div>
 
-          <div style={{ marginBottom: '1.5rem' }}>
-            <h5 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem', color: '#a0a8ff' }}>必要權限清單 (邀請連結設定)</h5>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div className="settings-group">
+            <h5 className="discord-guide-subtitle">必要權限清單 (邀請連結設定)</h5>
+            <div className="discord-permissions-grid">
               <div>
-                <h6 style={{ margin: '0 0 0.4rem', fontSize: '0.8rem', color: '#7a7a9a', textTransform: 'uppercase' }}>General Permissions</h6>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '0.85rem', color: '#ccc' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                <h6 className="discord-permission-category-title">General Permissions</h6>
+                <div className="discord-permission-item">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   <span>View Channels — 查看頻道內容</span>
                 </div>
               </div>
               <div>
-                <h6 style={{ margin: '0 0 0.4rem', fontSize: '0.8rem', color: '#7a7a9a', textTransform: 'uppercase' }}>Text Permissions</h6>
-                <ul style={{ paddingLeft: '0', margin: '0', listStyle: 'none' }}>
+                <h6 className="discord-permission-category-title">Text Permissions</h6>
+                <ul className="discord-guide-list">
                   {[
                     ['Send Messages', '發送回覆訊息'],
                     ['Send Messages in Threads', '在討論串中回覆'],
@@ -472,8 +546,8 @@ export default function Settings() {
                     ['Use Slash Commands', '支援指令'],
                     ['Add Reactions', '加表情符號回應 (可選)'],
                   ].map(([en, zh]) => (
-                    <li key={en} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '0.85rem', color: '#ccc' }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <li key={en} className="discord-permission-item">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                       <span>{en} — {zh}</span>
                     </li>
                   ))}
@@ -482,28 +556,39 @@ export default function Settings() {
             </div>
           </div>
 
-          <div style={{ background: 'rgba(76, 175, 80, 0.08)', border: '1px solid rgba(76, 175, 80, 0.15)', borderRadius: '6px', padding: '0.85rem' }}>
-            <h5 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#81c784', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div className="discord-min-permissions-card">
+            <h5 className="discord-min-permissions-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
               最小權限組合（推薦）
             </h5>
-            <p className="meta" style={{ marginBottom: '0.5rem', fontSize: '0.8rem' }}>如果只是基本對話功能，最少選這些就夠了：</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem 1.5rem' }}>
+            <p className="meta discord-min-permissions-hint">如果只是基本對話功能，最少選這些就夠了：</p>
+            <ul className="discord-min-permissions-list">
               {['View Channels', 'Send Messages', 'Read Message History', 'Use Slash Commands'].map(p => (
-                <div key={p} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: '#ccc' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4caf50" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                <li key={p} className="discord-min-permissions-list-item">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   <span>{p}</span>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         </div>
 
-        <h3 style={{ marginTop: '2.5rem', marginBottom: '1rem', color: '#e0e0e0' }}>
-          🔧 Tools
+        <button
+          onClick={() => handleSave()}
+          disabled={saving}
+          className="btn-save-bottom"
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </section>
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-wrench"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-2.53 2.53a1 1 0 0 0-1.4 0L6.3 14.7a1 1 0 0 0 0-1.4l.9-.9a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0L1.8 11.37a6 6 0 0 1 7.94-7.94l2.53-2.53a1 1 0 0 0 0-1.4Z"/><path d="m18.17 17.12 1.66 1.66"/></svg>
+          Tools
         </h3>
 
-        <div style={{ marginBottom: '1.25rem' }}>
+        <div className="tool-checkbox-row">
           <Checkbox
             checked={form.web_search_enabled}
             onChange={(checked) => setForm({ ...form, web_search_enabled: checked })}
@@ -512,7 +597,7 @@ export default function Settings() {
         </div>
 
         {form.web_search_enabled && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem', paddingLeft: '1.2rem', borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
+          <div className="tool-settings-indent">
             <label className="form-field">
               <span>Brave API Key</span>
               <input
@@ -527,7 +612,7 @@ export default function Settings() {
                   href="https://brave.com/search/api/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: "#646cff" }}
+                  className="link"
                 >
                   brave.com/search/api
                 </a>{" "}
@@ -536,9 +621,9 @@ export default function Settings() {
             </label>
 
             <label className="form-field">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div className="tool-field-header">
                 <span>Perplexity API Key</span>
-                <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
+                <span className="tool-tag">OpenClaw 相容</span>
               </div>
               <input
                 type="password"
@@ -552,7 +637,7 @@ export default function Settings() {
                   href="https://www.perplexity.ai/settings/api"
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: "#646cff" }}
+                  className="link"
                 >
                   perplexity.ai/api
                 </a>{" "}
@@ -561,9 +646,9 @@ export default function Settings() {
             </label>
 
             <label className="form-field">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div className="tool-field-header">
                 <span>Search Provider</span>
-                <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
+                <span className="tool-tag">OpenClaw 相容</span>
               </div>
               <Select
                 value={form.search_provider || 'auto'}
@@ -581,92 +666,99 @@ export default function Settings() {
           </div>
         )}
 
-        <div style={{ marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-              <Checkbox
-                checked={form.web_fetch_enabled}
-                onChange={(checked) => setForm({ ...form, web_fetch_enabled: checked })}
-                label="啟用 Web Fetch 工具"
-              />
-              <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
-            </div>
-          <p className="hint" style={{ marginTop: '0.4rem', marginLeft: '1.8rem', color: '#888' }}>
+        <div className="tool-checkbox-row">
+            <Checkbox
+              checked={form.web_fetch_enabled}
+              onChange={(checked) => setForm({ ...form, web_fetch_enabled: checked })}
+              label="啟用 Web Fetch 工具"
+            />
+            <span className="tool-tag">OpenClaw 相容</span>
+          </div>
+          <p className="hint-block">
             網頁內容提取工具：取得並轉換網頁為 Markdown 格式。LLM 可以自動使用此工具讀取完整網頁內容。
           </p>
-        </div>
-
-        <section style={{ marginTop: '2.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.5rem' }}>
-          <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            ⏰ 時間與地區設定
-            <span style={{ fontSize: '0.7rem', color: '#a0a8ff', background: 'rgba(160, 168, 255, 0.1)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(160, 168, 255, 0.2)' }}>OpenClaw 相容</span>
-          </h3>
-
-          <div style={{ marginBottom: '1.25rem' }}>
-            <label className="form-field">
-              <span>時區</span>
-              <Select
-                value={form.timezone || "auto"}
-                onChange={(val) => setForm({ ...form, timezone: val })}
-                options={[
-                  { value: "auto", label: "自動偵測 (Auto)" },
-                  { value: "Asia/Taipei", label: "Asia/Taipei (台北)" },
-                  { value: "Asia/Tokyo", label: "Asia/Tokyo (東京)" },
-                  { value: "Asia/Hong_Kong", label: "Asia/Hong_Kong (香港)" },
-                  { value: "Asia/Shanghai", label: "Asia/Shanghai (上海)" },
-                  { value: "Asia/Seoul", label: "Asia/Seoul (首爾)" },
-                  { value: "Asia/Singapore", label: "Asia/Singapore (新加坡)" },
-                  { value: "America/New_York", label: "America/New_York (紐約)" },
-                  { value: "America/Los_Angeles", label: "America/Los_Angeles (洛杉磯)" },
-                  { value: "America/Chicago", label: "America/Chicago (芝加哥)" },
-                  { value: "Europe/London", label: "Europe/London (倫敦)" },
-                  { value: "Europe/Paris", label: "Europe/Paris (巴黎)" },
-                  { value: "Australia/Sydney", label: "Australia/Sydney (雪梨)" },
-                ]}
-              />
-              <span className="hint">
-                設定時區以確保 AI 正確理解時間。時區資訊會注入 system prompt（靜態，不影響 prompt cache）。
-              </span>
-            </label>
-          </div>
-
-          <div style={{ marginBottom: '1.25rem' }}>
-            <label className="form-field">
-              <span>時間格式</span>
-              <Select
-                value={form.time_format || "auto"}
-                onChange={(val) => setForm({ ...form, time_format: val })}
-                options={[
-                  { value: "auto", label: "自動 (Auto)" },
-                  { value: "24", label: "24 小時制" },
-                  { value: "12", label: "12 小時制 (AM/PM)" },
-                ]}
-              />
-              <span className="hint">
-                選擇時間顯示格式。當 AI 使用 session_status 工具查詢時間時，會使用此格式。
-              </span>
-            </label>
-          </div>
-
-          <div style={{ marginBottom: '1.25rem' }}>
-            <label className="form-field">
-              <span>地區 (可選)</span>
-              <input
-                type="text"
-                placeholder="例如：台北, 台灣"
-                value={form.location || ""}
-                onChange={(e) => setForm({ ...form, location: e.target.value })}
-              />
-              <span className="hint">
-                選填：明確指定你的所在地，幫助 AI 更了解你的地理位置。時區已經隱含地理資訊（如 Asia/Taipei → 台灣）。
-              </span>
-            </label>
-          </div>
-        </section>
 
         <button
           onClick={() => handleSave()}
           disabled={saving}
-          style={{ marginTop: "1.5rem" }}
+          className="btn-save-bottom"
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </section>
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-alarm-clock"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/><path d="M10.2 3.2c3.9 3.9 3.9 10.1 0 14l3.8 3.8c3.9-3.9 3.9-10.1 0-14Z"/><path d="M3.2 13.8c3.9-3.9 10.1-3.9 14 0l3.8-3.8c-3.9 3.9-10.1 3.9-14 0Z"/></svg>
+          時間與地區設定
+          <span className="tool-tag">OpenClaw 相容</span>
+        </h3>
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <label className="form-field">
+            <span>時區</span>
+            <Select
+              value={form.timezone || "auto"}
+              onChange={(val) => setForm({ ...form, timezone: val })}
+              options={[
+                { value: "auto", label: "自動偵測 (Auto)" },
+                { value: "Asia/Taipei", label: "Asia/Taipei (台北)" },
+                { value: "Asia/Tokyo", label: "Asia/Tokyo (東京)" },
+                { value: "Asia/Hong_Kong", label: "Asia/Hong_Kong (香港)" },
+                { value: "Asia/Shanghai", label: "Asia/Shanghai (上海)" },
+                { value: "Asia/Seoul", label: "Asia/Seoul (首爾)" },
+                { value: "Asia/Singapore", label: "Asia/Singapore (新加坡)" },
+                { value: "America/New_York", label: "America/New_York (紐約)" },
+                { value: "America/Los_Angeles", label: "America/Los_Angeles (洛杉磯)" },
+                { value: "America/Chicago", label: "America/Chicago (芝加哥)" },
+                { value: "Europe/London", label: "Europe/London (倫敦)" },
+                { value: "Europe/Paris", label: "Europe/Paris (巴黎)" },
+                { value: "Australia/Sydney", label: "Australia/Sydney (雪梨)" },
+              ]}
+            />
+            <span className="hint">
+              設定時區以確保 AI 正確理解時間。時區資訊會注入 system prompt（靜態，不影響 prompt cache）。
+            </span>
+          </label>
+        </div>
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <label className="form-field">
+            <span>時間格式</span>
+            <Select
+              value={form.time_format || "auto"}
+              onChange={(val) => setForm({ ...form, time_format: val })}
+              options={[
+                { value: "auto", label: "自動 (Auto)" },
+                { value: "24", label: "24 小時制" },
+                { value: "12", label: "12 小時制 (AM/PM)" },
+              ]}
+            />
+            <span className="hint">
+              選擇時間顯示格式。當 AI 使用 session_status 工具查詢時間時，會使用此格式。
+            </span>
+          </label>
+        </div>
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <label className="form-field">
+            <span>地區 (可選)</span>
+            <input
+              type="text"
+              placeholder="例如：台北, 台灣"
+              value={form.location || ""}
+              onChange={(e) => setForm({ ...form, location: e.target.value })}
+            />
+            <span className="hint">
+              選填：明確指定你的所在地，幫助 AI 更了解你的地理位置。時區已經隱含地理資訊（如 Asia/Taipei → 台灣）。
+            </span>
+          </label>
+        </div>
+
+        <button
+          onClick={() => handleSave()}
+          disabled={saving}
+          className="btn-save-bottom"
         >
           {saving ? "Saving..." : "Save"}
         </button>

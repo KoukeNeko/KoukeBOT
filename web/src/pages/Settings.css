@@ -1,0 +1,401 @@
+/* web/src/pages/Settings.css */
+
+.settings-section {
+  background: #16162a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.settings-section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.settings-section-title svg {
+  color: #a0a8ff;
+  opacity: 0.8;
+}
+
+.settings-group {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-subsection-title {
+  font-size: 0.95rem;
+  color: #9a9ac0;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.hint-block {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 0.5rem;
+  margin-left: 1.8rem; /* Align with checkbox text */
+}
+
+.discord-guide-block {
+  background: #0f0f1a;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.discord-guide-title {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  color: #e0e0e0;
+}
+
+.discord-guide-subtitle {
+  margin: 0 0 0.6rem;
+  font-size: 0.9rem;
+  color: #a0a8ff;
+}
+
+.discord-guide-list {
+  padding-left: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.discord-guide-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  color: #ccc;
+}
+
+.discord-guide-list-item svg {
+  flex-shrink: 0;
+  color: #4caf50;
+  stroke-width: 3;
+}
+
+.discord-permissions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.discord-permission-category-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: #7a7a9a;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.discord-permission-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+  color: #ccc;
+}
+
+.discord-min-permissions-card {
+  background: rgba(76, 175, 80, 0.08);
+  border: 1px solid rgba(76, 175, 80, 0.15);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 1.5rem;
+}
+
+.discord-min-permissions-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  color: #81c784;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.discord-min-permissions-hint {
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+  color: #b3e7b5;
+}
+
+.discord-min-permissions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  padding-left: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.discord-min-permissions-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: #ccc;
+}
+
+.discord-min-permissions-list-item svg {
+  flex-shrink: 0;
+  color: #4caf50;
+  stroke-width: 3;
+}
+
+.tool-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.tool-tag {
+  font-size: 0.7rem;
+  color: #a0a8ff;
+  background: rgba(160, 168, 255, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(160, 168, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.tool-settings-indent {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+  padding-left: 1.5rem;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.tool-field-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.time-settings-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+/* Adjustments for existing elements */
+.settings-page h2 {
+  margin-bottom: 1.5rem;
+}
+
+.settings-page .status-banner {
+  margin-bottom: 1.5rem;
+}
+
+.settings-page .message {
+  margin-bottom: 1rem;
+}
+
+.settings-page .provider-tabs {
+  margin-bottom: 1.5rem;
+}
+
+.settings-page .provider-content {
+  margin-top: 1rem;
+}
+
+.settings-page .form-field {
+  margin-bottom: 1.25rem;
+}
+
+.settings-page .btn-save-bottom {
+  margin-top: 2rem;
+}
+
+.oauth-status-banner {
+  margin-bottom: 1rem;
+}
+
+.oauth-section-subtle {
+  margin-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 1.5rem;
+}
+
+.oauth-detect-block {
+  margin-bottom: 1.25rem;
+}
+
+.oauth-credentials-block {
+  margin-bottom: 1.25rem;
+}
+
+.oauth-credentials-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.oauth-meta {
+  margin-top: 0.5rem;
+}
+
+.pool-add-account-block {
+  margin-top: 1.5rem;
+}
+
+.pool-add-account-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* New styles for refactored elements */
+.form-field-checkbox-row {
+  margin-top: 1rem; /* Adjust based on form-field gap */
+  margin-bottom: 1.5rem;
+}
+
+.link {
+  color: #646cff;
+}
+
+.discord-guide-meta {
+  margin-bottom: 0.5rem;
+}
+
+/* Override default svg stroke for guide list items to use class styles */
+.discord-guide-list-item svg {
+  color: #4caf50;
+  stroke-width: 2 !important; /* Force override for consistency */
+}
+
+/* Override default svg stroke for minimum permissions to use class styles */
+.discord-min-permissions-list-item svg {
+  color: #4caf50;
+  stroke-width: 2 !important; /* Force override for consistency */
+}
+
+.pool-count-hint {
+  margin-left: 0.5rem;
+  opacity: 0.8;
+  font-size: 0.75rem;
+}
+
+.pool-reset-hint {
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* Add some spacing for form field wrappers */
+.form-field-wrapper {
+  margin-bottom: 1.25rem;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  width: 90%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.modal-close:hover:not(:disabled) {
+  color: #fff;
+}
+
+.modal-close:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.modal-body .oauth-credentials-grid {
+  grid-template-columns: 1fr;
+}
+
+.btn-primary {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.pool-cards.compact {
+  gap: 0.5rem;
+}
+
+.pool-card.current {
+  border-color: rgba(160, 168, 255, 0.3);
+  background: rgba(160, 168, 255, 0.04);
+}
+
+.pool-current-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  color: #a0a8ff;
+  background: rgba(160, 168, 255, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(160, 168, 255, 0.25);
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}

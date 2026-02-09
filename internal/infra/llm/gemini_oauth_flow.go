@@ -73,6 +73,7 @@ type OAuthTokenData struct {
 type GeminiOAuthFlow struct {
 	mu          sync.Mutex
 	tokenPath   string
+	poolPath    string // Pool file path (e.g., data/oauth_pool.json)
 	redirectURL string // e.g., http://localhost:8080/api/oauth/gemini/callback
 
 	// In-flight OAuth state (single concurrent flow).
@@ -83,11 +84,17 @@ type GeminiOAuthFlow struct {
 }
 
 // NewGeminiOAuthFlow creates a new flow manager.
-func NewGeminiOAuthFlow(tokenPath, redirectURL string) *GeminiOAuthFlow {
+func NewGeminiOAuthFlow(tokenPath, poolPath, redirectURL string) *GeminiOAuthFlow {
 	return &GeminiOAuthFlow{
 		tokenPath:   tokenPath,
+		poolPath:    poolPath,
 		redirectURL: redirectURL,
 	}
+}
+
+// PoolPath returns the path to the OAuth pool file.
+func (f *GeminiOAuthFlow) PoolPath() string {
+	return f.poolPath
 }
 
 // --- Gemini CLI Detection ---
@@ -301,6 +308,13 @@ func (f *GeminiOAuthFlow) HandleCallback(ctx context.Context, code, state string
 
 	if err := saveTokenData(f.tokenPath, data); err != nil {
 		logFlow.Warnf("failed to persist OAuth token: %v", err)
+	}
+
+	// Also add to pool file
+	if f.poolPath != "" {
+		if err := AddToOAuthPool(f.poolPath, data); err != nil {
+			logFlow.Warnf("failed to update pool file: %v", err)
+		}
 	}
 
 	return data, nil

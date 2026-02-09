@@ -91,3 +91,14 @@ func (pm *ProviderManager) RegisterTools(tools []domain.Tool) {
 		p.RegisterTools(tools)
 	}
 }
+
+// GetPool returns the underlying ProviderPool if the current provider is one.
+// Returns nil if the provider is not a pool.
+func (pm *ProviderManager) GetPool() *ProviderPool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	if pool, ok := pm.provider.(*ProviderPool); ok {
+		return pool
+	}
+	return nil
+}

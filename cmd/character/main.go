@@ -26,6 +26,7 @@ const (
 	personasDir    = "configs/personas"
 	settingsPath   = "data/settings.json"
 	oauthTokenPath = "data/gemini_oauth.json"
+	oauthPoolPath  = "data/oauth_pool.json"
 	defaultModel   = "gemini-2.5-pro"
 	defaultPort    = "8080"
 )
@@ -137,7 +138,7 @@ func run() error {
 
 	// Init OAuth flow for Gemini CLI auth
 	oauthRedirectURL := "http://localhost:" + port + "/api/oauth/gemini/callback"
-	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthRedirectURL)
+	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthPoolPath, oauthRedirectURL)
 
 	// Start HTTP API server
 	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow, convStore)
@@ -222,20 +223,44 @@ func initAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderMana
 }
 
 func initOAuthProvider(ctx context.Context, pm *app.ProviderManager, model string) bool {
-	oauthData, err := llm.LoadStoredToken(oauthTokenPath)
-	if err != nil || oauthData == nil {
-		return false
-	}
-	if err := llm.RefreshIfNeeded(ctx, oauthData, oauthTokenPath); err != nil {
-		logLLM.Warnf("OAuth token refresh failed: %v", err)
-	}
-	provider, err := llm.NewGeminiOAuthProvider(ctx, oauthData, model)
+	// Migrate single token to pool if pool doesn't exist yet
+	llm.MigrateSingleTokenToPool(oauthTokenPath, oauthPoolPath)
+
+	// Load pool of OAuth tokens
+	tokens, err := llm.LoadOAuthPool(oauthPoolPath)
 	if err != nil {
-		logLLM.Warnf("failed to init Gemini OAuth provider: %v", err)
+		logLLM.Warnf("failed to load OAuth pool: %v", err)
+	}
+
+	// Fall back to single token if pool is empty
+	if len(tokens) == 0 {
+		oauthData, err := llm.LoadStoredToken(oauthTokenPath)
+		if err != nil || oauthData == nil {
+			return false
+		}
+		tokens = []*llm.OAuthTokenData{oauthData}
+	}
+
+	pool := app.NewProviderPool()
+	for _, tokenData := range tokens {
+		if err := llm.RefreshIfNeeded(ctx, tokenData, oauthTokenPath); err != nil {
+			logLLM.Warnf("OAuth token refresh failed for %s: %v", tokenData.Email, err)
+			continue
+		}
+		provider, err := llm.NewGeminiOAuthProvider(ctx, tokenData, model)
+		if err != nil {
+			logLLM.Warnf("failed to init OAuth provider for %s: %v", tokenData.Email, err)
+			continue
+		}
+		pool.Add(provider, tokenData.Email)
+	}
+
+	if pool.Size() == 0 {
 		return false
 	}
-	pm.Update(provider)
-	logLLM.Logf("%s (model: %s, project: %s)", provider.ModelInfo().ProviderName, model, oauthData.ProjectID)
+
+	pm.Update(pool)
+	logLLM.Logf("OAuth pool: %d account(s) (model: %s)", pool.Size(), model)
 	return true
 }
 
