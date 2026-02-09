@@ -329,6 +329,47 @@ export default function Settings() {
                               </>
                             )}
                           </div>
+                          {entry.request_count > 0 && (
+                            <div className="pool-card-quota">
+                              <div className="pool-quota-row">
+                                <span className="pool-quota-label">24h 使用量:</span>
+                                <span className="pool-quota-value">{entry.request_count}</span>
+                              </div>
+                              <div className="pool-quota-row">
+                                <span className="pool-quota-label">總計請求:</span>
+                                <span className="pool-quota-total">{entry.total_requests.toLocaleString()}</span>
+                              </div>
+                              {entry.last_reset_time && (
+                                <>
+                                  <div className="pool-quota-row">
+                                    <span className="pool-quota-label">上次重置:</span>
+                                    <span className="pool-quota-time">
+                                      {new Date(entry.last_reset_time).toLocaleString('zh-TW', {
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </span>
+                                  </div>
+                                  <div className="pool-quota-row">
+                                    <span className="pool-quota-label">下次重置:</span>
+                                    <span className="pool-quota-time">
+                                      {(() => {
+                                        const resetTime = new Date(entry.last_reset_time);
+                                        resetTime.setHours(resetTime.getHours() + 24);
+                                        const now = new Date();
+                                        const diff = resetTime.getTime() - now.getTime();
+                                        const hours = Math.floor(diff / (1000 * 60 * 60));
+                                        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                                        return `${hours}h ${minutes}m 後`;
+                                      })()}
+                                    </span>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <button

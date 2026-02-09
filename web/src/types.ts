@@ -103,6 +103,11 @@ export interface PoolEntry {
   status: 'available' | 'exhausted'
   exhausted_until?: string
   current?: boolean
+
+  // Quota tracking
+  request_count: number    // requests since last reset
+  total_requests: number   // lifetime requests
+  last_reset_time: string  // ISO timestamp
 }
 
 export interface Message {

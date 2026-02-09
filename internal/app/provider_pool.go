@@ -22,6 +22,11 @@ type poolEntry struct {
 	email          string
 	exhaustedUntil time.Time // zero value = available
 	lastUsed       time.Time // for load balancing
+
+	// Quota tracking
+	requestCount   int       // requests since last reset
+	lastResetTime  time.Time // when quota counter was last reset
+	totalRequests  int       // lifetime request count
 }
 
 // PoolStatus is the public view of a pool entry for API responses.
@@ -30,6 +35,11 @@ type PoolStatus struct {
 	Status         string     `json:"status"` // "available", "exhausted"
 	ExhaustedUntil *time.Time `json:"exhausted_until,omitempty"`
 	Current        bool       `json:"current"`
+
+	// Quota tracking
+	RequestCount   int       `json:"request_count"`    // requests since last reset
+	TotalRequests  int       `json:"total_requests"`   // lifetime requests
+	LastResetTime  time.Time `json:"last_reset_time"`  // when quota counter was reset
 }
 
 // ProviderPool wraps multiple llm.Provider instances with automatic 429 failover.
@@ -119,6 +129,9 @@ func (pp *ProviderPool) Entries() []PoolStatus {
 			Status:         status,
 			ExhaustedUntil: until,
 			Current:        e.email == pp.lastUsedEmail,
+			RequestCount:   e.requestCount,
+			TotalRequests:  e.totalRequests,
+			LastResetTime:  e.lastResetTime,
 		}
 	}
 	return result
@@ -202,17 +215,27 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 		pp.mu.Unlock()
 
 		result, err := fn(provider)
-		if err == nil {
-			pp.mu.Lock()
-			pp.lastUsedEmail = email
-			// Update lastUsed timestamp for load balancing
-			for i := range pp.entries {
-				if pp.entries[i].email == email {
-					pp.entries[i].lastUsed = time.Now()
-					break
+
+		// Update usage stats regardless of success/failure
+		pp.mu.Lock()
+		for i := range pp.entries {
+			if pp.entries[i].email == email {
+				pp.entries[i].requestCount++
+				pp.entries[i].totalRequests++
+				pp.entries[i].lastUsed = time.Now()
+
+				// Auto-reset quota counter if it's been more than 24 hours
+				if time.Since(pp.entries[i].lastResetTime) > 24*time.Hour {
+					pp.entries[i].requestCount = 1 // current request
+					pp.entries[i].lastResetTime = now
 				}
+				break
 			}
-			pp.mu.Unlock()
+		}
+		pp.lastUsedEmail = email
+		pp.mu.Unlock()
+
+		if err == nil {
 			return result, nil
 		}
 
