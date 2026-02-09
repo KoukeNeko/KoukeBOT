@@ -210,6 +210,12 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 				}
 			}
 			logPool.Logf("account %s exhausted (reset in %s) — trying next...", email, formatDuration(resetDuration))
+			// Log raw error for debugging quota issues
+			errStr := err.Error()
+			if len(errStr) > 300 {
+				errStr = errStr[:300] + "..."
+			}
+			logPool.Logf("quota error detail: %s", errStr)
 			tried++
 			continue
 		}
@@ -265,7 +271,8 @@ func isQuotaError(err error) bool {
 var quotaResetDelayRe = regexp.MustCompile(`"quotaResetDelay"\s*:\s*"(\d+)s"`)
 
 // parseResetDelay extracts the quota reset duration from an error message.
-// Falls back to 1 hour if unparseable.
+// Falls back to 2 minutes if unparseable (conservative enough to avoid hammering,
+// short enough to recover from transient per-minute rate limits).
 func parseResetDelay(errMsg string) time.Duration {
 	matches := quotaResetDelayRe.FindStringSubmatch(errMsg)
 	if len(matches) >= 2 {
@@ -274,8 +281,8 @@ func parseResetDelay(errMsg string) time.Duration {
 			return time.Duration(seconds) * time.Second
 		}
 	}
-	// Default: 1 hour
-	return time.Hour
+	// Default: 2 minutes (short enough to recover from per-minute rate limits)
+	return 2 * time.Minute
 }
 
 // formatDuration returns a compact human-readable duration (e.g., "6h22m").
