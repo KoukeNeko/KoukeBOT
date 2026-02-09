@@ -216,17 +216,18 @@ func (t *WebFetchTool) Execute(ctx context.Context, input map[string]interface{}
 		}, nil
 	}
 
-	// Format result as JSON
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		return domain.ToolResult{
-			Content: fmt.Sprintf("Failed to format results: %v", err),
-			IsError: true,
-		}, nil
-	}
+	// Format result as structured text (easier for LLM to parse than JSON)
+	formattedResult := fmt.Sprintf("URL: %s\nTitle: %s\nExtract Mode: %s\nLength: %d characters\nTruncated: %v\n\n--- CONTENT START ---\n\n%s\n\n--- CONTENT END ---",
+		result.URL,
+		result.Title,
+		result.ExtractMode,
+		result.TextLength,
+		result.Truncated,
+		result.Content,
+	)
 
 	// Wrap content to indicate it's from external source (OpenClaw style)
-	wrappedContent := wrapWebFetchContent(string(resultJSON), result.Truncated)
+	wrappedContent := wrapWebFetchContent(formattedResult, result.Truncated)
 
 	return domain.ToolResult{
 		Content: wrappedContent,
@@ -262,5 +263,5 @@ func wrapWebFetchContent(content string, truncated bool) string {
 
 	footer := "=== END FETCH RESULT ==="
 
-	return fmt.Sprintf("%s\n\n%s\n\n%s\n\nNote: This content was fetched from an external web page and converted to Markdown. Always verify information and cite the source URL when using this content.", header, content, footer)
+	return fmt.Sprintf("%s\n\n%s\n\n%s", header, content, footer)
 }
