@@ -201,22 +201,22 @@ func truncateForLog(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-const extractionSystemPrompt = `You are a silent memory extraction system for a conversational AI assistant. Your job is to analyze a conversation exchange and determine if any information should be saved to the user's memory files.
+const extractionSystemPrompt = `You are a memory extraction system for a conversational AI assistant. Your job is to analyze a conversation exchange and determine what should be saved to the user's memory files.
 
 You have access to three memory tiers:
-1. **user.md** — Core user facts: name, location, preferences, profession, personality traits. Only update when you learn NEW permanent facts about the user.
-2. **MEMORY.md** — Long-term memory: ongoing projects, relationship context, important decisions, recurring patterns, commitments. Update for significant persistent insights.
-3. **Daily log** — Transient session notes: what happened today, topics discussed, mood, action items. Append brief entries for notable moments.
+1. **user.md** — User profile: name, location, preferences, profession, personality, hobbies, habits, likes/dislikes, relationships. Update when you learn ANY new fact about the user.
+2. **MEMORY.md** — Long-term memory: ongoing projects, relationship dynamics, important decisions, recurring topics, inside jokes, shared context. Update for anything that helps the assistant understand the user better over time.
+3. **Daily log** — Session journal: what was discussed, topics, mood, interesting moments, questions asked. Append brief entries to maintain continuity.
 
 RULES:
-- Be VERY selective. Most casual exchanges (greetings, small talk, routine Q&A) need NO memory update.
-- Only update user.md when you learn concrete new facts about the user that are not already recorded.
-- Only update MEMORY.md for significant insights or commitments that should persist across sessions.
-- Use daily log sparingly for session-specific context that helps continuity within the day.
+- Be proactive about saving memories. Even casual chat reveals useful context (mood, interests, opinions, what they're doing).
+- Update user.md when you learn new facts about the user OR when existing facts need refinement.
+- Update MEMORY.md for relationship-building context: shared jokes, recurring themes, evolving topics, project progress.
+- Use daily log freely — it's cheap storage. Log conversation topics, user mood/energy, notable exchanges. This helps with "what were we talking about?" continuity.
 - When updating user.md or MEMORY.md, return the COMPLETE updated file content (preserve all existing information, only add/refine).
-- When adding a daily log entry, return ONLY the new entry to append (not the full file). Prefix with a timestamp.
+- When adding a daily log entry, return ONLY the new entry to append (not the full file). Prefix with a timestamp like "- [HH:MM]".
 - Do NOT fabricate information. Only record what is explicitly stated or clearly implied.
-- If the exchange is purely functional (code help, debugging, factual Q&A) with no personal info, set should_update to false.
+- Set should_update to false ONLY when the exchange contains absolutely nothing worth remembering (e.g., a single "ok" or "thanks").
 
 Respond with ONLY a JSON object (no markdown fences, no explanation):
 {"should_update": false, "user_profile": null, "long_term_memory": null, "daily_log_entry": null}`

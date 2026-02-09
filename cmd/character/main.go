@@ -82,21 +82,32 @@ func run() error {
 
 	initProvider(ctx, settings, providerManager, model, port)
 
-	// Init memory extraction provider (cheap model, no tools registered)
+	// Init memory extraction provider (cheap model preferred, falls back to main provider)
 	var memoryExtractor *app.MemoryExtractor
-	if settings.MemoryExtractionEnabled && settings.GeminiAPIKey != "" {
+	if settings.MemoryExtractionEnabled {
 		extractionModel := settings.MemoryExtractionModel
 		if extractionModel == "" {
 			extractionModel = "gemini-2.0-flash"
 		}
-		extractionProvider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, extractionModel)
-		if err != nil {
-			logMemory.Warnf("failed to init extraction provider: %v — disabled", err)
+		if settings.GeminiAPIKey != "" {
+			// Dedicated cheap provider with API key
+			extractionProvider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, extractionModel)
+			if err != nil {
+				logMemory.Warnf("extraction provider failed: %v — using main provider", err)
+				memoryExtractor = app.NewMemoryExtractor(providerManager, personasDir)
+				logMemory.Logf("enabled (main provider)")
+			} else {
+				memoryExtractor = app.NewMemoryExtractor(extractionProvider, personasDir)
+				logMemory.Logf("enabled (model: %s)", extractionModel)
+			}
+		} else if providerManager.IsConfigured() {
+			// No API key — fallback to main provider (e.g., OAuth)
+			memoryExtractor = app.NewMemoryExtractor(providerManager, personasDir)
+			logMemory.Logf("enabled (main provider)")
 		} else {
-			memoryExtractor = app.NewMemoryExtractor(extractionProvider, personasDir)
-			logMemory.Logf("enabled (model: %s)", extractionModel)
+			logMemory.Warnf("enabled but no provider available — disabled")
 		}
-	} else if !settings.MemoryExtractionEnabled {
+	} else {
 		logMemory.Log("disabled")
 	}
 
