@@ -34,10 +34,11 @@ type PoolStatus struct {
 // ProviderPool wraps multiple llm.Provider instances with automatic 429 failover.
 // It implements llm.Provider so it can be used as a drop-in replacement.
 type ProviderPool struct {
-	mu      sync.RWMutex
-	entries []poolEntry
-	current int // round-robin index
-	tools   []domain.Tool
+	mu            sync.RWMutex
+	entries       []poolEntry
+	current       int // round-robin index
+	lastUsedEmail string
+	tools         []domain.Tool
 }
 
 // NewProviderPool creates an empty provider pool.
@@ -106,7 +107,7 @@ func (pp *ProviderPool) Entries() []PoolStatus {
 			Email:          e.email,
 			Status:         status,
 			ExhaustedUntil: until,
-			Current:        i == pp.current,
+			Current:        e.email == pp.lastUsedEmail,
 		}
 	}
 	return result
@@ -191,6 +192,9 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 
 		result, err := fn(provider)
 		if err == nil {
+			pp.mu.Lock()
+			pp.lastUsedEmail = email
+			pp.mu.Unlock()
 			return result, nil
 		}
 
