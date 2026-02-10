@@ -23,7 +23,7 @@ const (
 	// Discord message character limit
 	discordMaxLength = 2000
 	// Timeout for a single LLM call
-	llmTimeout = 120 * time.Second
+	llmTimeout = 300 * time.Second
 	// Channel history limit (same as openclaw's DEFAULT_GROUP_HISTORY_LIMIT)
 	defaultGroupHistoryLimit = 50
 	// Context markers — re-exported from domain for local use
