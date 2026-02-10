@@ -292,6 +292,74 @@ func DetectGeminiCLIToken(ctx context.Context) (*OAuthTokenData, error) {
 	return data, nil
 }
 
+// ImportTokenFromJSON imports a token from raw JSON (e.g. pasted ~/.gemini/oauth_creds.json content).
+// clientID/clientSecret can be provided; if empty, they are extracted from the Gemini CLI bundle.
+func (f *GeminiOAuthFlow) ImportTokenFromJSON(ctx context.Context, raw []byte, clientID, clientSecret string) (*OAuthTokenData, error) {
+	var creds geminiCLICreds
+	if err := json.Unmarshal(raw, &creds); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	if creds.RefreshToken == "" {
+		return nil, errors.New("JSON has no refresh_token")
+	}
+
+	// Resolve client credentials.
+	if clientID == "" || clientSecret == "" {
+		cli, err := DetectGeminiCLI()
+		if err != nil {
+			return nil, fmt.Errorf("no client credentials provided and cannot extract from Gemini CLI: %w", err)
+		}
+		clientID = cli.ClientID
+		clientSecret = cli.ClientSecret
+	}
+
+	expiry := time.Time{}
+	if creds.ExpiryDate > 0 {
+		expiry = time.UnixMilli(creds.ExpiryDate)
+	}
+
+	data := &OAuthTokenData{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		AccessToken:  creds.AccessToken,
+		RefreshToken: creds.RefreshToken,
+		TokenType:    creds.TokenType,
+		Expiry:       expiry,
+	}
+
+	// Refresh the token if expired.
+	if err := RefreshIfNeeded(ctx, data, ""); err != nil {
+		logFlow.Warnf("token refresh during paste import: %v (continuing)", err)
+	}
+
+	// Fetch user email.
+	if email, err := fetchUserEmail(ctx, data.AccessToken); err == nil {
+		data.Email = email
+	} else {
+		logFlow.Warnf("failed to fetch email during paste import: %v", err)
+	}
+
+	// Discover project.
+	if projectID, err := discoverProject(ctx, data.AccessToken); err == nil {
+		data.ProjectID = projectID
+	} else {
+		logFlow.Warnf("failed to discover project during paste import: %v", err)
+	}
+
+	// Persist.
+	if err := saveTokenData(f.tokenPath, data); err != nil {
+		logFlow.Warnf("failed to persist pasted token: %v", err)
+	}
+	if f.poolPath != "" {
+		if err := AddToOAuthPool(f.poolPath, data); err != nil {
+			logFlow.Warnf("failed to update pool file: %v", err)
+		}
+	}
+
+	return data, nil
+}
+
 // --- PKCE ---
 
 func generatePKCE() (verifier, challenge string) {

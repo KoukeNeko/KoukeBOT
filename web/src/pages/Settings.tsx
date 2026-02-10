@@ -7,6 +7,7 @@ import {
   startGeminiOAuth,
   submitOAuthCallback,
   importGeminiCLIToken,
+  importPastedToken,
   getOAuthStatus,
   getOAuthPool,
   removeOAuthPoolAccount,
@@ -68,6 +69,8 @@ export default function Settings() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [addAccountOpen, setAddAccountOpen] = useState(false);
   const [importingCLI, setImportingCLI] = useState(false);
+  const [pastedTokenJSON, setPastedTokenJSON] = useState("");
+  const [importingPasted, setImportingPasted] = useState(false);
 
   // Pool state
   const [pool, setPool] = useState<PoolEntry[]>([]);
@@ -224,6 +227,28 @@ export default function Settings() {
       setMessage({ type: "err", text: e instanceof Error ? e.message : "匯入失敗" });
     } finally {
       setImportingCLI(false);
+    }
+  };
+
+  const handleImportPastedToken = async () => {
+    if (!pastedTokenJSON.trim()) return;
+    setImportingPasted(true);
+    setMessage(null);
+    try {
+      const clientId = manualClientID || undefined;
+      const clientSecret = manualClientSecret || undefined;
+      const result = await importPastedToken(pastedTokenJSON.trim(), clientId, clientSecret);
+      await refreshPool();
+      const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
+      setOAuthStatus(oauth);
+      setStatus(st);
+      setMessage({ type: "ok", text: `已匯入 Token：${result.email}` });
+      setAddAccountOpen(false);
+      setPastedTokenJSON("");
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "匯入失敗" });
+    } finally {
+      setImportingPasted(false);
     }
   };
 
@@ -469,18 +494,40 @@ export default function Settings() {
                 </p>
               )}
 
-              {/* Import stored Gemini CLI token (方案二) */}
+              {/* Option A: Import from server filesystem */}
               <div className="oauth-detect-block">
                 <button
                   onClick={handleImportCLIToken}
                   disabled={importingCLI || oauthStarting}
                   className="btn-primary"
                 >
-                  {importingCLI ? "匯入中..." : "Import Gemini CLI Token"}
+                  {importingCLI ? "匯入中..." : "Import from Server"}
                 </button>
                 <p className="meta oauth-meta">
-                  先在伺服器上執行 <code>gemini</code> 完成登入，再點此匯入已儲存的 Token
+                  伺服器上已執行過 <code>gemini</code>？直接讀取 <code>~/.gemini/oauth_creds.json</code>
                 </p>
+              </div>
+
+              {/* Option B: Paste token JSON from local machine */}
+              <div className="oauth-detect-block" style={{ marginTop: "0.75rem" }}>
+                <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
+                  <strong>或</strong>在本地電腦執行 <code>npx @google/gemini-cli</code> 登入後，貼上 <code>~/.gemini/oauth_creds.json</code> 內容：
+                </p>
+                <textarea
+                  value={pastedTokenJSON}
+                  onChange={(e) => setPastedTokenJSON(e.target.value)}
+                  placeholder='{"access_token":"ya29...","refresh_token":"1//...","token_type":"Bearer","expiry_date":1234567890000}'
+                  rows={3}
+                  style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
+                  disabled={importingPasted}
+                />
+                <button
+                  onClick={handleImportPastedToken}
+                  disabled={importingPasted || !pastedTokenJSON.trim()}
+                  className="btn-primary"
+                >
+                  {importingPasted ? "匯入中..." : "Paste & Import Token"}
+                </button>
               </div>
 
               <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />

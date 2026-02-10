@@ -91,6 +91,14 @@ export function importGeminiCLIToken(): Promise<{ email: string; project_id: str
   return fetchJSON(`${BASE}/oauth/gemini/import-cli`, { method: 'POST' })
 }
 
+export function importPastedToken(tokenJson: string, clientId?: string, clientSecret?: string): Promise<{ email: string; project_id: string; status: string }> {
+  return fetchJSON(`${BASE}/oauth/gemini/import-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token_json: tokenJson, client_id: clientId ?? '', client_secret: clientSecret ?? '' }),
+  })
+}
+
 export function listModels(): Promise<ModelEntry[]> {
   return fetchJSON(`${BASE}/models`)
 }
