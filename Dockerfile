@@ -45,7 +45,9 @@ FROM alpine:latest
 WORKDIR /app
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata nodejs npm && \
+    npm install -g @google/gemini-cli && \
+    npm cache clean --force
 
 # Create necessary directories
 RUN mkdir -p /app/configs /app/data /app/web/dist
