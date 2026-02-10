@@ -133,7 +133,7 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 
 	// If history has recent images, delegate to the multimodal path (no new images, but load from history)
 	if s.imageStore != nil && s.historyHasRecentImages(conv) {
-		return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, nil)
+		return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, nil, nil)
 	}
 
 	// Temporarily append the LLM context version for assembly
@@ -169,11 +169,11 @@ func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channel
 }
 
 // HandleMessageStreamWithImagesAndContext processes a user message with images and separate display/storage versions.
-// contextForLLM: the full message (with channel history) sent to LLM
+// contextForLLM: the full message (with channel history) sent to LLM — also used for persistence
 // messageToStore: the clean message (without channel history markers) saved to conversation store
 // images: direct attachment images — persisted to disk and sent to LLM
-// contextImages: ephemeral images (e.g. from channel history) — sent to LLM but NOT persisted
-func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string, images []domain.ImageInput, contextImages []domain.ImageInput) (<-chan llm.StreamChunk, error) {
+// historyEntries: structured channel history entries with per-message images (ephemeral, not persisted)
+func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string, images []domain.ImageInput, historyEntries []domain.ChannelHistoryEntry) (<-chan llm.StreamChunk, error) {
 	persona, err := s.resolvePersona(personaID)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		}
 	}
 
-	// Save only direct attachment images to disk (not context images)
+	// Save only direct attachment images to disk (not history entry images)
 	var imageRefs []domain.ImageRef
 	if s.imageStore != nil && len(images) > 0 {
 		for _, img := range images {
@@ -205,10 +205,7 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		}
 	}
 
-	// Merge all images for LLM: direct attachments + ephemeral context images
-	allImages := append(images, contextImages...)
-
-	return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, allImages, imageRefs...)
+	return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, images, historyEntries, imageRefs...)
 }
 
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {
@@ -592,13 +589,32 @@ func (s *ChatService) streamWithMultimodalHistory(
 	personaID string,
 	contextForLLM, messageToStore string,
 	currentImages []domain.ImageInput,
+	historyEntries []domain.ChannelHistoryEntry,
 	currentImageRefs ...domain.ImageRef,
 ) (<-chan llm.StreamChunk, error) {
 	// Build multimodal history from stored messages (load images from disk)
 	multimodalHistory := s.buildMultimodalHistory(conv.Messages)
 
-	// Build current user message parts
-	userParts := []domain.MessagePart{{Text: contextForLLM}}
+	// Build current user message parts with interleaved history images
+	var userParts []domain.MessagePart
+	if len(historyEntries) > 0 {
+		// History header
+		userParts = append(userParts, domain.MessagePart{Text: domain.HistoryContextMarker})
+		// Each history entry: text part followed by its associated images
+		for _, entry := range historyEntries {
+			userParts = append(userParts, domain.MessagePart{Text: entry.FormattedText})
+			for i := range entry.Images {
+				logChat.Logf("history image: %s (%s, %.1fKB)", entry.Images[i].Filename, entry.Images[i].MimeType, float64(len(entry.Images[i].Data))/1024)
+				userParts = append(userParts, domain.MessagePart{ImageData: &entry.Images[i]})
+			}
+		}
+		// Current message section
+		userParts = append(userParts, domain.MessagePart{Text: "\n" + domain.CurrentMessageMarker + "\n" + messageToStore})
+	} else {
+		// No history entries (DM or text-only history) — use flat context
+		userParts = append(userParts, domain.MessagePart{Text: contextForLLM})
+	}
+	// Direct attachment images (always after current message text)
 	for i := range currentImages {
 		logChat.Logf("image: %s (%s, %.1fKB)", currentImages[i].Filename, currentImages[i].MimeType, float64(len(currentImages[i].Data))/1024)
 		userParts = append(userParts, domain.MessagePart{ImageData: &currentImages[i]})

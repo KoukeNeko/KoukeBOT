@@ -102,11 +102,24 @@ func (c *Conversation) AppendAssistantMessageWithRaw(content, rawInput, rawOutpu
 	c.UpdatedAt = time.Now()
 }
 
+// Context markers for channel history formatting.
+const (
+	HistoryContextMarker = "[Chat messages since your last reply - for context]"
+	CurrentMessageMarker = "[Current message]"
+)
+
 // ImageInput represents an uploaded image for vision analysis.
 type ImageInput struct {
 	Data     []byte // Raw image bytes
 	MimeType string // e.g., "image/jpeg", "image/png"
 	Filename string // Optional, for logging
+}
+
+// ChannelHistoryEntry represents a single message from Discord channel history
+// with its associated images (if any).
+type ChannelHistoryEntry struct {
+	FormattedText string       // Envelope-formatted message text
+	Images        []ImageInput // Images attached to this specific message
 }
 
 // MessagePart represents a part of a multimodal message.

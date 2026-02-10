@@ -26,9 +26,9 @@ const (
 	llmTimeout = 120 * time.Second
 	// Channel history limit (same as openclaw's DEFAULT_GROUP_HISTORY_LIMIT)
 	defaultGroupHistoryLimit = 50
-	// Context markers (same as openclaw)
-	historyContextMarker  = "[Chat messages since your last reply - for context]"
-	currentMessageMarker  = "[Current message]"
+	// Context markers — re-exported from domain for local use
+	historyContextMarker = domain.HistoryContextMarker
+	currentMessageMarker = domain.CurrentMessageMarker
 )
 
 // Handler bridges Discord events to the ChatService.
@@ -136,24 +136,30 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	timestamp := m.Timestamp.Format("2006-01-02 15:04 MST")
 	currentMessage := formatInboundEnvelope("Discord", senderLabel, m.Author.ID, timestamp, content)
 
-	// Build channel history context for LLM (openclaw style)
-	// This is used for immediate context but NOT stored in conversation
-	// Also collects images from recent channel messages
-	var contextForLLM string
-	var historyImages []domain.ImageInput
+	// Build structured channel history entries (each with per-message images)
+	var historyEntries []domain.ChannelHistoryEntry
 	if !isDM(m) {
-		contextForLLM, historyImages = h.buildChannelHistoryContext(s, m.ChannelID, m.ID, currentMessage)
-	} else {
-		contextForLLM = currentMessage
+		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, m.ID)
 	}
 
-	// Pass both: contextForLLM (with channel history) and currentMessage (for storage)
-	// Direct attachments (images) are persisted; channel history images (historyImages) are ephemeral
+	// Flat text context for persistence and text-only code path
+	contextForLLM := buildContextForLLM(historyEntries, currentMessage)
+
+	// Check if any history entry has images
+	hasHistoryImages := false
+	for _, e := range historyEntries {
+		if len(e.Images) > 0 {
+			hasHistoryImages = true
+			break
+		}
+	}
+
+	// Direct attachments (images) are persisted; history entry images are ephemeral
 	var streamCh <-chan llm.StreamChunk
 	var err error
-	if len(images) > 0 || len(historyImages) > 0 {
+	if len(images) > 0 || hasHistoryImages {
 		streamCh, err = h.chatService.HandleMessageStreamWithImagesAndContext(
-			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, images, historyImages)
+			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, images, historyEntries)
 	} else {
 		streamCh, err = h.chatService.HandleMessageStreamWithContext(
 			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage)
@@ -651,21 +657,12 @@ func truncateError(msg string, maxLen int) string {
 	return msg[:maxLen] + "..."
 }
 
-// buildChannelHistoryContext builds openclaw-style channel history context.
-// It also collects images from recent channel messages (up to maxHistoryImages
-// from the most recent maxHistoryImageScan messages) so the LLM can see them.
-//
-// Format:
-// [Chat messages since your last reply - for context]
-// [Discord Alice 2024-01-01 10:25] message 1
-// [from: Alice]
-// [Discord Bob 2024-01-01 10:27] message 2
-// [from: Bob]
-//
-// [Current message]
-// [Discord Alice 2024-01-01 10:30] current message
-// [from: Alice]
-func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, currentMessageID, currentMessage string) (string, []domain.ImageInput) {
+// buildChannelHistoryEntries builds structured channel history entries with
+// per-message image association so the LLM can see which image belongs to which
+// message. Images from the most recent maxHistoryImageScan messages are
+// downloaded and attached to their corresponding entry (up to maxHistoryImages
+// total).
+func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, currentMessageID string) []domain.ChannelHistoryEntry {
 	const (
 		maxHistoryImageScan = 10 // only scan last N messages for images
 		maxHistoryImages    = 5  // collect at most this many images
@@ -674,18 +671,15 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 	messages, err := s.ChannelMessages(channelID, defaultGroupHistoryLimit, currentMessageID, "", "")
 	if err != nil {
 		logHandler.Warnf("failed to fetch channel history [%s]: %v", channelID, err)
-		return currentMessage, nil // Fallback to current message only
+		return nil
 	}
 
-	// If no history, return current message only
 	if len(messages) == 0 {
-		return currentMessage, nil
+		return nil
 	}
 
 	// Build history entries (reverse order - oldest first)
-	// Also collect images from recent messages
-	var historyLines []string
-	var historyImages []domain.ImageInput
+	var entries []domain.ChannelHistoryEntry
 	imageCount := 0
 
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -703,6 +697,7 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 		}
 
 		// Collect images from recent messages (last maxHistoryImageScan msgs)
+		var entryImages []domain.ImageInput
 		if i < maxHistoryImageScan && imageCount < maxHistoryImages {
 			for _, att := range msg.Attachments {
 				if imageCount >= maxHistoryImages {
@@ -714,7 +709,7 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 						logHandler.Warnf("channel-history image download failed: %s: %v", att.Filename, err)
 						continue
 					}
-					historyImages = append(historyImages, img)
+					entryImages = append(entryImages, img)
 					imageCount++
 					senderLabel := ""
 					if msg.Author != nil {
@@ -739,18 +734,36 @@ func (h *Handler) buildChannelHistoryContext(s *discordgo.Session, channelID, cu
 		}
 		timestamp := msg.Timestamp.Format("2006-01-02 15:04 MST")
 		formattedMsg := formatInboundEnvelope("Discord", senderLabel, userID, timestamp, content)
-		historyLines = append(historyLines, formattedMsg)
+
+		entries = append(entries, domain.ChannelHistoryEntry{
+			FormattedText: formattedMsg,
+			Images:        entryImages,
+		})
 	}
 
-	// Build final context with openclaw markers
+	return entries
+}
+
+// buildContextForLLM rebuilds the flat context string from structured history
+// entries. Used for the text-only code path and for conversation persistence.
+func buildContextForLLM(entries []domain.ChannelHistoryEntry, currentMessage string) string {
+	if len(entries) == 0 {
+		return currentMessage
+	}
+
 	var result strings.Builder
 	result.WriteString(historyContextMarker)
 	result.WriteString("\n")
-	result.WriteString(strings.Join(historyLines, "\n"))
+	for i, entry := range entries {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		result.WriteString(entry.FormattedText)
+	}
 	result.WriteString("\n\n")
 	result.WriteString(currentMessageMarker)
 	result.WriteString("\n")
 	result.WriteString(currentMessage)
 
-	return result.String(), historyImages
+	return result.String()
 }
