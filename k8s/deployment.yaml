@@ -50,9 +50,6 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /app/data
-        - name: config
-          mountPath: /app/configs
-          readOnly: true
 
         resources:
           requests:
@@ -93,9 +90,6 @@ spec:
       - name: data
         persistentVolumeClaim:
           claimName: kouke-bot-data-pvc
-      - name: config
-        persistentVolumeClaim:
-          claimName: kouke-bot-config-pvc
 
       restartPolicy: Always
 
