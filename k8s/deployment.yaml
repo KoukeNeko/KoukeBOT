@@ -21,10 +21,22 @@ spec:
       imagePullSecrets:
         - name: ghcr-secret # Ensure this secret exists if your image is private
       initContainers:
-      - name: fix-permissions
-        image: alpine:latest
-        command: ["sh", "-c", "chown -R 1000:1000 /app/data"]
+      - name: init-configs
+        image: ghcr.io/koukeneko/koukebot:main
+        command:
+        - sh
+        - -c
+        - |
+          if [ -z "$(ls -A /mnt/configs 2>/dev/null)" ]; then
+            echo "Config PVC is empty, copying defaults from image..."
+            cp -a /app/configs/. /mnt/configs/
+          else
+            echo "Config PVC already has data, skipping."
+          fi
+          chown -R 1000:1000 /mnt/configs /app/data
         volumeMounts:
+        - name: config
+          mountPath: /mnt/configs
         - name: data
           mountPath: /app/data
         securityContext:
@@ -59,6 +71,8 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /app/data
+        - name: config
+          mountPath: /app/configs
 
         resources:
           requests:
@@ -99,6 +113,9 @@ spec:
       - name: data
         persistentVolumeClaim:
           claimName: kouke-bot-data-pvc
+      - name: config
+        persistentVolumeClaim:
+          claimName: kouke-bot-config-pvc
 
       restartPolicy: Always
 
