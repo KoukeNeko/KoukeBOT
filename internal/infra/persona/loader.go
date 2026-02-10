@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -77,7 +78,7 @@ func LoadAllPersonas(baseDir string) (map[string]*domain.PersonaModule, error) {
 
 	personas := make(map[string]*domain.PersonaModule, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), "_") {
 			continue
 		}
 

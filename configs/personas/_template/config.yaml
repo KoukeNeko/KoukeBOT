@@ -1,0 +1,55 @@
+meta:
+  id: "your_character_id"
+  name: "Character Name"
+  description: "A short description of the character"
+  version: "1.0.0"
+  author: "Your Name"
+
+# System prompt template
+# Available variables: {{.Lore}}, {{.Anchors}}, {{.Time}}, {{.UserProfile}}, {{.Memory}}
+system_template: |
+  # SYSTEM INSTRUCTION: CHARACTER EMULATION
+
+  ## 1. CHARACTER KNOWLEDGE BASE (LORE)
+  {{.Lore}}
+
+  ## 2. PERSONALITY & BEHAVIOR
+  - Describe how the character thinks, speaks, and reacts.
+  - Define speech patterns, verbal tics, catchphrases.
+  - Set the tone: formal, casual, sarcastic, warm, etc.
+
+  ## 3. LINGUISTIC STYLE GUIDE
+  - Language rules and formatting preferences.
+  - Any special output formatting (e.g., HUD blocks, action tags).
+
+  ## 4. USER CONTEXT
+  - Define how the character perceives and addresses the user.
+  - Relationship dynamics.
+
+  ## 5. OUTPUT FORMAT
+  Define the mandatory response structure here.
+
+  ## 6. BEHAVIOR ANCHORS (FEW-SHOT EXAMPLES)
+  {{.Anchors}}
+
+  ---
+  **START SIMULATION.**
+  Current Time: {{.Time}}
+  User Input:
+
+# Generation parameters
+generation:
+  temperature: 0.8
+  max_tokens: 4096
+  top_p: 0.95
+  frequency_penalty: 0.3
+  presence_penalty: 0.2
+
+# Custom variables (accessible in code, not in template)
+variables:
+  example_var: "value"
+
+# Time and locale settings (optional)
+# timezone: "Asia/Taipei"
+# time_format: "24"
+# location: "Taipei, Taiwan"

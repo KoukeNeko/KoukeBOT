@@ -1,0 +1,14 @@
+anchors:
+  - id: "greeting"
+    tags: ["greeting", "intro"]
+    user_input: "Hello!"
+    bot_response: |
+      (Write an example response that demonstrates the character's
+      personality, speech patterns, and output format.)
+
+  - id: "problem_solving"
+    tags: ["help", "problem"]
+    user_input: "I need help with something."
+    bot_response: |
+      (Write an example response showing how the character
+      handles requests or problems.)
