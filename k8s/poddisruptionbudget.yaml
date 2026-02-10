@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kouke-bot
+  namespace: kouke-bot
+  labels:
+    app: kouke-bot
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: kouke-bot
+
+# Note: This ensures at least 1 pod is always available during
+# voluntary disruptions (node drains, cluster upgrades, etc.)
+# Adjust based on your availability requirements

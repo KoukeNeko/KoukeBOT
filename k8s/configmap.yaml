@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kouke-bot-config
+  namespace: kouke-bot
+  labels:
+    app: kouke-bot
+data:
+  GIN_MODE: "release"
+  TZ: "Asia/Tokyo"

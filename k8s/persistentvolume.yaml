@@ -1,0 +1,41 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kouke-bot-data-pv
+  labels:
+    app: kouke-bot
+    type: data
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  # Update the path to match your storage location
+  hostPath:
+    path: /mnt/data/kouke-bot/data
+    type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kouke-bot-config-pv
+  labels:
+    app: kouke-bot
+    type: config
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  # Update the path to match your config location
+  hostPath:
+    path: /mnt/data/kouke-bot/configs
+    type: DirectoryOrCreate

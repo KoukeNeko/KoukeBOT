@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+PROPOSED_PLAN.md
+TESTING_WEB_SEARCH.md
+docs/
+
+# IDE
+.idea/
+.vscode/
+.claude/
+.devcontainer/
+*.swp
+*.swo
+*~
+
+# Environment & runtime data
+.env
+.env.*
+data/
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+kouke-bot
+character
+__debug_bin*
+
+# Test
+*.test
+*.out
+coverage.html
+
+# Go
+vendor/
+
+# Node (will be copied selectively)
+web/node_modules/
+web/.vite/
+
+# Scripts
+scripts/
+dev.sh
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kouke-bot
+  namespace: kouke-bot
+  labels:
+    app: kouke-bot
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Use Recreate for single replica with persistent volume
+  selector:
+    matchLabels:
+      app: kouke-bot
+  template:
+    metadata:
+      labels:
+        app: kouke-bot
+    spec:
+      serviceAccountName: kouke-bot
+      containers:
+      - name: kouke-bot
+        image: kouke-bot:latest
+        imagePullPolicy: IfNotPresent
+
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+
+        env:
+        - name: GIN_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: kouke-bot-config
+              key: GIN_MODE
+        - name: TZ
+          valueFrom:
+            configMapKeyRef:
+              name: kouke-bot-config
+              key: TZ
+
+        # Uncomment and configure secrets as needed
+        # envFrom:
+        # - secretRef:
+        #     name: kouke-bot-secret
+
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        - name: config
+          mountPath: /app/configs
+          readOnly: true
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: kouke-bot-data-pvc
+      - name: config
+        persistentVolumeClaim:
+          claimName: kouke-bot-config-pvc
+
+      restartPolicy: Always
+
+      securityContext:
+        fsGroup: 1000

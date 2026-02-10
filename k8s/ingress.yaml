@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kouke-bot
+  namespace: kouke-bot
+  labels:
+    app: kouke-bot
+  annotations:
+    # Uncomment and configure based on your ingress controller
+    # nginx.ingress.kubernetes.io/rewrite-target: /
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx  # Change based on your ingress controller
+  rules:
+  - host: kouke-bot.example.com  # Change to your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kouke-bot
+            port:
+              name: http
+
+  # Uncomment for TLS/HTTPS
+  # tls:
+  # - hosts:
+  #   - kouke-bot.example.com
+  #   secretName: kouke-bot-tls

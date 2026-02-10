@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  kouke-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kouke-bot:latest
+    container_name: kouke-bot
+    restart: unless-stopped
+
+    # Mount volumes for persistent data and configuration
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./data:/app/data
+
+    # Expose web UI port
+    ports:
+      - "8080:8080"
+
+    # Environment variables (override as needed)
+    environment:
+      - GIN_MODE=release
+      - TZ=Asia/Tokyo
+
+    # Resource limits (optional, adjust as needed)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 2G
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 512M
