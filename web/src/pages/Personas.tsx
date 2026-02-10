@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Outlet, useParams, useLocation } from 'react-router-dom'
+import { Outlet, useParams } from 'react-router-dom'
 import { listPersonas, reloadPersonas } from '../api'
 import type { PersonaSummary } from '../types'
 import { SidebarList, SidebarItem } from '../components/SidebarList'
@@ -11,8 +11,6 @@ export default function Personas() {
   const [error, setError] = useState('')
   const isMobile = useIsMobile()
   const { id } = useParams()
-  const location = useLocation()
-
   const load = async () => {
     setLoading(true)
     setError('')

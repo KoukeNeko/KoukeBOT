@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import { useIsMobile } from '../hooks/useMediaQuery'
 
 interface LayoutProps {
@@ -9,8 +9,6 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const isMobile = useIsMobile()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const location = useLocation()
-
   const navItems = [
     { 
       to: '/personas', 
