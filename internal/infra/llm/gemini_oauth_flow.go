@@ -77,10 +77,11 @@ type GeminiOAuthFlow struct {
 	redirectURL string // e.g., http://localhost:8080/api/oauth/gemini/callback
 
 	// In-flight OAuth state (single concurrent flow).
-	state        string
-	codeVerifier string
-	clientID     string
-	clientSecret string
+	state           string
+	codeVerifier    string
+	clientID        string
+	clientSecret    string
+	flowRedirectURL string // per-flow redirect URL (overrides default)
 }
 
 // NewGeminiOAuthFlow creates a new flow manager.
@@ -236,7 +237,8 @@ func generateState() string {
 // --- OAuth Flow ---
 
 // StartFlow generates an OAuth authorization URL and stores in-flight state.
-func (f *GeminiOAuthFlow) StartFlow(clientID, clientSecret string) (authURL string, err error) {
+// If redirectURL is non-empty it overrides the default redirect URL for this flow.
+func (f *GeminiOAuthFlow) StartFlow(clientID, clientSecret, redirectURL string) (authURL string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -245,13 +247,20 @@ func (f *GeminiOAuthFlow) StartFlow(clientID, clientSecret string) (authURL stri
 	f.state = generateState()
 	f.codeVerifier, _ = generatePKCE()
 
+	// Use per-flow redirect URL if provided, otherwise fall back to default.
+	redir := f.redirectURL
+	if redirectURL != "" {
+		redir = redirectURL
+	}
+	f.flowRedirectURL = redir
+
 	challenge := sha256.Sum256([]byte(f.codeVerifier))
 	codeChallenge := base64.RawURLEncoding.EncodeToString(challenge[:])
 
 	params := url.Values{
 		"client_id":             {clientID},
 		"response_type":         {"code"},
-		"redirect_uri":          {f.redirectURL},
+		"redirect_uri":          {redir},
 		"scope":                 {strings.Join(oauthScopes, " ")},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
@@ -271,9 +280,11 @@ func (f *GeminiOAuthFlow) HandleCallback(ctx context.Context, code, state string
 	verifier := f.codeVerifier
 	clientID := f.clientID
 	clientSecret := f.clientSecret
+	redirectURL := f.flowRedirectURL
 	// Clear in-flight state.
 	f.state = ""
 	f.codeVerifier = ""
+	f.flowRedirectURL = ""
 	f.mu.Unlock()
 
 	if expectedState == "" || state != expectedState {
@@ -281,7 +292,7 @@ func (f *GeminiOAuthFlow) HandleCallback(ctx context.Context, code, state string
 	}
 
 	// Exchange authorization code for tokens.
-	token, err := exchangeCode(ctx, clientID, clientSecret, code, verifier, f.redirectURL)
+	token, err := exchangeCode(ctx, clientID, clientSecret, code, verifier, redirectURL)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}

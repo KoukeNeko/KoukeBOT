@@ -42,6 +42,7 @@ export default function Settings() {
     memory_extraction_enabled: false,
     memory_extraction_model: "",
     log_channel_id: "",
+    base_url: "",
   });
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
@@ -250,6 +251,29 @@ export default function Settings() {
             )
 
       }
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">General</h3>
+
+        <label className="form-field">
+          <span>Base URL</span>
+          <input
+            type="text"
+            value={form.base_url || ""}
+            onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+            placeholder={window.location.origin}
+          />
+          <span className="hint">
+            OAuth redirect 使用的基底網址。留空會自動偵測。如果透過自訂網域存取，請填入完整網址（例如 https://bot.koukeneko.cafe）。
+            <br />
+            OAuth Redirect URI: <code>{(form.base_url || window.location.origin).replace(/\/+$/, '')}/api/oauth/gemini/callback</code>
+          </span>
+        </label>
+
+        <button onClick={() => handleSave()} disabled={saving} className="btn-save-bottom">
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </section>
 
       <section className="settings-section">
         <h3 className="settings-section-title">LLM Provider</h3>
