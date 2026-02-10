@@ -44,7 +44,7 @@ spec:
       containers:
       - name: kouke-bot
         image: ghcr.io/koukeneko/koukebot:main
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
 
         ports:
         - name: http

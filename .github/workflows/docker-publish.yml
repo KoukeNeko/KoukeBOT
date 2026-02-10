@@ -3,6 +3,8 @@ name: Build and Push to GHCR
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'k8s/**'  # Ignore changes to Kubernetes manifests for this workflow
     tags: ["v*"]
   pull_request:
     branches: [main]
