@@ -6,6 +6,7 @@ import {
   detectGeminiCLI,
   startGeminiOAuth,
   submitOAuthCallback,
+  importGeminiCLIToken,
   getOAuthStatus,
   getOAuthPool,
   removeOAuthPoolAccount,
@@ -66,6 +67,7 @@ export default function Settings() {
   const [submittingCallback, setSubmittingCallback] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [addAccountOpen, setAddAccountOpen] = useState(false);
+  const [importingCLI, setImportingCLI] = useState(false);
 
   // Pool state
   const [pool, setPool] = useState<PoolEntry[]>([]);
@@ -204,6 +206,24 @@ export default function Settings() {
       setMessage({ type: "err", text: e instanceof Error ? e.message : "Callback 提交失敗" });
     } finally {
       setSubmittingCallback(false);
+    }
+  };
+
+  const handleImportCLIToken = async () => {
+    setImportingCLI(true);
+    setMessage(null);
+    try {
+      const result = await importGeminiCLIToken();
+      await refreshPool();
+      const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
+      setOAuthStatus(oauth);
+      setStatus(st);
+      setMessage({ type: "ok", text: `已匯入 Gemini CLI Token：${result.email}` });
+      setAddAccountOpen(false);
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "匯入失敗" });
+    } finally {
+      setImportingCLI(false);
     }
   };
 
@@ -449,6 +469,22 @@ export default function Settings() {
                 </p>
               )}
 
+              {/* Import stored Gemini CLI token (方案二) */}
+              <div className="oauth-detect-block">
+                <button
+                  onClick={handleImportCLIToken}
+                  disabled={importingCLI || oauthStarting}
+                  className="btn-primary"
+                >
+                  {importingCLI ? "匯入中..." : "Import Gemini CLI Token"}
+                </button>
+                <p className="meta oauth-meta">
+                  先在伺服器上執行 <code>gemini</code> 完成登入，再點此匯入已儲存的 Token
+                </p>
+              </div>
+
+              <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
+
               {/* Detect Gemini CLI */}
               <div className="oauth-detect-block">
                 <button
@@ -512,7 +548,10 @@ export default function Settings() {
               {authUrl && (
                 <div className="oauth-manual-callback">
                   <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    <strong>步驟 1:</strong> 點擊下方連結，在新分頁中完成 Google 授權
+                    <strong>步驟 1:</strong> 在新分頁中按 <strong>F12</strong> 開啟開發者工具，切換到 <strong>Network（網路）</strong>分頁
+                  </p>
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
+                    <strong>步驟 2:</strong> 點擊下方連結完成 Google 授權
                   </p>
                   <a
                     href={authUrl}
@@ -525,8 +564,7 @@ export default function Settings() {
                   </a>
 
                   <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    <strong>步驟 2:</strong> 授權完成後，瀏覽器會跳轉到一個「無法連線」的頁面。
-                    複製該頁面<strong>網址列</strong>中的完整 URL，貼到下方：
+                    <strong>步驟 3:</strong> 授權完成後，URL 會一閃而過。在開發者工具的 Network 分頁中找到 <code>127.0.0.1</code> 的請求，右鍵 → <strong>Copy URL</strong>，貼到下方：
                   </p>
                   <input
                     type="text"

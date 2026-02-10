@@ -853,6 +853,47 @@ func (h *Handlers) OAuthCallbackManual(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"email": email, "status": "ok"})
 }
 
+// OAuthImportCLIToken reads the stored Gemini CLI token from the server filesystem
+// and imports it into the pool. The user must have run `gemini` CLI on the server first.
+func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
+	tokenData, err := h.oauthFlow.ImportGeminiCLIToken(h.ctx)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "import failed: "+err.Error())
+		return
+	}
+
+	model := "gemini-2.5-pro"
+	if s, loadErr := h.settingsStore.Load(); loadErr == nil && s.GeminiModel != "" {
+		model = s.GeminiModel
+	}
+
+	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "provider creation: "+err.Error())
+		return
+	}
+
+	pool := h.providerManager.GetPool()
+	if pool == nil {
+		pool = app.NewProviderPool()
+		h.providerManager.Update(pool)
+	}
+	pool.Add(provider, tokenData.Email)
+	logAPI.Logf("Imported Gemini CLI token for %s (project: %s, pool size: %d)",
+		tokenData.Email, tokenData.ProjectID, pool.Size())
+
+	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
+		s.ProviderType = config.ProviderOAuth
+		_ = h.settingsStore.Save(s)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"email":      tokenData.Email,
+		"project_id": tokenData.ProjectID,
+		"status":     "ok",
+	})
+}
+
 type OAuthStatusResponse struct {
 	Authenticated bool              `json:"authenticated"`
 	ProjectID     string            `json:"project_id,omitempty"`

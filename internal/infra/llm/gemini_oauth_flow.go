@@ -213,6 +213,85 @@ func extractFromFile(path string) (*CLICredentials, error) {
 	return &CLICredentials{ClientID: idMatch, ClientSecret: secretMatch}, nil
 }
 
+// --- Gemini CLI Token Import ---
+
+// geminiCLICredsFile is the default path where Gemini CLI caches OAuth tokens.
+const geminiCLICredsFile = ".gemini/oauth_creds.json"
+
+// geminiCLICreds represents the JSON structure of ~/.gemini/oauth_creds.json.
+type geminiCLICreds struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiryDate   int64  `json:"expiry_date"` // Unix milliseconds
+}
+
+// DetectGeminiCLIToken reads the stored OAuth token from Gemini CLI (~/.gemini/oauth_creds.json)
+// and combines it with client credentials extracted from the CLI bundle.
+// Returns a fully populated OAuthTokenData ready for pool import.
+func DetectGeminiCLIToken(ctx context.Context) (*OAuthTokenData, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+
+	credsPath := filepath.Join(home, geminiCLICredsFile)
+	raw, err := os.ReadFile(credsPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", credsPath, err)
+	}
+
+	var creds geminiCLICreds
+	if err := json.Unmarshal(raw, &creds); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", credsPath, err)
+	}
+
+	if creds.RefreshToken == "" {
+		return nil, fmt.Errorf("%s has no refresh_token", credsPath)
+	}
+
+	// Extract client credentials from the Gemini CLI bundle.
+	cli, err := DetectGeminiCLI()
+	if err != nil {
+		return nil, fmt.Errorf("cannot extract client credentials: %w", err)
+	}
+
+	expiry := time.Time{}
+	if creds.ExpiryDate > 0 {
+		expiry = time.UnixMilli(creds.ExpiryDate)
+	}
+
+	data := &OAuthTokenData{
+		ClientID:     cli.ClientID,
+		ClientSecret: cli.ClientSecret,
+		AccessToken:  creds.AccessToken,
+		RefreshToken: creds.RefreshToken,
+		TokenType:    creds.TokenType,
+		Expiry:       expiry,
+	}
+
+	// Refresh the token if expired.
+	if err := RefreshIfNeeded(ctx, data, ""); err != nil {
+		logFlow.Warnf("token refresh during import: %v (continuing with existing token)", err)
+	}
+
+	// Fetch user email.
+	if email, err := fetchUserEmail(ctx, data.AccessToken); err == nil {
+		data.Email = email
+	} else {
+		logFlow.Warnf("failed to fetch email during import: %v", err)
+	}
+
+	// Discover project.
+	if projectID, err := discoverProject(ctx, data.AccessToken); err == nil {
+		data.ProjectID = projectID
+	} else {
+		logFlow.Warnf("failed to discover project during import: %v", err)
+	}
+
+	return data, nil
+}
+
 // --- PKCE ---
 
 func generatePKCE() (verifier, challenge string) {
@@ -613,6 +692,28 @@ func NewTokenSource(ctx context.Context, data *OAuthTokenData) oauth2.TokenSourc
 	}
 
 	return cfg.TokenSource(ctx, token)
+}
+
+// ImportGeminiCLIToken reads the stored Gemini CLI token, persists it, and adds to pool.
+func (f *GeminiOAuthFlow) ImportGeminiCLIToken(ctx context.Context) (*OAuthTokenData, error) {
+	data, err := DetectGeminiCLIToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist to single token file.
+	if err := saveTokenData(f.tokenPath, data); err != nil {
+		logFlow.Warnf("failed to persist imported token: %v", err)
+	}
+
+	// Add to pool file.
+	if f.poolPath != "" {
+		if err := AddToOAuthPool(f.poolPath, data); err != nil {
+			logFlow.Warnf("failed to update pool file: %v", err)
+		}
+	}
+
+	return data, nil
 }
 
 // GetStatus returns the current OAuth status from the stored token file.

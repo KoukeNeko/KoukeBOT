@@ -87,6 +87,10 @@ export function getOAuthStatus(): Promise<OAuthStatus> {
   return fetchJSON(`${BASE}/oauth/gemini/status`)
 }
 
+export function importGeminiCLIToken(): Promise<{ email: string; project_id: string; status: string }> {
+  return fetchJSON(`${BASE}/oauth/gemini/import-cli`, { method: 'POST' })
+}
+
 export function listModels(): Promise<ModelEntry[]> {
   return fetchJSON(`${BASE}/models`)
 }
