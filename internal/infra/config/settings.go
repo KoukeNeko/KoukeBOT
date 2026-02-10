@@ -42,9 +42,6 @@ type Settings struct {
 
 	// Discord logging settings
 	LogChannelID string `json:"log_channel_id"` // Discord channel ID for stdout logs (optional)
-
-	// Base URL for OAuth redirect (e.g. "https://bot.koukeneko.cafe")
-	BaseURL string `json:"base_url"`
 }
 
 // SettingsStore reads and writes settings to a JSON file.

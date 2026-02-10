@@ -71,7 +71,7 @@ export function startGeminiOAuth(clientId?: string, clientSecret?: string): Prom
   return fetchJSON(`${BASE}/oauth/gemini/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: clientId ?? '', client_secret: clientSecret ?? '', origin: window.location.origin }),
+    body: JSON.stringify({ client_id: clientId ?? '', client_secret: clientSecret ?? '' }),
   })
 }
 

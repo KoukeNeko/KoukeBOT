@@ -727,7 +727,6 @@ func (h *Handlers) OAuthDetect(w http.ResponseWriter, r *http.Request) {
 type OAuthStartRequest struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
-	Origin       string `json:"origin"` // e.g. "https://example.com" — used to build redirect URL
 }
 
 type OAuthStartResponse struct {
@@ -754,15 +753,10 @@ func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		clientSecret = creds.ClientSecret
 	}
 
-	// Build redirect URL: settings BaseURL > request origin > fallback (localhost).
-	var redirectURL string
-	if s, err := h.settingsStore.Load(); err == nil && s.BaseURL != "" {
-		redirectURL = strings.TrimRight(s.BaseURL, "/") + "/api/oauth/gemini/callback"
-	} else if req.Origin != "" {
-		redirectURL = strings.TrimRight(req.Origin, "/") + "/api/oauth/gemini/callback"
-	}
-
-	authURL, err := h.oauthFlow.StartFlow(clientID, clientSecret, redirectURL)
+	// Always use the default loopback redirect URL (http://127.0.0.1:{port}/...).
+	// Gemini CLI credentials are Desktop type — Google only allows loopback redirects.
+	// For remote deployments, the user pastes the callback URL manually.
+	authURL, err := h.oauthFlow.StartFlow(clientID, clientSecret, "")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "start OAuth flow: "+err.Error())
 		return

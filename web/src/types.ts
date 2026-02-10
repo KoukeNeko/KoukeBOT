@@ -66,9 +66,6 @@ export interface SettingsData {
 
   // Discord logging settings
   log_channel_id?: string         // Discord channel ID for stdout logs
-
-  // Base URL for OAuth redirect
-  base_url?: string               // e.g. "https://bot.koukeneko.cafe"
 }
 
 export interface ModelEntry {
