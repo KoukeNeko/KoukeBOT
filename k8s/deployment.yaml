@@ -18,6 +18,8 @@ spec:
         app: kouke-bot
     spec:
       serviceAccountName: kouke-bot
+      imagePullSecrets:
+        - name: ghcr-secret # Ensure this secret exists if your image is private
       containers:
       - name: kouke-bot
         image: ghcr.io/koukeneko/koukebot:main
