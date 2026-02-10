@@ -29,3 +29,13 @@ h2 {
   font-weight: 700;
   color: #e8e8ff;
 }
+
+.responsive-container {
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .responsive-container {
+    padding: 0 1rem !important;
+  }
+}

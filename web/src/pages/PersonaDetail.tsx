@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { getPersona, updatePersona } from '../api'
 import type { PersonaDetail as PersonaDetailType, Anchor } from '../types'
 import EditorModal from '../components/EditorModal'
+import { useIsMobile } from '../hooks/useMediaQuery'
 
 export default function PersonaDetail() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const [persona, setPersona] = useState<PersonaDetailType | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -141,7 +144,15 @@ export default function PersonaDetail() {
 
   return (
     <div>
-      <div className="page-header" style={{ justifyContent: 'flex-end' }}>
+      <div className="page-header" style={{ justifyContent: isMobile ? 'space-between' : 'flex-end' }}>
+        {isMobile && (
+          <button className="btn-secondary" onClick={() => navigate('/personas')}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px', verticalAlign: 'text-bottom' }}>
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            Back
+          </button>
+        )}
         <button onClick={handleSave} disabled={saving || !dirty}>
           {saving ? 'Saving...' : 'Save'}
         </button>
@@ -162,7 +173,7 @@ export default function PersonaDetail() {
           <span>Description</span>
           <input value={meta.description} onChange={(e) => updateMeta('description', e.target.value)} />
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '0' : '1rem' }}>
           <label className="form-field">
             <span>Version</span>
             <input value={meta.version} onChange={(e) => updateMeta('version', e.target.value)} />
@@ -177,7 +188,7 @@ export default function PersonaDetail() {
       {/* Generation Config */}
       <section>
         <h3>Generation Config</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '0' : '1rem' }}>
           {(
             [
               ['temperature', 'Temperature'],
@@ -209,27 +220,29 @@ export default function PersonaDetail() {
           </button>
         </h3>
         {variables && Object.keys(variables).length > 0 ? (
-          <table>
-            <tbody>
-              {Object.entries(variables).map(([k, v]) => (
-                <tr key={k}>
-                  <td>{k}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <input
-                        style={{ flex: 1, background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', padding: '0.35rem 0.6rem', color: '#e0e0e0', fontSize: '0.85rem' }}
-                        value={String(v)}
-                        onChange={(e) => updateVariable(k, e.target.value)}
-                      />
-                      <button onClick={() => removeVariable(k)} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#f44' }}>
-                        Remove
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <tbody>
+                {Object.entries(variables).map(([k, v]) => (
+                  <tr key={k}>
+                    <td style={{ width: isMobile ? '100px' : '180px' }}>{k}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <input
+                          style={{ flex: 1, background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', padding: '0.35rem 0.6rem', color: '#e0e0e0', fontSize: '0.85rem', minWidth: 0 }}
+                          value={String(v)}
+                          onChange={(e) => updateVariable(k, e.target.value)}
+                        />
+                        <button onClick={() => removeVariable(k)} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#f44' }}>
+                          {isMobile ? '×' : 'Remove'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p className="meta">No variables defined.</p>
         )}
@@ -250,7 +263,7 @@ export default function PersonaDetail() {
               {a.tags?.map((t) => <span key={t} className="tag">{t}</span>)}
             </summary>
             <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '0.75rem' : '1rem' }}>
                 <label className="form-field">
                   <span>ID</span>
                   <input value={a.id} onChange={(e) => updateAnchor(i, 'id', e.target.value)} />

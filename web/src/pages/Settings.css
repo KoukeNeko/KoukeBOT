@@ -94,6 +94,30 @@
   margin-top: 1rem;
 }
 
+@media (max-width: 768px) {
+  .discord-permissions-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .tool-settings-indent {
+    padding-left: 1rem;
+  }
+
+  .oauth-credentials-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-section {
+    padding: 1rem;
+  }
+
+  .discord-min-permissions-list {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}
+
 .discord-permission-category-title {
   margin: 0 0 0.5rem;
   font-size: 0.8rem;

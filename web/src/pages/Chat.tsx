@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useNavigate, useParams } from 'react-router-dom'
 import { listPersonas, listConversations, getConversation, deleteConversation } from '../api'
 import type { PersonaSummary, ConversationSummary, Message } from '../types'
 import { SidebarList, SidebarItem } from '../components/SidebarList'
+import { useIsMobile } from '../hooks/useMediaQuery'
 
 export default function Chat() {
+  const navigate = useNavigate()
+  const { id: urlPersonaId } = useParams<{ id: string }>()
+  const isMobile = useIsMobile()
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [selectedConv, setSelectedConv] = useState<{ channelId: string; personaId: string } | null>(null)
@@ -25,6 +30,13 @@ export default function Chat() {
     loadPersonas()
     loadConversations()
   }, [])
+
+  // Sync selectedConv with URL if present
+  useEffect(() => {
+    if (urlPersonaId && (!selectedConv || selectedConv.personaId !== urlPersonaId)) {
+      setSelectedConv({ channelId: 'web-test', personaId: urlPersonaId })
+    }
+  }, [urlPersonaId])
 
   // Load selected conversation messages
   useEffect(() => {
@@ -78,6 +90,9 @@ export default function Chat() {
 
   const handleSelectConv = (channelId: string, personaId: string) => {
     setSelectedConv({ channelId, personaId })
+    if (isMobile) {
+      navigate(`/chat/${personaId}`)
+    }
   }
 
   const handleNewConv = () => {
@@ -86,7 +101,9 @@ export default function Chat() {
     setSelectedConv({ channelId, personaId: newConvPersonaId })
     setMessages([])
     setShowNewConvModal(false)
-    // Don't reload conversations yet - wait until first message is sent
+    if (isMobile) {
+      navigate(`/chat/${newConvPersonaId}`)
+    }
   }
 
   const handleDeleteConv = async (channelId: string, personaId: string, e: React.MouseEvent) => {
@@ -99,6 +116,7 @@ export default function Chat() {
       if (selectedConv?.channelId === channelId && selectedConv?.personaId === personaId) {
         setSelectedConv(null)
         setMessages([])
+        if (isMobile) navigate('/chat')
       }
     } catch (e) {
       console.error('Failed to delete conversation:', e)
@@ -392,393 +410,275 @@ export default function Chat() {
     return { source, color }
   }
 
+  const showList = !isMobile || !selectedConv
+  const showChat = !isMobile || selectedConv
+
   return (
     <div className="persona-layout">
       {/* Left sidebar: Conversation list */}
-      <SidebarList 
-        title="對話" 
-        onReload={() => {
-          loadPersonas()
-          loadConversations()
-        }}
-      >
-        <div style={{ padding: '0.75rem 1.25rem' }}>
-          <button 
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
-            onClick={() => setShowNewConvModal(true)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            新對話
-          </button>
-        </div>
-
-        {conversations.length === 0 && (
-          <p className="meta" style={{ padding: '1rem', textAlign: 'center' }}>
-            尚無對話記錄
-          </p>
-        )}
-        {conversations.map((conv) => {
-          const { source, color } = getConvSourceBadge(conv.channel_id)
-          return (
-            <SidebarItem
-              key={conv.id}
-              active={selectedConv?.channelId === conv.channel_id && selectedConv?.personaId === conv.persona_id}
-              onClick={() => handleSelectConv(conv.channel_id, conv.persona_id)}
-              title={conv.persona_name}
-              subtitle={
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '0.5rem' }}>
-                  <span
-                    style={{
-                      fontSize: '0.65rem',
-                      padding: '1px 5px',
-                      borderRadius: '4px',
-                      background: color,
-                      color: 'white',
-                      fontWeight: 500,
-                      opacity: 0.9,
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0
-                    }}
-                  >
-                    {source}
-                  </span>
-                  <span style={{ fontSize: '0.7rem', color: '#666', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    {formatRelativeTime(conv.last_timestamp)}
-                  </span>
-                </div>
-              }
-              description={conv.last_message || '無訊息'}
+      {showList && (
+        <SidebarList 
+          title="對話" 
+          onReload={() => {
+            loadPersonas()
+            loadConversations()
+          }}
+        >
+          <div style={{ padding: '0.75rem 1.25rem' }}>
+            <button 
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+              onClick={() => setShowNewConvModal(true)}
             >
-              <button
-                className="btn-icon"
-                title="刪除對話"
-                onClick={(e) => handleDeleteConv(conv.channel_id, conv.persona_id, e)}
-                style={{ padding: '4px', opacity: 0.6, marginLeft: 'auto' }}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              新對話
+            </button>
+          </div>
+
+          {conversations.length === 0 && (
+            <p className="meta" style={{ padding: '1rem', textAlign: 'center' }}>
+              尚無對話記錄
+            </p>
+          )}
+          {conversations.map((conv) => {
+            const { source, color } = getConvSourceBadge(conv.channel_id)
+            return (
+              <SidebarItem
+                key={conv.id}
+                active={selectedConv?.channelId === conv.channel_id && selectedConv?.personaId === conv.persona_id}
+                onClick={() => handleSelectConv(conv.channel_id, conv.persona_id)}
+                title={conv.persona_name}
+                subtitle={
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '0.5rem' }}>
+                    <span
+                      style={{
+                        fontSize: '0.65rem',
+                        padding: '1px 5px',
+                        borderRadius: '4px',
+                        background: color,
+                        color: 'white',
+                        fontWeight: 500,
+                        opacity: 0.9,
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      {source}
+                    </span>
+                    <span style={{ fontSize: '0.7rem', color: '#666', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      {formatRelativeTime(conv.last_timestamp)}
+                    </span>
+                  </div>
+                }
+                description={conv.last_message || '無訊息'}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="3 6 5 6 21 6"></polyline>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                </svg>
-              </button>
-            </SidebarItem>
-          )
-        })}
-      </SidebarList>
+                <button
+                  className="btn-icon"
+                  title="刪除對話"
+                  onClick={(e) => handleDeleteConv(conv.channel_id, conv.persona_id, e)}
+                  style={{ padding: '4px', opacity: 0.6, marginLeft: 'auto' }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+              </SidebarItem>
+            )
+          })}
+        </SidebarList>
+      )}
 
       {/* Right panel: Chat messages */}
-      <div className="persona-detail-col" style={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
-        <div className="chat-container">
-          {!selectedConv ? (
-            <div className="empty-state" style={{ flexDirection: 'column', gap: '1rem' }}>
-              <p>選擇一個對話或建立新對話開始聊天</p>
-              <button onClick={() => setShowNewConvModal(true)}>
-                建立新對話
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="chat-header">
-                <div>
-                  <h2>{getPersonaName(selectedConv.personaId)}</h2>
-                  <div className="meta">Channel: {selectedConv.channelId}</div>
-                </div>
+      {showChat && (
+        <div className="persona-detail-col" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1 }}>
+          <div className="chat-container">
+            {!selectedConv ? (
+              <div className="empty-state" style={{ flexDirection: 'column', gap: '1rem' }}>
+                <p>選擇一個對話或建立新對話開始聊天</p>
+                <button onClick={() => setShowNewConvModal(true)}>
+                  建立新對話
+                </button>
               </div>
+            ) : (
+              <>
+                <div className="chat-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    {isMobile && (
+                      <button className="btn-icon" onClick={() => { setSelectedConv(null); navigate('/chat'); }}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                      </button>
+                    )}
+                    <div>
+                      <h2 style={{ fontSize: isMobile ? '1.1rem' : '1.5rem' }}>{getPersonaName(selectedConv.personaId)}</h2>
+                      <div className="meta">Channel: {selectedConv.channelId}</div>
+                    </div>
+                  </div>
+                </div>
 
-              <div className="chat-messages">
-                {messages.length === 0 && (
-                  <p className="meta" style={{ textAlign: 'center', marginTop: '2rem' }}>
-                    發送訊息開始對話
-                  </p>
-                )}
-                                {messages.map((m, i) => {
-                                  const displayContent = m.display_text || m.content
-                                  const hasRawData = m.role === 'assistant' && (m.raw_llm_input || m.raw_llm_output)
-                                  const isRawExpanded = expandedRawData.has(i)
+                <div className="chat-messages">
+                  {messages.length === 0 && (
+                    <p className="meta" style={{ textAlign: 'center', marginTop: '2rem' }}>
+                      發送訊息開始對話
+                    </p>
+                  )}
+                  {messages.map((m, i) => {
+                    const displayContent = m.display_text || m.content
+                    const hasRawData = m.role === 'assistant' && (m.raw_llm_input || m.raw_llm_output)
+                    const isRawExpanded = expandedRawData.has(i)
 
-                                  // Parse tool usage annotation (split by "---" separator)
-                                  let mainContent = displayContent
-                                  let toolUsageAnnotation = ''
-                                  if (displayContent && displayContent.includes('\n---\n🔧')) {
-                                    const parts = displayContent.split('\n---\n')
-                                    mainContent = parts[0]
-                                    toolUsageAnnotation = '---\n' + parts.slice(1).join('\n---\n')
-                                  }
-                                  const hasToolUsage = toolUsageAnnotation.length > 0
-                                  const isToolExpanded = expandedToolUsage.has(i)
+                    // Parse tool usage annotation
+                    let mainContent = displayContent
+                    let toolUsageAnnotation = ''
+                    if (displayContent && displayContent.includes('\n---\n🔧')) {
+                      const parts = displayContent.split('\n---\n')
+                      mainContent = parts[0]
+                      toolUsageAnnotation = '---\n' + parts.slice(1).join('\n---\n')
+                    }
+                    const hasToolUsage = toolUsageAnnotation.length > 0
+                    const isToolExpanded = expandedToolUsage.has(i)
 
-                                  return (
-                                    <div key={i} className={`chat-bubble ${m.role}`}>
-                                      {/* Tool calls indicator */}
-                                      {m.tool_calls && m.tool_calls.length > 0 && (
-                                        <div style={{
-                                          background: 'rgba(66, 133, 244, 0.1)',
-                                          borderLeft: '3px solid #4285f4',
-                                          padding: '0.5rem',
-                                          marginBottom: '0.5rem',
-                                          borderRadius: '4px',
-                                          fontSize: '0.85rem'
-                                        }}>
-                                          🔍 {m.tool_calls.map(call => {
-                                            if (call.name === 'web_search') {
-                                              return `正在搜尋: ${call.input.query || '...'}`
-                                            }
-                                            return `使用工具: ${call.name}`
-                                          }).join(', ')}
-                                        </div>
-                                      )}
+                    return (
+                      <div key={i} className={`chat-bubble ${m.role}`}>
+                        {m.tool_calls && m.tool_calls.length > 0 && (
+                          <div style={{
+                            background: 'rgba(66, 133, 244, 0.1)',
+                            borderLeft: '3px solid #4285f4',
+                            padding: '0.5rem',
+                            marginBottom: '0.5rem',
+                            borderRadius: '4px',
+                            fontSize: '0.85rem'
+                          }}>
+                            🔍 {m.tool_calls.map(call => {
+                              if (call.name === 'web_search') {
+                                return `正在搜尋: ${call.input.query || '...'}`
+                              }
+                              return `使用工具: ${call.name}`
+                            }).join(', ')}
+                          </div>
+                        )}
 
-                                      {/* Message content (without tool annotation) */}
-                                      {mainContent && (
-                                        <div className="markdown-content">
-                                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{mainContent}</ReactMarkdown>
-                                        </div>
-                                      )}
+                        {mainContent && (
+                          <div className="markdown-content">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{mainContent}</ReactMarkdown>
+                          </div>
+                        )}
 
-                                      {/* Tool Usage Annotation (collapsible) */}
-                                      {hasToolUsage && (
-                                        <div style={{ marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.5rem' }}>
-                                          <button
-                                            onClick={() => {
-                                              const newSet = new Set(expandedToolUsage)
-                                              if (isToolExpanded) {
-                                                newSet.delete(i)
-                                              } else {
-                                                newSet.add(i)
-                                              }
-                                              setExpandedToolUsage(newSet)
-                                            }}
-                                            style={{
-                                              padding: '4px 8px',
-                                              fontSize: '0.75rem',
-                                              background: 'rgba(100,149,237,0.08)',
-                                              border: '1px solid rgba(100,149,237,0.2)',
-                                              borderRadius: '4px',
-                                              cursor: 'pointer',
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              gap: '0.25rem',
-                                              color: 'rgba(100,149,237,0.9)'
-                                            }}
-                                          >
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                              {isToolExpanded ? (
-                                                <polyline points="18 15 12 9 6 15"></polyline>
-                                              ) : (
-                                                <polyline points="6 9 12 15 18 9"></polyline>
-                                              )}
-                                            </svg>
-                                            {isToolExpanded ? '隱藏工具使用記錄' : '顯示工具使用記錄'}
-                                          </button>
+                        {hasToolUsage && (
+                          <div style={{ marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.5rem' }}>
+                            <button
+                              onClick={() => {
+                                const newSet = new Set(expandedToolUsage)
+                                if (isToolExpanded) newSet.delete(i)
+                                else newSet.add(i)
+                                setExpandedToolUsage(newSet)
+                              }}
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', width: 'auto' }}
+                            >
+                              {isToolExpanded ? '隱藏工具記錄' : '顯示工具記錄'}
+                            </button>
 
-                                          {isToolExpanded && (
-                                            <div style={{
-                                              marginTop: '0.5rem',
-                                              padding: '0.75rem',
-                                              background: 'rgba(100,149,237,0.05)',
-                                              borderRadius: '6px',
-                                              fontSize: '0.85rem',
-                                              color: 'rgba(255,255,255,0.85)',
-                                              border: '1px solid rgba(100,149,237,0.15)'
-                                            }}>
-                                              <div className="markdown-content">
-                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{toolUsageAnnotation}</ReactMarkdown>
-                                              </div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
+                            {isToolExpanded && (
+                              <div style={{
+                                marginTop: '0.5rem',
+                                padding: '0.75rem',
+                                background: 'rgba(100,149,237,0.05)',
+                                borderRadius: '6px',
+                                fontSize: '0.85rem'
+                              }}>
+                                <div className="markdown-content">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{toolUsageAnnotation}</ReactMarkdown>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
-                                      {/* Reply Button (visible on hover) */}
-                                      <button
-                                        onClick={() => handleReply(displayContent || '')}
-                                        className="btn-icon reply-btn"
-                                        title="引用回覆"
-                                      >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                          <polyline points="9 17 4 12 9 7"></polyline>
-                                          <path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>
-                                        </svg>
-                                      </button>
+                        <button
+                          onClick={() => handleReply(displayContent || '')}
+                          className="btn-icon reply-btn"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+                        </button>
 
-                                      {/* Raw LLM Data Toggle (only for assistant messages with raw data) */}
-                                      {hasRawData && (
-                                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.5rem' }}>
-                                          <button
-                                            onClick={() => {
-                                              const newSet = new Set(expandedRawData)
-                                              if (isRawExpanded) {
-                                                newSet.delete(i)
-                                              } else {
-                                                newSet.add(i)
-                                              }
-                                              setExpandedRawData(newSet)
-                                            }}
-                                            style={{
-                                              padding: '4px 8px',
-                                              fontSize: '0.75rem',
-                                              background: 'rgba(255,255,255,0.05)',
-                                              border: '1px solid rgba(255,255,255,0.1)',
-                                              borderRadius: '4px',
-                                              cursor: 'pointer',
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              gap: '0.25rem',
-                                              color: 'rgba(255,255,255,0.7)'
-                                            }}
-                                          >
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                              {isRawExpanded ? (
-                                                <polyline points="18 15 12 9 6 15"></polyline>
-                                              ) : (
-                                                <polyline points="6 9 12 15 18 9"></polyline>
-                                              )}
-                                            </svg>
-                                            {isRawExpanded ? '隱藏原始資料' : '顯示原始資料'}
-                                          </button>
+                        {hasRawData && (
+                          <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.5rem' }}>
+                            <button
+                              onClick={() => {
+                                const newSet = new Set(expandedRawData)
+                                if (isRawExpanded) newSet.delete(i)
+                                else newSet.add(i)
+                                setExpandedRawData(newSet)
+                              }}
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', width: 'auto' }}
+                            >
+                              {isRawExpanded ? '隱藏原始資料' : '顯示原始資料'}
+                            </button>
 
-                                          {isRawExpanded && (
-                                            <div style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
-                                              {m.raw_llm_input && (
-                                                <div style={{ marginBottom: '0.75rem' }}>
-                                                  <div style={{
-                                                    fontWeight: 600,
-                                                    marginBottom: '0.25rem',
-                                                    color: 'rgba(255,255,255,0.8)',
-                                                    fontSize: '0.8rem'
-                                                  }}>
-                                                    📥 LLM 輸入 (完整提示詞)
-                                                  </div>
-                                                  <pre style={{
-                                                    background: 'rgba(0,0,0,0.3)',
-                                                    padding: '0.5rem',
-                                                    borderRadius: '4px',
-                                                    overflow: 'auto',
-                                                    maxHeight: '300px',
-                                                    fontSize: '0.7rem',
-                                                    lineHeight: '1.4',
-                                                    color: 'rgba(255,255,255,0.7)',
-                                                    whiteSpace: 'pre-wrap',
-                                                    wordBreak: 'break-word'
-                                                  }}>
-                                                    {m.raw_llm_input}
-                                                  </pre>
-                                                </div>
-                                              )}
-                                              {m.raw_llm_output && (
-                                                <div>
-                                                  <div style={{
-                                                    fontWeight: 600,
-                                                    marginBottom: '0.25rem',
-                                                    color: 'rgba(255,255,255,0.8)',
-                                                    fontSize: '0.8rem'
-                                                  }}>
-                                                    📤 LLM 輸出 (原始回應)
-                                                  </div>
-                                                  <pre style={{
-                                                    background: 'rgba(0,0,0,0.3)',
-                                                    padding: '0.5rem',
-                                                    borderRadius: '4px',
-                                                    overflow: 'auto',
-                                                    maxHeight: '300px',
-                                                    fontSize: '0.7rem',
-                                                    lineHeight: '1.4',
-                                                    color: 'rgba(255,255,255,0.7)',
-                                                    whiteSpace: 'pre-wrap',
-                                                    wordBreak: 'break-word'
-                                                  }}>
-                                                    {m.raw_llm_output}
-                                                  </pre>
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )
-                                })}                                {sending && (
-                                  <div style={{ padding: '0.5rem 1rem', opacity: 0.7 }}>
-                                    <p className="meta" style={{ margin: 0, fontSize: '0.85rem' }}>Thinking...</p>
+                            {isRawExpanded && (
+                              <div style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
+                                {m.raw_llm_input && (
+                                  <div style={{ marginBottom: '0.75rem' }}>
+                                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>📥 LLM 輸入</div>
+                                    <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '0.5rem', borderRadius: '4px', overflow: 'auto', maxHeight: '200px', whiteSpace: 'pre-wrap' }}>
+                                      {m.raw_llm_input}
+                                    </pre>
                                   </div>
                                 )}
-                                <div ref={bottomRef} />              </div>
-
-              <div className="chat-input">
-                {/* Image preview */}
-                {selectedImages.length > 0 && (
-                  <div style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem', flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                    {selectedImages.map((img, idx) => (
-                      <div key={idx} style={{ position: 'relative', width: '80px', height: '80px' }}>
-                        <img
-                          src={URL.createObjectURL(img)}
-                          alt={`preview-${idx}`}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px' }}
-                        />
-                        <button
-                          onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== idx))}
-                          style={{
-                            position: 'absolute',
-                            top: '2px',
-                            right: '2px',
-                            padding: '2px 6px',
-                            fontSize: '12px',
-                            background: 'rgba(0,0,0,0.7)',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: 'white',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          ✕
-                        </button>
+                                {m.raw_llm_output && (
+                                  <div>
+                                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>📤 LLM 輸出</div>
+                                    <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '0.5rem', borderRadius: '4px', overflow: 'auto', maxHeight: '200px', whiteSpace: 'pre-wrap' }}>
+                                      {m.raw_llm_output}
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      if (e.target.files) {
-                        setSelectedImages(prev => [...prev, ...Array.from(e.target.files!)])
-                      }
-                    }}
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={sending}
-                    style={{ padding: '8px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    title="上傳圖片"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                    </svg>
-                  </button>
-                  <textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-                    disabled={sending}
-                    rows={2}
-                    style={{ flex: 1 }}
-                  />
-                  <button onClick={handleSend} disabled={sending || (!input.trim() && selectedImages.length === 0)} style={{ flexShrink: 0 }}>
-                    Send
-                  </button>
+                    )
+                  })}
+                  {sending && (
+                    <div style={{ padding: '0.5rem 1rem', opacity: 0.7 }}>
+                      <p className="meta" style={{ margin: 0, fontSize: '0.85rem' }}>Thinking...</p>
+                    </div>
+                  )}
+                  <div ref={bottomRef} />
                 </div>
-              </div>
-            </>
-          )}
+
+                <div className="chat-input">
+                  {selectedImages.length > 0 && (
+                    <div style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem', flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      {selectedImages.map((img, idx) => (
+                        <div key={idx} style={{ position: 'relative', width: '60px', height: '60px' }}>
+                          <img src={URL.createObjectURL(img)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px' }} />
+                          <button onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== idx))} style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#000', color: '#fff', borderRadius: '50%', border: 'none', width: '20px', height: '20px', cursor: 'pointer' }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '0.5rem', padding: '0.75rem 1rem', alignItems: 'flex-end' }}>
+                    <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => e.target.files && setSelectedImages(prev => [...prev, ...Array.from(e.target.files!)])} />
+                    <button onClick={() => fileInputRef.current?.click()} disabled={sending} className="btn-icon">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                    </button>
+                    <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Type a message..." disabled={sending} rows={1} style={{ flex: 1 }} />
+                    <button onClick={handleSend} disabled={sending || (!input.trim() && selectedImages.length === 0)} style={{ background: '#646cff', color: '#fff', border: 'none' }}>
+                      {isMobile ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> : 'Send'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* New conversation modal */}
       {showNewConvModal && (
