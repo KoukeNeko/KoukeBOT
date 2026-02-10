@@ -105,9 +105,9 @@ deploy() {
     print_info "Applying service..."
     kubectl apply -f service.yaml
 
-    # Apply network policies
-    print_info "Applying network policies..."
-    kubectl apply -f networkpolicy.yaml
+    # Apply network policies (removed for simplicity, add back if needed)
+    # print_info "Applying network policies..."
+    # kubectl apply -f networkpolicy.yaml
 
     # Apply PDB
     print_info "Applying pod disruption budget..."

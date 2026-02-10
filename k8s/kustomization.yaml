@@ -13,7 +13,6 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
-  - networkpolicy.yaml
   - poddisruptionbudget.yaml
   - hpa.yaml
 
