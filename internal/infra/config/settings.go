@@ -37,6 +37,10 @@ type Settings struct {
 	ContextFlushThreshold int  `json:"context_flush_threshold"` // Tokens before limit to trigger flush (default: 4000)
 	ContextWindowSize     int  `json:"context_window_size"`     // Effective context window size (default: 800000)
 
+	// Memory extraction settings (UI-visible, not yet wired to backend logic)
+	MemoryExtractionEnabled bool   `json:"memory_extraction_enabled"` // Enable automatic memory extraction after conversations
+	MemoryExtractionModel   string `json:"memory_extraction_model"`   // Model for memory extraction (e.g. "gemini-2.0-flash")
+
 	// Provider pool settings
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
 
