@@ -20,7 +20,7 @@ spec:
       serviceAccountName: kouke-bot
       containers:
       - name: kouke-bot
-        image: kouke-bot:latest
+        image: ghcr.io/koukeneko/koukebot:main
         imagePullPolicy: IfNotPresent
 
         ports:
