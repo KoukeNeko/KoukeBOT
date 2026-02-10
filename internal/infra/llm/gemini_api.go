@@ -86,6 +86,7 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 	go func() {
 		defer close(ch)
 
+		var lastTokenCount int
 		iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, genConfig)
 
 		for resp, err := range iter {
@@ -94,10 +95,14 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 				return
 			}
 
+			if resp.UsageMetadata != nil {
+				lastTokenCount = int(resp.UsageMetadata.TotalTokenCount)
+			}
+
 			// Check for function calls
 			toolCalls := extractFunctionCalls(resp)
 			if len(toolCalls) > 0 {
-				ch <- StreamChunk{ToolCalls: toolCalls, Done: true}
+				ch <- StreamChunk{ToolCalls: toolCalls, Done: true, TokensUsed: lastTokenCount}
 				return
 			}
 
@@ -107,7 +112,7 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 				ch <- StreamChunk{Content: text}
 			}
 		}
-		ch <- StreamChunk{Done: true}
+		ch <- StreamChunk{Done: true, TokensUsed: lastTokenCount}
 	}()
 
 	return ch, nil
@@ -121,6 +126,7 @@ func (g *GeminiAPIProvider) StreamChatMultimodal(ctx context.Context, systemProm
 	go func() {
 		defer close(ch)
 
+		var lastTokenCount int
 		iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, &genai.GenerateContentConfig{
 			SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
 			Temperature:       genai.Ptr(float32(config.temperature)),
@@ -135,12 +141,15 @@ func (g *GeminiAPIProvider) StreamChatMultimodal(ctx context.Context, systemProm
 				ch <- StreamChunk{Error: err, Done: true}
 				return
 			}
+			if resp.UsageMetadata != nil {
+				lastTokenCount = int(resp.UsageMetadata.TotalTokenCount)
+			}
 			text := extractText(resp)
 			if text != "" {
 				ch <- StreamChunk{Content: text}
 			}
 		}
-		ch <- StreamChunk{Done: true}
+		ch <- StreamChunk{Done: true, TokensUsed: lastTokenCount}
 	}()
 
 	return ch, nil

@@ -180,7 +180,11 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			if len(parsed.toolCalls) > 0 {
 				logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
 				logUsage(lastUsage)
-				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
+				tokens := 0
+				if lastUsage != nil {
+					tokens = lastUsage.TotalTokenCount
+				}
+				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true, TokensUsed: tokens}
 				return
 			}
 
@@ -197,7 +201,11 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			return
 		}
 		logCompletion(lastUsage, responsePreview, responseLen)
-		ch <- StreamChunk{Done: true}
+		tokens := 0
+		if lastUsage != nil {
+			tokens = lastUsage.TotalTokenCount
+		}
+		ch <- StreamChunk{Done: true, TokensUsed: tokens}
 	}()
 
 	return ch, nil
@@ -255,7 +263,11 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 			if len(parsed.toolCalls) > 0 {
 				logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
 				logUsage(lastUsage)
-				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true}
+				mmTokens := 0
+				if lastUsage != nil {
+					mmTokens = lastUsage.TotalTokenCount
+				}
+				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true, TokensUsed: mmTokens}
 				return
 			}
 
@@ -272,7 +284,11 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 			return
 		}
 		logCompletion(lastUsage, responsePreview, responseLen)
-		ch <- StreamChunk{Done: true}
+		tokens := 0
+		if lastUsage != nil {
+			tokens = lastUsage.TotalTokenCount
+		}
+		ch <- StreamChunk{Done: true, TokensUsed: tokens}
 	}()
 
 	return ch, nil

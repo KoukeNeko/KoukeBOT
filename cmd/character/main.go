@@ -40,7 +40,6 @@ var (
 	logTools   = logger.New("tools", logger.Green)
 	logDiscord = logger.New("discord", logger.Magenta)
 	logHTTP    = logger.New("http", logger.Blue)
-	logMemory  = logger.New("memory", logger.Green)
 )
 
 func main() {
@@ -82,43 +81,6 @@ func run() error {
 
 	initProvider(ctx, settings, providerManager, model, port)
 
-	// Init memory extraction provider (dedicated model, separate from main conversation)
-	var memoryExtractor *app.MemoryExtractor
-	if settings.MemoryExtractionEnabled {
-		extractionModel := settings.MemoryExtractionModel
-		if extractionModel == "" {
-			extractionModel = "gemini-2.0-flash"
-		}
-		if settings.GeminiAPIKey != "" {
-			// Dedicated provider with API key
-			extractionProvider, err := llm.NewGeminiAPIProvider(ctx, settings.GeminiAPIKey, extractionModel)
-			if err != nil {
-				logMemory.Warnf("API extraction provider failed: %v", err)
-			} else {
-				memoryExtractor = app.NewMemoryExtractor(extractionProvider, personasDir)
-				logMemory.Logf("enabled (api-key, model: %s)", extractionModel)
-			}
-		}
-		// Try OAuth pool if no extractor yet
-		if memoryExtractor == nil {
-			extractionProvider := initOAuthExtractionProvider(ctx, extractionModel)
-			if extractionProvider != nil {
-				memoryExtractor = app.NewMemoryExtractor(extractionProvider, personasDir)
-				logMemory.Logf("enabled (oauth, model: %s)", extractionModel)
-			}
-		}
-		// Final fallback: use main provider (same model as conversation)
-		if memoryExtractor == nil && providerManager.IsConfigured() {
-			memoryExtractor = app.NewMemoryExtractor(providerManager, personasDir)
-			logMemory.Logf("enabled (main provider fallback)")
-		}
-		if memoryExtractor == nil {
-			logMemory.Warnf("enabled but no provider available — disabled")
-		}
-	} else {
-		logMemory.Log("disabled")
-	}
-
 	// Init core services
 	convStore, err := store.NewFileStore("data/conversations")
 	if err != nil {
@@ -148,8 +110,16 @@ func run() error {
 		providerManager.RegisterTools(tools)
 	}
 
+	// Init context manager (OpenClaw-style pre-compaction memory flush)
+	var contextManager *app.ContextManager
+	if settings.ContextFlushEnabled {
+		contextManager = app.NewContextManager(settings.ContextFlushThreshold, settings.ContextWindowSize)
+		logSystem.Logf("context flush enabled (threshold: %d, window: %d)",
+			settings.ContextFlushThreshold, settings.ContextWindowSize)
+	}
+
 	assembler := app.NewContextAssembler()
-	chatService := app.NewChatService(providerManager, assembler, convStore, imageStore, 0, personaService.GetAll(), tools, memoryExtractor)
+	chatService := app.NewChatService(providerManager, assembler, convStore, imageStore, 0, personaService.GetAll(), tools, contextManager)
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	if settings.DiscordToken != "" {
@@ -202,12 +172,6 @@ func resolveSettings(settingsStore *config.SettingsStore) config.Settings {
 	}
 	if envToken := os.Getenv("DISCORD_TOKEN"); envToken != "" {
 		settings.DiscordToken = envToken
-	}
-
-	// Default: enable memory extraction if not explicitly configured
-	// (JSON zero value for bool is false, so first-run users get it enabled)
-	if settings.GeminiAPIKey != "" && !settings.MemoryExtractionEnabled && settings.MemoryExtractionModel == "" {
-		settings.MemoryExtractionEnabled = true
 	}
 
 	return settings
@@ -300,34 +264,6 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 	pm.Update(pool)
 	logLLM.Logf("OAuth pool: %d account(s) (model: %s)", pool.Size(), model)
 	return true
-}
-
-// initOAuthExtractionProvider creates a single OAuth provider with the specified model
-// for memory extraction. Uses the first available token from the pool.
-func initOAuthExtractionProvider(ctx context.Context, model string) llm.Provider {
-	llm.MigrateSingleTokenToPool(oauthTokenPath, oauthPoolPath)
-
-	tokens, err := llm.LoadOAuthPool(oauthPoolPath)
-	if err != nil || len(tokens) == 0 {
-		oauthData, err := llm.LoadStoredToken(oauthTokenPath)
-		if err != nil || oauthData == nil {
-			return nil
-		}
-		tokens = []*llm.OAuthTokenData{oauthData}
-	}
-
-	// Use first available token
-	for _, tokenData := range tokens {
-		if err := llm.RefreshIfNeeded(ctx, tokenData, oauthTokenPath); err != nil {
-			continue
-		}
-		provider, err := llm.NewGeminiOAuthProvider(ctx, tokenData, model)
-		if err != nil {
-			continue
-		}
-		return provider
-	}
-	return nil
 }
 
 func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore, providerManager *app.ProviderManager) (*discordbot.Bot, error) {

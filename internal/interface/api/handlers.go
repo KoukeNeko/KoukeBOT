@@ -444,28 +444,30 @@ type SettingsResponse struct {
 	Timezone                 string `json:"timezone"`           // OpenClaw 相容
 	TimeFormat               string `json:"time_format"`        // OpenClaw 相容
 	Location                 string `json:"location"`           // OpenClaw 相容
-	MemoryExtractionEnabled  bool   `json:"memory_extraction_enabled"`
-	MemoryExtractionModel    string `json:"memory_extraction_model"`
-	LogChannelID             string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	ContextFlushEnabled   bool `json:"context_flush_enabled"`
+	ContextFlushThreshold int  `json:"context_flush_threshold"`
+	ContextWindowSize     int  `json:"context_window_size"`
+	LogChannelID          string `json:"log_channel_id"` // Discord channel ID for stdout logs
 }
 
 type SettingsUpdateRequest struct {
-	GeminiAPIKey             string `json:"gemini_api_key"`
-	GeminiModel              string `json:"gemini_model"`
-	DiscordToken             string `json:"discord_token"`
-	ProviderType             string `json:"provider_type"`
-	BraveAPIKey              string `json:"brave_api_key"`
-	WebSearchEnabled         *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
-	DiscordUseReply          *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
-	PerplexityAPIKey         string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider           string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled          *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone                 string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat               string `json:"time_format"`        // OpenClaw 相容
-	Location                 string `json:"location"`           // OpenClaw 相容
-	MemoryExtractionEnabled  *bool  `json:"memory_extraction_enabled"`
-	MemoryExtractionModel    string `json:"memory_extraction_model"`
-	LogChannelID             string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	GeminiAPIKey          string `json:"gemini_api_key"`
+	GeminiModel           string `json:"gemini_model"`
+	DiscordToken          string `json:"discord_token"`
+	ProviderType          string `json:"provider_type"`
+	BraveAPIKey           string `json:"brave_api_key"`
+	WebSearchEnabled      *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
+	DiscordUseReply       *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
+	PerplexityAPIKey      string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider        string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled       *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone              string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat            string `json:"time_format"`        // OpenClaw 相容
+	Location              string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled   *bool  `json:"context_flush_enabled"`
+	ContextFlushThreshold *int   `json:"context_flush_threshold"`
+	ContextWindowSize     *int   `json:"context_window_size"`
+	LogChannelID          string `json:"log_channel_id"` // Discord channel ID for stdout logs
 }
 
 type ProviderStatusResponse struct {
@@ -501,9 +503,10 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		Timezone:                settings.Timezone,
 		TimeFormat:              settings.TimeFormat,
 		Location:                settings.Location,
-		MemoryExtractionEnabled: settings.MemoryExtractionEnabled,
-		MemoryExtractionModel:   settings.MemoryExtractionModel,
-		LogChannelID:            settings.LogChannelID,
+		ContextFlushEnabled:   settings.ContextFlushEnabled,
+		ContextFlushThreshold: settings.ContextFlushThreshold,
+		ContextWindowSize:     settings.ContextWindowSize,
+		LogChannelID:          settings.LogChannelID,
 	})
 }
 
@@ -554,11 +557,16 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	existing.Timezone = req.Timezone
 	existing.TimeFormat = req.TimeFormat
 	existing.Location = req.Location
-	// Memory extraction settings
-	if req.MemoryExtractionEnabled != nil {
-		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
+	// Context flush settings
+	if req.ContextFlushEnabled != nil {
+		existing.ContextFlushEnabled = *req.ContextFlushEnabled
 	}
-	existing.MemoryExtractionModel = req.MemoryExtractionModel
+	if req.ContextFlushThreshold != nil {
+		existing.ContextFlushThreshold = *req.ContextFlushThreshold
+	}
+	if req.ContextWindowSize != nil {
+		existing.ContextWindowSize = *req.ContextWindowSize
+	}
 	// Discord logging settings
 	existing.LogChannelID = req.LogChannelID
 

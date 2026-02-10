@@ -31,12 +31,18 @@ type Message struct {
 
 // Conversation tracks the full dialogue state for a channel-persona pair.
 type Conversation struct {
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channel_id"`
-	PersonaID string    `json:"persona_id"`
-	Messages  []Message `json:"messages"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	ChannelID        string    `json:"channel_id"`
+	PersonaID        string    `json:"persona_id"`
+	Messages         []Message `json:"messages"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	CumulativeTokens int       `json:"cumulative_tokens"` // Running total for context window tracking
+}
+
+// UpdateTokenUsage adds the token count from a turn to the cumulative total.
+func (c *Conversation) UpdateTokenUsage(tokens int) {
+	c.CumulativeTokens += tokens
 }
 
 // AppendUserMessage adds a user message and updates the timestamp.

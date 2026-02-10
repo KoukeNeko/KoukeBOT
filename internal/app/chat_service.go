@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
@@ -23,7 +24,7 @@ type ChatService struct {
 	imageHistoryTurns  int              // how many recent user turns to load images for (default 3)
 	personas           map[string]*domain.PersonaModule
 	toolRegistry       map[string]domain.Tool // tool name → tool instance
-	memoryExtractor    *MemoryExtractor       // automatic post-response memory extraction (nil = disabled)
+	contextManager     *ContextManager        // pre-compaction memory flush (nil = disabled)
 }
 
 func NewChatService(
@@ -34,7 +35,7 @@ func NewChatService(
 	imageHistoryTurns int, // 0 → default 3
 	personas map[string]*domain.PersonaModule,
 	tools []domain.Tool,
-	memoryExtractor *MemoryExtractor, // nil = disabled
+	contextManager *ContextManager, // nil = disabled
 ) *ChatService {
 	if imageHistoryTurns <= 0 {
 		imageHistoryTurns = 3
@@ -54,7 +55,7 @@ func NewChatService(
 		imageHistoryTurns: imageHistoryTurns,
 		personas:          personas,
 		toolRegistry:      toolRegistry,
-		memoryExtractor:   memoryExtractor,
+		contextManager:    contextManager,
 	}
 }
 
@@ -123,6 +124,13 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
+	// Pre-flight: flush memory and compact history if approaching context limit
+	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
+		if err := s.executeMemoryFlush(ctx, conv, persona); err != nil {
+			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
+		}
+	}
+
 	// If history has recent images, delegate to the multimodal path (no new images, but load from history)
 	if s.imageStore != nil && s.historyHasRecentImages(conv) {
 		return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, nil)
@@ -176,6 +184,13 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
+	// Pre-flight: flush memory and compact history if approaching context limit
+	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
+		if err := s.executeMemoryFlush(ctx, conv, persona); err != nil {
+			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
+		}
+	}
+
 	// Save only direct attachment images to disk (not context images)
 	var imageRefs []domain.ImageRef
 	if s.imageStore != nil && len(images) > 0 {
@@ -202,6 +217,130 @@ func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, e
 		return nil, fmt.Errorf("persona %q not found", personaID)
 	}
 	return persona, nil
+}
+
+// executeMemoryFlush performs a silent turn: asks the agent to save important
+// memories via file tools, then compacts history. Invisible to the user.
+func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conversation, persona *domain.PersonaModule) error {
+	logChat.Log("executing pre-compaction memory flush...")
+
+	flushPrompt := fmt.Sprintf(
+		"SYSTEM: Context window approaching limit. Review this conversation and save important information:\n"+
+			"- User facts → user.md (file_write)\n"+
+			"- Relationship context, ongoing projects → memory/MEMORY.md (file_write)\n"+
+			"- Today's session notes → memory/%s.md (file_append)\n\n"+
+			"After updating files (or if nothing needs storing), reply with exactly: NO_REPLY\n"+
+			"This message will not be shown to the user.",
+		time.Now().Format("2006-01-02"),
+	)
+
+	// Temporarily append flush prompt for context assembly
+	conv.AppendUserMessage(flushPrompt)
+	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+	if err != nil {
+		conv.Messages = conv.Messages[:len(conv.Messages)-1]
+		return fmt.Errorf("assemble flush context: %w", err)
+	}
+
+	// Use streaming to support tool calls during flush
+	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
+		SystemPrompt: assembled.SystemPrompt,
+		Messages:     assembled.Messages,
+		Generation:   assembled.Generation,
+	})
+	if err != nil {
+		conv.Messages = conv.Messages[:len(conv.Messages)-1]
+		return fmt.Errorf("flush LLM call: %w", err)
+	}
+
+	// Consume stream, handle tool calls (up to 3 rounds)
+	const maxFlushRounds = 3
+	var flushResponse string
+	for round := 0; round <= maxFlushRounds; round++ {
+		var pendingToolCalls []domain.ToolCall
+		flushResponse = ""
+
+		for chunk := range streamCh {
+			if len(chunk.ToolCalls) > 0 {
+				pendingToolCalls = chunk.ToolCalls
+				continue
+			}
+			if chunk.Error != nil {
+				conv.Messages = conv.Messages[:len(conv.Messages)-1]
+				return fmt.Errorf("flush stream error: %w", chunk.Error)
+			}
+			flushResponse += chunk.Content
+		}
+
+		if len(pendingToolCalls) == 0 {
+			break
+		}
+		if round == maxFlushRounds {
+			break
+		}
+
+		// Execute tools (file_write, file_append)
+		names := make([]string, len(pendingToolCalls))
+		for i, c := range pendingToolCalls {
+			names[i] = c.Name
+		}
+		logChat.Logf("flush tool calls: %s", strings.Join(names, ", "))
+
+		toolResults := s.executeTools(ctx, pendingToolCalls)
+		toolResultsText := formatToolResults(pendingToolCalls, toolResults)
+
+		// Append tool exchange to conversation for next round
+		conv.AppendAssistantMessage("[Memory flush tool calls]")
+		conv.Messages = append(conv.Messages, domain.Message{
+			Role:    domain.RoleUser,
+			Content: toolResultsText,
+		})
+
+		// Continue conversation with tool results
+		assembled, err = s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+		if err != nil {
+			break
+		}
+		streamCh, err = s.provider.StreamChat(ctx, llm.ChatRequest{
+			SystemPrompt: assembled.SystemPrompt,
+			Messages:     assembled.Messages,
+			Generation:   assembled.Generation,
+		})
+		if err != nil {
+			break
+		}
+	}
+
+	// Remove all flush-related messages from history (invisible to user)
+	// Find and remove everything after the original conversation
+	// The flush prompt was appended, so we need to remove it and any tool exchanges
+	msgCount := len(conv.Messages)
+	// Walk backwards to find the flush prompt (first message we added)
+	for i := msgCount - 1; i >= 0; i-- {
+		if conv.Messages[i].Content == flushPrompt {
+			conv.Messages = conv.Messages[:i]
+			break
+		}
+	}
+
+	// Check response
+	trimmed := strings.TrimSpace(flushResponse)
+	if trimmed == "NO_REPLY" || trimmed == "[NO_REPLY]" {
+		logChat.Log("flush complete: no memories to store")
+	} else {
+		logChat.Logf("flush complete: agent responded (%d chars)", len(trimmed))
+	}
+
+	// Compact history
+	s.contextManager.CompactHistory(conv)
+
+	// Persist compacted conversation
+	if err := s.store.Save(ctx, conv); err != nil {
+		return fmt.Errorf("save after flush: %w", err)
+	}
+
+	logChat.Log("memory flush and compaction done")
+	return nil
 }
 
 // executeTools executes a list of tool calls and returns the results
@@ -271,6 +410,7 @@ func (s *ChatService) handleToolCallingStream(
 		const maxToolRounds = 3
 		var allToolCalls []domain.ToolCall
 		var allToolResultsText string
+		var totalTokens int
 
 		currentStream := streamCh
 		var fullResponse string
@@ -281,6 +421,9 @@ func (s *ChatService) handleToolCallingStream(
 
 			// Consume stream
 			for chunk := range currentStream {
+				if chunk.TokensUsed > 0 {
+					totalTokens += chunk.TokensUsed
+				}
 				if len(chunk.ToolCalls) > 0 {
 					pendingToolCalls = chunk.ToolCalls
 					outputCh <- chunk
@@ -378,6 +521,12 @@ func (s *ChatService) handleToolCallingStream(
 			}
 		}
 
+		// Update token tracking
+		if totalTokens > 0 {
+			conv.UpdateTokenUsage(totalTokens)
+			logChat.Logf("tokens: +%d (cumulative: %d)", totalTokens, conv.CumulativeTokens)
+		}
+
 		// Save conversation and emit final signals
 		if len(allToolCalls) > 0 {
 			// Tool calls were executed — append annotation and save
@@ -398,10 +547,6 @@ func (s *ChatService) handleToolCallingStream(
 			conv.AppendAssistantMessageWithRaw(finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
 			_ = s.store.Save(ctx, conv)
 
-			// Fire background memory extraction (invisible to user)
-			if s.memoryExtractor != nil {
-				go s.memoryExtractor.Process(context.Background(), persona.DirName, messageToStore, fullResponse, persona)
-			}
 		} else {
 			// No tool calls - store conversation normally with raw LLM data
 			if fullResponse != "" || messageToStore != "" {
@@ -412,11 +557,6 @@ func (s *ChatService) handleToolCallingStream(
 				}
 				conv.AppendAssistantMessageWithRaw(fullResponse, rawLLMInput, fullResponse)
 				_ = s.store.Save(ctx, conv)
-
-				// Fire background memory extraction (invisible to user)
-				if s.memoryExtractor != nil {
-					go s.memoryExtractor.Process(context.Background(), persona.DirName, messageToStore, fullResponse, persona)
-				}
 			}
 		}
 
@@ -654,3 +794,4 @@ func truncateLog(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
+

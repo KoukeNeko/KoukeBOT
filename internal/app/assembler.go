@@ -110,9 +110,13 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule) (st
 	buf.WriteString("- Only call `session_status` when you need the precise current time, not for every response.\n")
 	buf.WriteString("\n")
 	buf.WriteString("### Memory System\n\n")
-	buf.WriteString("Your memory (user.md, MEMORY.md, daily logs) is managed automatically after each exchange.\n")
-	buf.WriteString("You do NOT need to proactively call `file_write` or `file_append` to update memory.\n")
-	buf.WriteString("If the user explicitly asks you to remember something specific, you may still use file tools to confirm.\n")
+	buf.WriteString("You maintain three tiers of memory:\n")
+	buf.WriteString("- **user.md**: User profile (name, preferences, personality, habits)\n")
+	buf.WriteString("- **MEMORY.md**: Long-term context (projects, relationship dynamics, shared history)\n")
+	buf.WriteString("- **Daily logs**: Session notes (memory/YYYY-MM-DD.md)\n\n")
+	buf.WriteString("Proactively use `file_write` to update user.md or MEMORY.md when learning important information about the user.\n")
+	buf.WriteString("Use `file_append` to add notes to today's daily log throughout the conversation.\n")
+	buf.WriteString("When context approaches limits, you'll be prompted to consolidate memories before compaction.\n")
 
 	return buf.String(), nil
 }

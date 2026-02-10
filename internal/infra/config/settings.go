@@ -32,9 +32,10 @@ type Settings struct {
 	TimeFormat string `json:"time_format"` // "auto", "12", "24"
 	Location   string `json:"location"`    // Optional: explicit location "台北, 台灣"
 
-	// Memory extraction settings
-	MemoryExtractionEnabled bool   `json:"memory_extraction_enabled"` // Enable automatic post-response memory extraction
-	MemoryExtractionModel   string `json:"memory_extraction_model"`   // Model for extraction (default: "gemini-2.0-flash")
+	// Context management settings (OpenClaw-style memory flush)
+	ContextFlushEnabled   bool `json:"context_flush_enabled"`   // Enable pre-compaction memory flush (default: true)
+	ContextFlushThreshold int  `json:"context_flush_threshold"` // Tokens before limit to trigger flush (default: 4000)
+	ContextWindowSize     int  `json:"context_window_size"`     // Effective context window size (default: 800000)
 
 	// Provider pool settings
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
