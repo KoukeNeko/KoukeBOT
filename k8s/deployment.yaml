@@ -20,6 +20,15 @@ spec:
       serviceAccountName: kouke-bot
       imagePullSecrets:
         - name: ghcr-secret # Ensure this secret exists if your image is private
+      initContainers:
+      - name: fix-permissions
+        image: alpine:latest
+        command: ["sh", "-c", "chown -R 1000:1000 /app/data"]
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        securityContext:
+          runAsUser: 0
       containers:
       - name: kouke-bot
         image: ghcr.io/koukeneko/koukebot:main
