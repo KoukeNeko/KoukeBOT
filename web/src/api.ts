@@ -75,6 +75,14 @@ export function startGeminiOAuth(clientId?: string, clientSecret?: string): Prom
   })
 }
 
+export function submitOAuthCallback(callbackUrl: string): Promise<{ email: string; status: string }> {
+  return fetchJSON(`${BASE}/oauth/gemini/callback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_url: callbackUrl }),
+  })
+}
+
 export function getOAuthStatus(): Promise<OAuthStatus> {
   return fetchJSON(`${BASE}/oauth/gemini/status`)
 }

@@ -139,7 +139,7 @@ func run() error {
 	}
 
 	// Init OAuth flow for Gemini CLI auth
-	oauthRedirectURL := "http://localhost:" + port + "/api/oauth/gemini/callback"
+	oauthRedirectURL := "http://127.0.0.1:" + port + "/api/oauth/gemini/callback"
 	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthPoolPath, oauthRedirectURL)
 
 	// Start HTTP API server

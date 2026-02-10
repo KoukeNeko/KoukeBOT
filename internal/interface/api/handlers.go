@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
@@ -770,21 +771,11 @@ func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, OAuthStartResponse{AuthURL: authURL})
 }
 
-func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state")
-
-	if code == "" {
-		http.Error(w, "missing authorization code", http.StatusBadRequest)
-		return
-	}
-
+// completeOAuthCallback is the shared logic for both automatic and manual OAuth callbacks.
+func (h *Handlers) completeOAuthCallback(code, state string) (email string, err error) {
 	tokenData, err := h.oauthFlow.HandleCallback(h.ctx, code, state)
 	if err != nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `<!doctype html><html><body><h2>OAuth Failed</h2><p>%s</p></body></html>`, err.Error())
-		return
+		return "", fmt.Errorf("token exchange: %w", err)
 	}
 
 	model := "gemini-2.5-pro"
@@ -794,13 +785,9 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
 	if err != nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `<!doctype html><html><body><h2>Provider Creation Failed</h2><p>%s</p></body></html>`, err.Error())
-		return
+		return "", fmt.Errorf("provider creation: %w", err)
 	}
 
-	// Add to pool (or create pool if provider is not yet a pool)
 	pool := h.providerManager.GetPool()
 	if pool == nil {
 		pool = app.NewProviderPool()
@@ -810,17 +797,66 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	logAPI.Logf("OAuth account added to pool: %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
-	// Persist provider_type = oauth.
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
 		s.ProviderType = config.ProviderOAuth
 		_ = h.settingsStore.Save(s)
+	}
+
+	return tokenData.Email, nil
+}
+
+// OAuthCallback handles the automatic redirect from Google (GET).
+func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	if code == "" {
+		http.Error(w, "missing authorization code", http.StatusBadRequest)
+		return
+	}
+
+	email, err := h.completeOAuthCallback(code, state)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `<!doctype html><html><body><h2>OAuth Failed</h2><p>%s</p></body></html>`, err.Error())
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"/></head>`+
 		`<body><h2>Gemini OAuth Complete</h2>`+
 		`<p>Account <b>%s</b> added to pool. You can close this window and return to KoukeBOT.</p>`+
-		`<script>window.close()</script></body></html>`, tokenData.Email)
+		`<script>window.close()</script></body></html>`, email)
+}
+
+// OAuthCallbackManual handles the paste-URL fallback for remote deployments (POST).
+// The user pastes the localhost callback URL from the browser address bar.
+func (h *Handlers) OAuthCallbackManual(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CallbackURL string `json:"callback_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	parsed, err := url.Parse(req.CallbackURL)
+	if err != nil || parsed.Query().Get("code") == "" {
+		writeError(w, http.StatusBadRequest, "invalid callback URL: missing code parameter")
+		return
+	}
+
+	code := parsed.Query().Get("code")
+	state := parsed.Query().Get("state")
+
+	email, err := h.completeOAuthCallback(code, state)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"email": email, "status": "ok"})
 }
 
 type OAuthStatusResponse struct {

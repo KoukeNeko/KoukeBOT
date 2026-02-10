@@ -65,6 +65,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("POST /api/oauth/gemini/detect", r.handlers.OAuthDetect)
 	r.mux.HandleFunc("POST /api/oauth/gemini/start", r.handlers.OAuthStart)
 	r.mux.HandleFunc("GET /api/oauth/gemini/callback", r.handlers.OAuthCallback)
+	r.mux.HandleFunc("POST /api/oauth/gemini/callback", r.handlers.OAuthCallbackManual)
 	r.mux.HandleFunc("GET /api/oauth/gemini/status", r.handlers.OAuthStatus)
 
 	// OAuth Pool

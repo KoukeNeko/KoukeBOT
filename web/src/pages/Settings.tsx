@@ -5,6 +5,7 @@ import {
   getProviderStatus,
   detectGeminiCLI,
   startGeminiOAuth,
+  submitOAuthCallback,
   getOAuthStatus,
   getOAuthPool,
   removeOAuthPoolAccount,
@@ -62,6 +63,8 @@ export default function Settings() {
   const [manualClientID, setManualClientID] = useState("");
   const [manualClientSecret, setManualClientSecret] = useState("");
   const [oauthStarting, setOAuthStarting] = useState(false);
+  const [callbackUrl, setCallbackUrl] = useState("");
+  const [submittingCallback, setSubmittingCallback] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [addAccountOpen, setAddAccountOpen] = useState(false);
 
@@ -213,6 +216,32 @@ export default function Settings() {
         text: e instanceof Error ? e.message : "OAuth start failed",
       });
       setOAuthStarting(false);
+    }
+  };
+
+  const handleManualCallback = async () => {
+    if (!callbackUrl.trim()) return;
+    setSubmittingCallback(true);
+    setMessage(null);
+    try {
+      const result = await submitOAuthCallback(callbackUrl.trim());
+      // Stop polling if active.
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      await refreshPool();
+      const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
+      setOAuthStatus(oauth);
+      setStatus(st);
+      setMessage({ type: "ok", text: `OAuth 認證成功！已新增 ${result.email}` });
+      setOAuthStarting(false);
+      setAddAccountOpen(false);
+      setCallbackUrl("");
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "Callback 提交失敗" });
+    } finally {
+      setSubmittingCallback(false);
     }
   };
 
@@ -532,9 +561,35 @@ export default function Settings() {
                 {oauthStarting ? "Waiting for authorization..." : "Login with Google"}
               </button>
               {oauthStarting && (
-                <p className="meta oauth-meta">
-                  Complete the authorization in the popup window...
-                </p>
+                <div className="oauth-manual-callback">
+                  <p className="meta oauth-meta">
+                    在彈出視窗中完成 Google 授權...
+                  </p>
+                  <details style={{ marginTop: "0.75rem" }}>
+                    <summary className="meta" style={{ cursor: "pointer" }}>
+                      遠端部署？彈出視窗無法連線？點此手動貼回 URL
+                    </summary>
+                    <div style={{ marginTop: "0.5rem" }}>
+                      <p className="hint" style={{ marginBottom: "0.5rem" }}>
+                        如果彈出視窗顯示「無法連線」錯誤，請複製瀏覽器網址列中的完整 URL（包含 <code>code=</code> 參數），貼到下方：
+                      </p>
+                      <input
+                        type="text"
+                        value={callbackUrl}
+                        onChange={(e) => setCallbackUrl(e.target.value)}
+                        placeholder="http://127.0.0.1:8080/api/oauth/gemini/callback?code=...&state=..."
+                        style={{ width: "100%", marginBottom: "0.5rem" }}
+                      />
+                      <button
+                        onClick={handleManualCallback}
+                        disabled={submittingCallback || !callbackUrl.trim()}
+                        className="btn-secondary"
+                      >
+                        {submittingCallback ? "提交中..." : "提交 Callback URL"}
+                      </button>
+                    </div>
+                  </details>
+                </div>
               )}
             </div>
           </div>
