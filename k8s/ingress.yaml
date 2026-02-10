@@ -11,7 +11,7 @@ metadata:
     # cert-manager.io/cluster-issuer: letsencrypt-prod
     # nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
-  ingressClassName: nginx  # Change based on your ingress controller
+  ingressClassName: traefik  # Change based on your ingress controller
   rules:
   - host: bot.koukeneko.cafe  # Change to your domain
     http:
