@@ -18,7 +18,7 @@ spec:
   - from:
     - namespaceSelector:
         matchLabels:
-          name: ingress-nginx  # Adjust based on your ingress namespace
+          kubernetes.io/metadata.name: kube-system  # Adjust based on your ingress namespace
     ports:
     - protocol: TCP
       port: 8080
