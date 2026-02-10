@@ -162,53 +162,20 @@ export default function Settings() {
     }
   };
 
+  const [authUrl, setAuthUrl] = useState("");
+
   const handleOAuthLogin = async () => {
     setOAuthStarting(true);
     setMessage(null);
+    setAuthUrl("");
+    setCallbackUrl("");
     try {
       const clientId = manualClientID || undefined;
       const clientSecret = manualClientSecret || undefined;
       const result = await startGeminiOAuth(clientId, clientSecret);
 
-      // Open auth URL in popup.
-      window.open(result.auth_url, "gemini-oauth", "width=600,height=700");
-
-      // Poll for completion.
-      pollRef.current = setInterval(async () => {
-        try {
-          const [oauth, st] = await Promise.all([
-            getOAuthStatus(),
-            getProviderStatus(),
-          ]);
-          setOAuthStatus(oauth);
-          setStatus(st);
-          if (oauth.authenticated) {
-            if (pollRef.current) clearInterval(pollRef.current);
-            pollRef.current = null;
-            await refreshPool();
-            setMessage({
-              type: "ok",
-              text: "OAuth authentication successful!",
-            });
-            setOAuthStarting(false);
-            setAddAccountOpen(false);
-          }
-        } catch {
-          // Ignore polling errors.
-        }
-      }, 2000);
-
-      // Stop polling after 5 minutes.
-      setTimeout(
-        () => {
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-            setOAuthStarting(false);
-          }
-        },
-        5 * 60 * 1000,
-      );
+      // Store the auth URL and let user open it manually.
+      setAuthUrl(result.auth_url);
     } catch (e) {
       setMessage({
         type: "err",
@@ -224,11 +191,6 @@ export default function Settings() {
     setMessage(null);
     try {
       const result = await submitOAuthCallback(callbackUrl.trim());
-      // Stop polling if active.
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
       await refreshPool();
       const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
       setOAuthStatus(oauth);
@@ -237,6 +199,7 @@ export default function Settings() {
       setOAuthStarting(false);
       setAddAccountOpen(false);
       setCallbackUrl("");
+      setAuthUrl("");
     } catch (e) {
       setMessage({ type: "err", text: e instanceof Error ? e.message : "Callback 提交失敗" });
     } finally {
@@ -534,43 +497,59 @@ export default function Settings() {
                 </div>
               </div>
 
-              {/* Login button */}
-              <button
-                onClick={handleOAuthLogin}
-                disabled={oauthStarting || (!detectedClientID && !manualClientID)}
-                className="btn-primary"
-              >
-                {oauthStarting ? "Waiting for authorization..." : "Login with Google"}
-              </button>
-              {oauthStarting && (
+              {/* Step 1: Login button */}
+              {!authUrl && (
+                <button
+                  onClick={handleOAuthLogin}
+                  disabled={oauthStarting || (!detectedClientID && !manualClientID)}
+                  className="btn-primary"
+                >
+                  {oauthStarting ? "準備中..." : "Login with Google"}
+                </button>
+              )}
+
+              {/* Step 2+3: Auth URL + paste callback */}
+              {authUrl && (
                 <div className="oauth-manual-callback">
-                  <p className="meta oauth-meta">
-                    在彈出視窗中完成 Google 授權...
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
+                    <strong>步驟 1:</strong> 點擊下方連結，在新分頁中完成 Google 授權
                   </p>
-                  <details style={{ marginTop: "0.75rem" }}>
-                    <summary className="meta" style={{ cursor: "pointer" }}>
-                      遠端部署？彈出視窗無法連線？點此手動貼回 URL
-                    </summary>
-                    <div style={{ marginTop: "0.5rem" }}>
-                      <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                        如果彈出視窗顯示「無法連線」錯誤，請複製瀏覽器網址列中的完整 URL（包含 <code>code=</code> 參數），貼到下方：
-                      </p>
-                      <input
-                        type="text"
-                        value={callbackUrl}
-                        onChange={(e) => setCallbackUrl(e.target.value)}
-                        placeholder="http://127.0.0.1:8080/api/oauth/gemini/callback?code=...&state=..."
-                        style={{ width: "100%", marginBottom: "0.5rem" }}
-                      />
-                      <button
-                        onClick={handleManualCallback}
-                        disabled={submittingCallback || !callbackUrl.trim()}
-                        className="btn-secondary"
-                      >
-                        {submittingCallback ? "提交中..." : "提交 Callback URL"}
-                      </button>
-                    </div>
-                  </details>
+                  <a
+                    href={authUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-primary"
+                    style={{ display: "inline-block", textAlign: "center", textDecoration: "none", marginBottom: "1rem" }}
+                  >
+                    開啟 Google 授權頁面
+                  </a>
+
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
+                    <strong>步驟 2:</strong> 授權完成後，瀏覽器會跳轉到一個「無法連線」的頁面。
+                    複製該頁面<strong>網址列</strong>中的完整 URL，貼到下方：
+                  </p>
+                  <input
+                    type="text"
+                    value={callbackUrl}
+                    onChange={(e) => setCallbackUrl(e.target.value)}
+                    placeholder="http://127.0.0.1:8080/api/oauth/gemini/callback?code=4/0A...&state=..."
+                    style={{ width: "100%", marginBottom: "0.5rem" }}
+                  />
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button
+                      onClick={handleManualCallback}
+                      disabled={submittingCallback || !callbackUrl.trim()}
+                      className="btn-primary"
+                    >
+                      {submittingCallback ? "提交中..." : "提交完成認證"}
+                    </button>
+                    <button
+                      onClick={() => { setAuthUrl(""); setOAuthStarting(false); setCallbackUrl(""); }}
+                      className="btn-secondary"
+                    >
+                      取消
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
