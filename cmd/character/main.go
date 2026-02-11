@@ -122,12 +122,14 @@ func run() error {
 	chatService := app.NewChatService(providerManager, assembler, convStore, imageStore, 0, personaService.GetAll(), tools, contextManager)
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
+	var discordBot *discordbot.Bot
 	if settings.DiscordToken != "" {
-		bot, err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, personaService, chatService, convStore, imageStore, providerManager)
+		bot, err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, settings.DiscordPersonaID, personaService, chatService, convStore, imageStore, providerManager)
 		if err != nil {
 			logDiscord.Warnf("failed to start: %v", err)
 			logDiscord.Log("continuing without Discord — HTTP API still available")
 		} else {
+			discordBot = bot
 			// Enable Discord logging if channel ID is configured
 			if settings.LogChannelID != "" {
 				logger.SetDiscordOutput(bot, settings.LogChannelID)
@@ -143,7 +145,7 @@ func run() error {
 	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthPoolPath, oauthRedirectURL)
 
 	// Start HTTP API server
-	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, imageStore)
+	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, discordBot, oauthFlow, convStore, imageStore)
 
 	logSystem.Logf("ready — API on :%s", port)
 
@@ -266,12 +268,19 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 	return true
 }
 
-func startDiscordBot(token string, useReply bool, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore, providerManager *app.ProviderManager) (*discordbot.Bot, error) {
+func startDiscordBot(token string, useReply bool, preferredPersonaID string, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore, providerManager *app.ProviderManager) (*discordbot.Bot, error) {
 	// Use the first loaded persona as the default
 	var personaID string
-	for id := range personaService.GetAll() {
-		personaID = id
-		break
+	if preferredPersonaID != "" {
+		if _, ok := personaService.Get(preferredPersonaID); ok {
+			personaID = preferredPersonaID
+		}
+	}
+	if personaID == "" {
+		for id := range personaService.GetAll() {
+			personaID = id
+			break
+		}
 	}
 
 	if personaID == "" {
@@ -310,11 +319,12 @@ func startAPIServer(
 	chatService *app.ChatService,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	discordBot *discordbot.Bot,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
 ) {
-	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, oauthFlow, convStore, imageStore, ctx)
+	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, discordBot, oauthFlow, convStore, imageStore, ctx)
 	handler := router.Handler()
 
 	// Wrap with SPA static file serving if web/dist exists

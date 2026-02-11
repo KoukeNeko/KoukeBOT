@@ -9,6 +9,7 @@ import {
   getOAuthPool,
   removeOAuthPoolAccount,
   listModels,
+  listPersonas,
 } from "../api";
 import Select from "../components/ui/Select";
 import Checkbox from "../components/ui/Checkbox";
@@ -18,6 +19,7 @@ import type {
   OAuthStatus,
   ModelEntry,
   PoolEntry,
+  PersonaSummary,
 } from "../types";
 
 import "./Settings.css"; // Import the new CSS file
@@ -42,8 +44,10 @@ export default function Settings() {
     memory_extraction_enabled: false,
     memory_extraction_model: "",
     log_channel_id: "",
+    discord_persona_id: "",
   });
   const [models, setModels] = useState<ModelEntry[]>([]);
+  const [personas, setPersonas] = useState<PersonaSummary[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -80,13 +84,15 @@ export default function Settings() {
       getProviderStatus(),
       getOAuthStatus(),
       listModels(),
+      listPersonas(),
       getOAuthPool().catch(() => [] as PoolEntry[]),
     ])
-      .then(([s, st, oauth, modelList, poolEntries]) => {
+      .then(([s, st, oauth, modelList, personaList, poolEntries]) => {
         setForm(s);
         setStatus(st);
         setOAuthStatus(oauth);
         setModels(modelList);
+        setPersonas(personaList);
         setPool(poolEntries);
         if (s.provider_type === "oauth") {
           setProviderTab("oauth");
@@ -175,6 +181,7 @@ export default function Settings() {
             label: form.gemini_model || "gemini-2.5-pro",
           },
         ];
+  const personaOptions = personas.map((p) => ({ value: p.id, label: `${p.name} (${p.id})` }));
 
   return (
     <div className="settings-page">
@@ -481,6 +488,20 @@ export default function Settings() {
           />
           <span className="hint">
             將系統日誌輸出到指定的 Discord 頻道。右鍵頻道 &gt; 複製頻道 ID 取得。留空則不輸出。
+          </span>
+        </label>
+
+        <label className="form-field">
+          <span>Discord Bot 角色</span>
+          <Select
+            value={form.discord_persona_id || ""}
+            onChange={(val) => setForm({ ...form, discord_persona_id: val })}
+            options={personaOptions}
+            placeholder="選擇 Discord bot 預設角色"
+            disabled={personaOptions.length === 0}
+          />
+          <span className="hint">
+            儲存後會立即切換 Discord Bot 使用的角色，可在 /persona 指令選單尚未更新時先使用。
           </span>
         </label>
 

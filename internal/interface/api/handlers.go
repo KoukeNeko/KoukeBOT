@@ -24,10 +24,16 @@ type Handlers struct {
 	chatService     *app.ChatService
 	settingsStore   *config.SettingsStore
 	providerManager *app.ProviderManager
+	discordPersona  DiscordPersonaController
 	oauthFlow       *llm.GeminiOAuthFlow
 	convStore       store.ConversationRepository
 	imageStore      *store.ImageStore
 	ctx             context.Context
+}
+
+type DiscordPersonaController interface {
+	PersonaID() string
+	SetPersonaID(id string)
 }
 
 func NewHandlers(
@@ -35,6 +41,7 @@ func NewHandlers(
 	chatService *app.ChatService,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	discordPersona DiscordPersonaController,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
@@ -45,6 +52,7 @@ func NewHandlers(
 		chatService:     chatService,
 		settingsStore:   settingsStore,
 		providerManager: providerManager,
+		discordPersona:  discordPersona,
 		oauthFlow:       oauthFlow,
 		convStore:       convStore,
 		imageStore:      imageStore,
@@ -432,23 +440,24 @@ func truncate(s string, maxLen int) string {
 // --- Settings endpoints ---
 
 type SettingsResponse struct {
-	GeminiAPIKey             string `json:"gemini_api_key"`
-	GeminiModel              string `json:"gemini_model"`
-	DiscordToken             string `json:"discord_token"`
-	ProviderType             string `json:"provider_type"`
-	BraveAPIKey              string `json:"brave_api_key"`
-	WebSearchEnabled         bool   `json:"web_search_enabled"`
-	DiscordUseReply          bool   `json:"discord_use_reply"`
-	PerplexityAPIKey         string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider           string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled          bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone                 string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat               string `json:"time_format"`        // OpenClaw 相容
-	Location                 string `json:"location"`           // OpenClaw 相容
-	ContextFlushEnabled   bool `json:"context_flush_enabled"`
-	ContextFlushThreshold int  `json:"context_flush_threshold"`
-	ContextWindowSize     int  `json:"context_window_size"`
+	GeminiAPIKey          string `json:"gemini_api_key"`
+	GeminiModel           string `json:"gemini_model"`
+	DiscordToken          string `json:"discord_token"`
+	ProviderType          string `json:"provider_type"`
+	BraveAPIKey           string `json:"brave_api_key"`
+	WebSearchEnabled      bool   `json:"web_search_enabled"`
+	DiscordUseReply       bool   `json:"discord_use_reply"`
+	PerplexityAPIKey      string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider        string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled       bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone              string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat            string `json:"time_format"`        // OpenClaw 相容
+	Location              string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled   bool   `json:"context_flush_enabled"`
+	ContextFlushThreshold int    `json:"context_flush_threshold"`
+	ContextWindowSize     int    `json:"context_window_size"`
 	LogChannelID          string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID      string `json:"discord_persona_id"`
 }
 
 type SettingsUpdateRequest struct {
@@ -469,6 +478,7 @@ type SettingsUpdateRequest struct {
 	ContextFlushThreshold *int   `json:"context_flush_threshold"`
 	ContextWindowSize     *int   `json:"context_window_size"`
 	LogChannelID          string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID      string `json:"discord_persona_id"`
 }
 
 type ProviderStatusResponse struct {
@@ -489,25 +499,30 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	if searchProvider == "" {
 		searchProvider = "auto"
 	}
+	discordPersonaID := settings.DiscordPersonaID
+	if discordPersonaID == "" && h.discordPersona != nil {
+		discordPersonaID = h.discordPersona.PersonaID()
+	}
 
 	writeJSON(w, http.StatusOK, SettingsResponse{
-		GeminiAPIKey:     maskKey(settings.GeminiAPIKey),
-		GeminiModel:      settings.GeminiModel,
-		DiscordToken:     maskKey(settings.DiscordToken),
-		ProviderType:     settings.ProviderType,
-		BraveAPIKey:      maskKey(settings.BraveAPIKey),
-		WebSearchEnabled: settings.WebSearchEnabled,
-		DiscordUseReply:  settings.DiscordUseReply,
-		PerplexityAPIKey: maskKey(settings.PerplexityAPIKey),
-		SearchProvider:   searchProvider,
-		WebFetchEnabled:  settings.WebFetchEnabled,
-		Timezone:                settings.Timezone,
-		TimeFormat:              settings.TimeFormat,
-		Location:                settings.Location,
+		GeminiAPIKey:          maskKey(settings.GeminiAPIKey),
+		GeminiModel:           settings.GeminiModel,
+		DiscordToken:          maskKey(settings.DiscordToken),
+		ProviderType:          settings.ProviderType,
+		BraveAPIKey:           maskKey(settings.BraveAPIKey),
+		WebSearchEnabled:      settings.WebSearchEnabled,
+		DiscordUseReply:       settings.DiscordUseReply,
+		PerplexityAPIKey:      maskKey(settings.PerplexityAPIKey),
+		SearchProvider:        searchProvider,
+		WebFetchEnabled:       settings.WebFetchEnabled,
+		Timezone:              settings.Timezone,
+		TimeFormat:            settings.TimeFormat,
+		Location:              settings.Location,
 		ContextFlushEnabled:   settings.ContextFlushEnabled,
 		ContextFlushThreshold: settings.ContextFlushThreshold,
 		ContextWindowSize:     settings.ContextWindowSize,
 		LogChannelID:          settings.LogChannelID,
+		DiscordPersonaID:      discordPersonaID,
 	})
 }
 
@@ -570,6 +585,13 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	// Discord logging settings
 	existing.LogChannelID = req.LogChannelID
+	if req.DiscordPersonaID != "" {
+		if _, ok := h.personaService.Get(req.DiscordPersonaID); !ok {
+			writeError(w, http.StatusBadRequest, "invalid discord persona id: "+req.DiscordPersonaID)
+			return
+		}
+		existing.DiscordPersonaID = req.DiscordPersonaID
+	}
 
 	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
 		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)
@@ -584,6 +606,11 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		logAPI.Errorf("settings: provider activation failed: %v", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Hot-swap active Discord persona without waiting for slash command refresh.
+	if h.discordPersona != nil && existing.DiscordPersonaID != "" {
+		h.discordPersona.SetPersonaID(existing.DiscordPersonaID)
 	}
 
 	logAPI.Logf("settings: saved and provider activated")
@@ -951,11 +978,11 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 }
 
 type OAuthStatusResponse struct {
-	Authenticated bool              `json:"authenticated"`
-	ProjectID     string            `json:"project_id,omitempty"`
-	Email         string            `json:"email,omitempty"`
-	Pool          []app.PoolStatus  `json:"pool,omitempty"`
-	PoolSize      int               `json:"pool_size"`
+	Authenticated bool             `json:"authenticated"`
+	ProjectID     string           `json:"project_id,omitempty"`
+	Email         string           `json:"email,omitempty"`
+	Pool          []app.PoolStatus `json:"pool,omitempty"`
+	PoolSize      int              `json:"pool_size"`
 }
 
 func (h *Handlers) OAuthStatus(w http.ResponseWriter, r *http.Request) {

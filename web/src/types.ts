@@ -66,6 +66,7 @@ export interface SettingsData {
 
   // Discord logging settings
   log_channel_id?: string         // Discord channel ID for stdout logs
+  discord_persona_id: string
 }
 
 export interface ModelEntry {
