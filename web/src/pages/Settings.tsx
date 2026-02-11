@@ -494,25 +494,16 @@ export default function Settings() {
                 </p>
               )}
 
-              {/* Option A: Import from server filesystem */}
+              {/* Primary: Paste token JSON */}
               <div className="oauth-detect-block">
-                <button
-                  onClick={handleImportCLIToken}
-                  disabled={importingCLI || oauthStarting}
-                  className="btn-primary"
-                >
-                  {importingCLI ? "匯入中..." : "Import from Server"}
-                </button>
-                <p className="meta oauth-meta">
-                  伺服器上已執行過 <code>gemini</code>？直接讀取 <code>~/.gemini/oauth_creds.json</code>
-                </p>
-              </div>
-
-              {/* Option B: Paste token JSON from local machine */}
-              <div className="oauth-detect-block" style={{ marginTop: "0.75rem" }}>
                 <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
-                  <strong>或</strong>在本地電腦執行 <code>npx @google/gemini-cli</code> 登入後，貼上 <code>~/.gemini/oauth_creds.json</code> 內容：
+                  在本地電腦執行 Gemini CLI 登入後，貼上 Token 檔案內容：
                 </p>
+                <ol className="meta oauth-meta" style={{ margin: "0 0 0.75rem 1.2rem", padding: 0, lineHeight: 1.8 }}>
+                  <li>安裝並登入：<code>npx @google/gemini-cli</code></li>
+                  <li>複製 Token：<code>cat ~/.gemini/oauth_creds.json</code></li>
+                  <li>貼到下方，點擊匯入</li>
+                </ol>
                 <textarea
                   value={pastedTokenJSON}
                   onChange={(e) => setPastedTokenJSON(e.target.value)}
@@ -526,117 +517,25 @@ export default function Settings() {
                   disabled={importingPasted || !pastedTokenJSON.trim()}
                   className="btn-primary"
                 >
-                  {importingPasted ? "匯入中..." : "Paste & Import Token"}
+                  {importingPasted ? "匯入中..." : "Import Token"}
                 </button>
               </div>
 
               <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
 
-              {/* Detect Gemini CLI */}
+              {/* Secondary: Import from server filesystem */}
               <div className="oauth-detect-block">
                 <button
-                  onClick={handleDetect}
-                  disabled={detecting || oauthStarting}
+                  onClick={handleImportCLIToken}
+                  disabled={importingCLI}
                   className="btn-secondary"
                 >
-                  {detecting ? "Detecting..." : "Detect Gemini CLI"}
+                  {importingCLI ? "匯入中..." : "Import from Server"}
                 </button>
-                {detectedClientID && (
-                  <p className="success oauth-meta">
-                    Found and auto-filled credentials from Gemini CLI
-                  </p>
-                )}
-                {detectError && (
-                  <p className="error oauth-meta">{detectError}</p>
-                )}
-              </div>
-
-              {/* OAuth Credentials */}
-              <div className="oauth-credentials-block">
                 <p className="meta oauth-meta">
-                  {detectedClientID ? "Credentials (auto-filled):" : "OAuth Credentials:"}
+                  可 SSH 的環境：在伺服器上執行 <code>gemini</code> 登入後，直接讀取 Token
                 </p>
-                <div className="oauth-credentials-grid">
-                  <label className="form-field">
-                    <span>Client ID</span>
-                    <input
-                      type="text"
-                      value={manualClientID}
-                      onChange={(e) => setManualClientID(e.target.value)}
-                      placeholder="xxx.apps.googleusercontent.com"
-                      disabled={oauthStarting}
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span>Client Secret</span>
-                    <input
-                      type="password"
-                      value={manualClientSecret}
-                      onChange={(e) => setManualClientSecret(e.target.value)}
-                      placeholder="GOCSPX-xxx"
-                      disabled={oauthStarting}
-                    />
-                  </label>
-                </div>
               </div>
-
-              {/* Step 1: Login button */}
-              {!authUrl && (
-                <button
-                  onClick={handleOAuthLogin}
-                  disabled={oauthStarting || (!detectedClientID && !manualClientID)}
-                  className="btn-primary"
-                >
-                  {oauthStarting ? "準備中..." : "Login with Google"}
-                </button>
-              )}
-
-              {/* Step 2+3: Auth URL + paste callback */}
-              {authUrl && (
-                <div className="oauth-manual-callback">
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    <strong>步驟 1:</strong> 在新分頁中按 <strong>F12</strong> 開啟開發者工具，切換到 <strong>Network（網路）</strong>分頁
-                  </p>
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    <strong>步驟 2:</strong> 點擊下方連結完成 Google 授權
-                  </p>
-                  <a
-                    href={authUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-primary"
-                    style={{ display: "inline-block", textAlign: "center", textDecoration: "none", marginBottom: "1rem" }}
-                  >
-                    開啟 Google 授權頁面
-                  </a>
-
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    <strong>步驟 3:</strong> 授權完成後，URL 會一閃而過。在開發者工具的 Network 分頁中找到 <code>127.0.0.1</code> 的請求，右鍵 → <strong>Copy URL</strong>，貼到下方：
-                  </p>
-                  <input
-                    type="text"
-                    value={callbackUrl}
-                    onChange={(e) => setCallbackUrl(e.target.value)}
-                    placeholder="http://127.0.0.1:8080/api/oauth/gemini/callback?code=4/0A...&state=..."
-                    style={{ width: "100%", marginBottom: "0.5rem" }}
-                  />
-                  <div style={{ display: "flex", gap: "0.5rem" }}>
-                    <button
-                      onClick={handleManualCallback}
-                      disabled={submittingCallback || !callbackUrl.trim()}
-                      className="btn-primary"
-                    >
-                      {submittingCallback ? "提交中..." : "提交完成認證"}
-                    </button>
-                    <button
-                      onClick={() => { setAuthUrl(""); setOAuthStarting(false); setCallbackUrl(""); }}
-                      className="btn-secondary"
-                    >
-                      取消
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
