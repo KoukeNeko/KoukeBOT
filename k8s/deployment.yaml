@@ -45,7 +45,16 @@ spec:
             fi
           done
 
-          # Incremental sync for personas: add newly introduced persona folders.
+          # Incremental sync for personas.
+          # Policy:
+          # 1) Add new persona folders automatically.
+          # 2) Always refresh managed files from image:
+          #    - config.yaml
+          #    - lore.md
+          #    - anchors.yaml
+          # 3) Preserve runtime data:
+          #    - user.md
+          #    - memory/*
           if [ -d /app/configs/personas ]; then
             mkdir -p /mnt/configs/personas
             for src in /app/configs/personas/*; do
@@ -55,6 +64,15 @@ spec:
               if [ ! -e "$dst" ]; then
                 echo "Adding missing persona: $name"
                 cp -a "$src" "$dst"
+              fi
+
+              if [ -d "$src" ]; then
+                for managed in config.yaml lore.md anchors.yaml; do
+                  if [ -f "$src/$managed" ]; then
+                    echo "Syncing persona managed file: $name/$managed"
+                    cp -f "$src/$managed" "$dst/$managed"
+                  fi
+                done
               fi
             done
           fi
