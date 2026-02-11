@@ -1,11 +1,8 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   getSettings,
   updateSettings,
   getProviderStatus,
-  detectGeminiCLI,
-  startGeminiOAuth,
-  submitOAuthCallback,
   importGeminiCLIToken,
   importPastedToken,
   getOAuthStatus,
@@ -58,15 +55,7 @@ export default function Settings() {
   // OAuth state
   const [providerTab, setProviderTab] = useState<ProviderTab>("api-key");
   const [, setOAuthStatus] = useState<OAuthStatus | null>(null);
-  const [detecting, setDetecting] = useState(false);
-  const [detectedClientID, setDetectedClientID] = useState("");
-  const [detectError, setDetectError] = useState("");
-  const [manualClientID, setManualClientID] = useState("");
-  const [manualClientSecret, setManualClientSecret] = useState("");
-  const [oauthStarting, setOAuthStarting] = useState(false);
-  const [callbackUrl, setCallbackUrl] = useState("");
-  const [submittingCallback, setSubmittingCallback] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const oauthStarting = false;
   const [addAccountOpen, setAddAccountOpen] = useState(false);
   const [importingCLI, setImportingCLI] = useState(false);
   const [pastedTokenJSON, setPastedTokenJSON] = useState("");
@@ -109,13 +98,6 @@ export default function Settings() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Stop polling on unmount.
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
-
   const handleSave = async (overrideProviderType?: string) => {
     setSaving(true);
     setMessage(null);
@@ -144,74 +126,6 @@ export default function Settings() {
     }
   };
 
-  const handleDetect = async () => {
-    setDetecting(true);
-    setDetectError("");
-    setDetectedClientID("");
-    try {
-      const result = await detectGeminiCLI();
-      if (result.found && result.client_id) {
-        setDetectedClientID(result.client_id);
-        // Auto-fill both client ID and secret from Gemini CLI
-        setManualClientID(result.client_id);
-        if (result.client_secret) {
-          setManualClientSecret(result.client_secret);
-        }
-      } else {
-        setDetectError(result.error || "Gemini CLI not found.");
-      }
-    } catch (e) {
-      setDetectError(e instanceof Error ? e.message : "Detection failed");
-    } finally {
-      setDetecting(false);
-    }
-  };
-
-  const [authUrl, setAuthUrl] = useState("");
-
-  const handleOAuthLogin = async () => {
-    setOAuthStarting(true);
-    setMessage(null);
-    setAuthUrl("");
-    setCallbackUrl("");
-    try {
-      const clientId = manualClientID || undefined;
-      const clientSecret = manualClientSecret || undefined;
-      const result = await startGeminiOAuth(clientId, clientSecret);
-
-      // Store the auth URL and let user open it manually.
-      setAuthUrl(result.auth_url);
-    } catch (e) {
-      setMessage({
-        type: "err",
-        text: e instanceof Error ? e.message : "OAuth start failed",
-      });
-      setOAuthStarting(false);
-    }
-  };
-
-  const handleManualCallback = async () => {
-    if (!callbackUrl.trim()) return;
-    setSubmittingCallback(true);
-    setMessage(null);
-    try {
-      const result = await submitOAuthCallback(callbackUrl.trim());
-      await refreshPool();
-      const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
-      setOAuthStatus(oauth);
-      setStatus(st);
-      setMessage({ type: "ok", text: `OAuth 認證成功！已新增 ${result.email}` });
-      setOAuthStarting(false);
-      setAddAccountOpen(false);
-      setCallbackUrl("");
-      setAuthUrl("");
-    } catch (e) {
-      setMessage({ type: "err", text: e instanceof Error ? e.message : "Callback 提交失敗" });
-    } finally {
-      setSubmittingCallback(false);
-    }
-  };
-
   const handleImportCLIToken = async () => {
     setImportingCLI(true);
     setMessage(null);
@@ -235,9 +149,7 @@ export default function Settings() {
     setImportingPasted(true);
     setMessage(null);
     try {
-      const clientId = manualClientID || undefined;
-      const clientSecret = manualClientSecret || undefined;
-      const result = await importPastedToken(pastedTokenJSON.trim(), clientId, clientSecret);
+      const result = await importPastedToken(pastedTokenJSON.trim());
       await refreshPool();
       const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
       setOAuthStatus(oauth);
