@@ -246,6 +246,10 @@ func loadAnchors(path string) ([]domain.Anchor, error) {
 func SavePersona(baseDir, id string, module *domain.PersonaModule) error {
 	personaDir := filepath.Join(baseDir, id)
 
+	if err := os.MkdirAll(personaDir, 0o755); err != nil {
+		return fmt.Errorf("ensure persona dir for %q: %w", id, err)
+	}
+
 	if err := saveConfig(filepath.Join(personaDir, configFileName), &module.Config); err != nil {
 		return fmt.Errorf("save config for persona %q: %w", id, err)
 	}

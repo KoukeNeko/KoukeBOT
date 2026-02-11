@@ -48,9 +48,24 @@ func (s *PersonaService) Reload() error {
 
 // Update persists a persona module to disk and refreshes in-memory state.
 func (s *PersonaService) Update(id string, module *domain.PersonaModule) error {
-	if err := persona.SavePersona(s.baseDir, id, module); err != nil {
+	existing, ok := s.personas[id]
+	if !ok {
+		return fmt.Errorf("persona not found: %q", id)
+	}
+
+	// Persist into the original directory, not meta.id.
+	module.DirName = existing.DirName
+	if module.Config.Meta.ID == "" {
+		module.Config.Meta.ID = id
+	}
+
+	if err := persona.SavePersona(s.baseDir, module.DirName, module); err != nil {
 		return fmt.Errorf("save persona %q: %w", id, err)
 	}
-	s.personas[id] = module
+
+	if module.Config.Meta.ID != id {
+		delete(s.personas, id)
+	}
+	s.personas[module.Config.Meta.ID] = module
 	return nil
 }
