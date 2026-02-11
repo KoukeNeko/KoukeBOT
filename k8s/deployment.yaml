@@ -27,12 +27,38 @@ spec:
         - sh
         - -c
         - |
+          # One-time bootstrap for an empty config PVC.
           if [ -z "$(ls -A /mnt/configs 2>/dev/null)" ]; then
             echo "Config PVC is empty, copying defaults from image..."
             cp -a /app/configs/. /mnt/configs/
-          else
-            echo "Config PVC already has data, skipping."
           fi
+
+          # Incremental sync: add missing top-level config entries only.
+          # Do not overwrite existing files in PVC.
+          for src in /app/configs/*; do
+            [ -e "$src" ] || continue
+            name="$(basename "$src")"
+            dst="/mnt/configs/$name"
+            if [ ! -e "$dst" ]; then
+              echo "Adding missing config entry: $name"
+              cp -a "$src" "$dst"
+            fi
+          done
+
+          # Incremental sync for personas: add newly introduced persona folders.
+          if [ -d /app/configs/personas ]; then
+            mkdir -p /mnt/configs/personas
+            for src in /app/configs/personas/*; do
+              [ -e "$src" ] || continue
+              name="$(basename "$src")"
+              dst="/mnt/configs/personas/$name"
+              if [ ! -e "$dst" ]; then
+                echo "Adding missing persona: $name"
+                cp -a "$src" "$dst"
+              fi
+            done
+          fi
+
           chown -R 1000:1000 /mnt/configs /app/data
         volumeMounts:
         - name: config
