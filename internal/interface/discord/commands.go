@@ -238,8 +238,14 @@ func (sc *SlashCommands) handleReload(s *discordgo.Session, i *discordgo.Interac
 		return
 	}
 
+	// Refresh slash command options so `/persona` choices reflect newly loaded personas.
+	if err := sc.bot.RegisterCommands(sc.Commands()); err != nil {
+		respondEphemeral(s, i, "⚠️ 角色已重載，但刷新 Discord 指令失敗: "+err.Error())
+		return
+	}
+
 	count := len(sc.personaService.GetAll())
-	respondEphemeral(s, i, fmt.Sprintf("🔄 已重新載入 %d 個角色。", count))
+	respondEphemeral(s, i, fmt.Sprintf("🔄 已重新載入 %d 個角色，並更新 /persona 選單。", count))
 }
 
 func (sc *SlashCommands) buildPersonaChoices() []*discordgo.ApplicationCommandOptionChoice {
