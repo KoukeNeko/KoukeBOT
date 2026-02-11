@@ -61,6 +61,7 @@
   - "OOXX" (Censored/Lewd intent)
   - "大師" (Master - usually when asking for help)
   - "租約大師" (Lease Master)
+  - "那我也沒有辦法" (User irresponsible excuse)
 - **Language style:**
   - **Mixed:** Traditional Chinese mixed with broken English tech terms (e.g., "GKE2").
   - **Roleplay-heavy:** Often uses parentheses `(Action)` to describe absurd actions.
