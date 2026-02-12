@@ -456,8 +456,10 @@ type SettingsResponse struct {
 	ContextFlushEnabled   bool   `json:"context_flush_enabled"`
 	ContextFlushThreshold int    `json:"context_flush_threshold"`
 	ContextWindowSize     int    `json:"context_window_size"`
-	LogChannelID          string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID      string `json:"discord_persona_id"`
+	LogChannelID               string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID           string `json:"discord_persona_id"`
+	MemoryExtractionEnabled    bool   `json:"memory_extraction_enabled"`
+	MemoryExtractionModel      string `json:"memory_extraction_model"`
 }
 
 type SettingsUpdateRequest struct {
@@ -477,8 +479,10 @@ type SettingsUpdateRequest struct {
 	ContextFlushEnabled   *bool  `json:"context_flush_enabled"`
 	ContextFlushThreshold *int   `json:"context_flush_threshold"`
 	ContextWindowSize     *int   `json:"context_window_size"`
-	LogChannelID          string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID      string `json:"discord_persona_id"`
+	LogChannelID               string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID           string `json:"discord_persona_id"`
+	MemoryExtractionEnabled    *bool  `json:"memory_extraction_enabled"`
+	MemoryExtractionModel      string `json:"memory_extraction_model"`
 }
 
 type ProviderStatusResponse struct {
@@ -521,8 +525,10 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		ContextFlushEnabled:   settings.ContextFlushEnabled,
 		ContextFlushThreshold: settings.ContextFlushThreshold,
 		ContextWindowSize:     settings.ContextWindowSize,
-		LogChannelID:          settings.LogChannelID,
-		DiscordPersonaID:      discordPersonaID,
+		LogChannelID:               settings.LogChannelID,
+		DiscordPersonaID:           discordPersonaID,
+		MemoryExtractionEnabled:    settings.MemoryExtractionEnabled,
+		MemoryExtractionModel:      settings.MemoryExtractionModel,
 	})
 }
 
@@ -583,6 +589,11 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.ContextWindowSize != nil {
 		existing.ContextWindowSize = *req.ContextWindowSize
 	}
+	// Memory extraction settings
+	if req.MemoryExtractionEnabled != nil {
+		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
+	}
+	existing.MemoryExtractionModel = req.MemoryExtractionModel
 	// Discord logging settings
 	existing.LogChannelID = req.LogChannelID
 	if req.DiscordPersonaID != "" {
