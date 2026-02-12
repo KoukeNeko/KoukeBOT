@@ -612,16 +612,18 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Hot-swap active Discord persona before provider activation,
+	// so persona switch succeeds even if provider activation fails.
+	if h.discordPersona != nil && existing.DiscordPersonaID != "" {
+		h.discordPersona.SetPersonaID(existing.DiscordPersonaID)
+		logAPI.Logf("settings: discord persona switched to %s", existing.DiscordPersonaID)
+	}
+
 	// Hot-swap the LLM provider based on selected provider_type.
 	if err := h.activateProvider(existing); err != nil {
 		logAPI.Errorf("settings: provider activation failed: %v", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	// Hot-swap active Discord persona without waiting for slash command refresh.
-	if h.discordPersona != nil && existing.DiscordPersonaID != "" {
-		h.discordPersona.SetPersonaID(existing.DiscordPersonaID)
 	}
 
 	logAPI.Logf("settings: saved and provider activated")
