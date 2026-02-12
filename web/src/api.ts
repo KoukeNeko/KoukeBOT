@@ -51,7 +51,7 @@ export function getSettings(): Promise<SettingsData> {
   return fetchJSON(`${BASE}/settings`)
 }
 
-export function updateSettings(data: SettingsData): Promise<{ status: string }> {
+export function updateSettings(data: SettingsData): Promise<{ status: string; warning?: string }> {
   return fetchJSON(`${BASE}/settings`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

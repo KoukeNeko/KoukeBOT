@@ -112,7 +112,7 @@ export default function Settings() {
       if (overrideProviderType) {
         payload.provider_type = overrideProviderType;
       }
-      await updateSettings(payload);
+      const result = await updateSettings(payload);
       const [st, updated, modelList] = await Promise.all([
         getProviderStatus(),
         getSettings(),
@@ -121,7 +121,11 @@ export default function Settings() {
       setStatus(st);
       setForm(updated);
       setModels(modelList);
-      setMessage({ type: "ok", text: "Settings saved successfully." });
+      if (result.warning) {
+        setMessage({ type: "ok", text: `設定已儲存。警告：${result.warning}` });
+      } else {
+        setMessage({ type: "ok", text: "Settings saved successfully." });
+      }
     } catch (e) {
       setMessage({
         type: "err",

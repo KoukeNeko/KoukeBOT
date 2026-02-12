@@ -620,14 +620,16 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hot-swap the LLM provider based on selected provider_type.
+	// Provider activation failure should not block a successful save response,
+	// because settings and persona switch already succeeded above.
+	response := map[string]string{"status": "saved"}
 	if err := h.activateProvider(existing); err != nil {
-		logAPI.Errorf("settings: provider activation failed: %v", err)
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		logAPI.Warnf("settings: provider activation failed (settings saved): %v", err)
+		response["warning"] = err.Error()
 	}
 
-	logAPI.Logf("settings: saved and provider activated")
-	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+	logAPI.Logf("settings: saved (warning=%v)", response["warning"] != "")
+	writeJSON(w, http.StatusOK, response)
 }
 
 // activateProvider creates and hot-swaps the LLM provider based on settings.

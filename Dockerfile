@@ -61,6 +61,10 @@ COPY --from=web-builder /app/web/dist /app/web/dist
 # Copy configuration files (these will be overridden by volumes in production)
 COPY configs/ /app/configs/
 
+# Embed image version for init container sync gating
+ARG IMAGE_VERSION=dev
+RUN echo "${IMAGE_VERSION}" > /app/.image-version
+
 # Create a non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 

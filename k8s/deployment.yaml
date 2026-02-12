@@ -27,14 +27,15 @@ spec:
         - sh
         - -c
         - |
-          # One-time bootstrap for an empty config PVC.
+          # --- Phase 1: Bootstrap empty config PVC ---
           if [ -z "$(ls -A /mnt/configs 2>/dev/null)" ]; then
             echo "Config PVC is empty, copying defaults from image..."
             cp -a /app/configs/. /mnt/configs/
+            # Record initial image version
+            cp -f /app/.image-version /mnt/configs/.image-version 2>/dev/null || true
           fi
 
-          # Incremental sync: add missing top-level config entries only.
-          # Do not overwrite existing files in PVC.
+          # --- Phase 2: Add missing top-level config entries ---
           for src in /app/configs/*; do
             [ -e "$src" ] || continue
             name="$(basename "$src")"
@@ -45,28 +46,51 @@ spec:
             fi
           done
 
-          # Incremental sync for personas.
+          # --- Phase 3: Determine if image version changed ---
+          # Only sync managed persona files when the Docker image has changed.
+          # This preserves Web UI edits across same-image restarts,
+          # while still applying git-pushed changes on new image deploys.
+          IMAGE_VER=""
+          PVC_VER=""
+          if [ -f /app/.image-version ]; then
+            IMAGE_VER=$(cat /app/.image-version)
+          fi
+          if [ -f /mnt/configs/.image-version ]; then
+            PVC_VER=$(cat /mnt/configs/.image-version)
+          fi
+
+          SHOULD_SYNC=false
+          if [ -z "$IMAGE_VER" ]; then
+            echo "No image version marker (legacy build), syncing all managed files"
+            SHOULD_SYNC=true
+          elif [ "$IMAGE_VER" != "$PVC_VER" ]; then
+            echo "Image version changed: ${PVC_VER:-<none>} -> $IMAGE_VER, syncing managed files"
+            SHOULD_SYNC=true
+          else
+            echo "Image version unchanged ($IMAGE_VER), preserving PVC persona files"
+          fi
+
+          # --- Phase 4: Persona sync ---
           # Policy:
-          # 1) Add new persona folders automatically.
-          # 2) Always refresh managed files from image:
-          #    - config.yaml
-          #    - lore.md
-          #    - anchors.yaml
-          # 3) Preserve runtime data:
-          #    - user.md
-          #    - memory/*
+          # 1) Always add new persona folders.
+          # 2) Sync managed files (config.yaml, lore.md, anchors.yaml)
+          #    ONLY when image version changed.
+          # 3) Always preserve runtime data (user.md, memory/*).
           if [ -d /app/configs/personas ]; then
             mkdir -p /mnt/configs/personas
             for src in /app/configs/personas/*; do
               [ -e "$src" ] || continue
               name="$(basename "$src")"
               dst="/mnt/configs/personas/$name"
+
+              # Always add new personas
               if [ ! -e "$dst" ]; then
                 echo "Adding missing persona: $name"
                 cp -a "$src" "$dst"
               fi
 
-              if [ -d "$src" ]; then
+              # Sync managed files only when image version changed
+              if [ "$SHOULD_SYNC" = "true" ] && [ -d "$src" ]; then
                 for managed in config.yaml lore.md anchors.yaml; do
                   if [ -f "$src/$managed" ]; then
                     echo "Syncing persona managed file: $name/$managed"
@@ -75,6 +99,11 @@ spec:
                 done
               fi
             done
+          fi
+
+          # Update PVC version marker
+          if [ -n "$IMAGE_VER" ]; then
+            echo "$IMAGE_VER" > /mnt/configs/.image-version
           fi
 
           chown -R 1000:1000 /mnt/configs /app/data
