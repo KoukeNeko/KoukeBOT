@@ -1,9 +1,43 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
+
+type stubProvider struct {
+	id    string
+	tools []domain.Tool
+}
+
+func (p *stubProvider) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	return &llm.ChatResponse{Content: p.id}, nil
+}
+
+func (p *stubProvider) StreamChat(context.Context, llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+	ch := make(chan llm.StreamChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (p *stubProvider) StreamChatMultimodal(context.Context, string, []domain.MultimodalMessage, domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
+	ch := make(chan llm.StreamChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (p *stubProvider) ModelInfo() llm.ModelCapabilities {
+	return llm.ModelCapabilities{ProviderName: p.id}
+}
+
+func (p *stubProvider) RegisterTools(tools []domain.Tool) {
+	p.tools = append([]domain.Tool(nil), tools...)
+}
 
 func TestParseResetDelay(t *testing.T) {
 	tests := []struct {
@@ -55,5 +89,101 @@ func TestParseResetDelay(t *testing.T) {
 				t.Errorf("parseResetDelay(%q) = %v, expected %v", tt.errMsg, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestProviderPoolAddOrReplaceByEmail(t *testing.T) {
+	pool := NewProviderPool()
+	first := &stubProvider{id: "first"}
+	second := &stubProvider{id: "second"}
+
+	pool.AddOrReplace(first, "same@example.com")
+	pool.AddOrReplace(second, "same@example.com")
+
+	if got := pool.Size(); got != 1 {
+		t.Fatalf("pool size = %d, want 1", got)
+	}
+
+	p, email, ok := pool.SelectNextProvider()
+	if !ok {
+		t.Fatal("SelectNextProvider() = not found, want provider")
+	}
+	if email != "same@example.com" {
+		t.Fatalf("selected email = %s, want same@example.com", email)
+	}
+	if p != second {
+		t.Fatalf("selected provider was not replaced instance")
+	}
+}
+
+func TestClassifyError(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  string
+		want errorType
+	}{
+		{
+			name: "quota by status code",
+			msg:  "http 429 rate limit exceeded",
+			want: errorQuota,
+		},
+		{
+			name: "quota by resource exhausted",
+			msg:  "RESOURCE_EXHAUSTED: quota exceeded",
+			want: errorQuota,
+		},
+		{
+			name: "validation tool_use_id",
+			msg:  "invalid_request_error missing tool_use_id",
+			want: errorValidation,
+		},
+		{
+			name: "validation payload",
+			msg:  "validation failed: field x",
+			want: errorValidation,
+		},
+		{
+			name: "transient 5xx",
+			msg:  "HTTP 503 Service Unavailable",
+			want: errorTransient,
+		},
+		{
+			name: "transient network",
+			msg:  "dial tcp 127.0.0.1:443: connect: connection refused",
+			want: errorTransient,
+		},
+		{
+			name: "other errors",
+			msg:  "permission denied",
+			want: errorOther,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyError(errors.New(tt.msg)); got != tt.want {
+				t.Fatalf("classifyError(%q) = %v, want %v", tt.msg, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMarkTransientFailureUpdatesPoolStatus(t *testing.T) {
+	pool := NewProviderPool()
+	pool.AddOrReplace(&stubProvider{id: "provider"}, "a@example.com")
+
+	pool.MarkTransientFailure("a@example.com", errors.New("timeout"), 3*time.Second)
+	entries := pool.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries length = %d, want 1", len(entries))
+	}
+	if entries[0].ConsecutiveFailures != 1 {
+		t.Fatalf("consecutive failures = %d, want 1", entries[0].ConsecutiveFailures)
+	}
+	if entries[0].LastError == "" {
+		t.Fatalf("last error should not be empty")
+	}
+	if entries[0].Status != "exhausted" {
+		t.Fatalf("status = %s, want exhausted", entries[0].Status)
 	}
 }

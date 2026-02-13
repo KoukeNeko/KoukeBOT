@@ -17,6 +17,7 @@ var ErrProviderNotConfigured = errors.New("LLM provider not configured — set y
 type ProviderManager struct {
 	mu       sync.RWMutex
 	provider llm.Provider
+	tools    []domain.Tool
 }
 
 func NewProviderManager(initial llm.Provider) *ProviderManager {
@@ -71,7 +72,13 @@ func (pm *ProviderManager) ModelInfo() llm.ModelCapabilities {
 func (pm *ProviderManager) Update(p llm.Provider) {
 	pm.mu.Lock()
 	pm.provider = p
+	tools := pm.tools
 	pm.mu.Unlock()
+
+	// Re-register cached tools whenever provider is hot-swapped.
+	if p != nil && len(tools) > 0 {
+		p.RegisterTools(tools)
+	}
 }
 
 // IsConfigured returns true if a provider has been set.
@@ -83,9 +90,10 @@ func (pm *ProviderManager) IsConfigured() bool {
 
 // RegisterTools registers tools that the LLM can call during conversation
 func (pm *ProviderManager) RegisterTools(tools []domain.Tool) {
-	pm.mu.RLock()
+	pm.mu.Lock()
+	pm.tools = tools
 	p := pm.provider
-	pm.mu.RUnlock()
+	pm.mu.Unlock()
 
 	if p != nil {
 		p.RegisterTools(tools)

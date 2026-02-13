@@ -17,14 +17,14 @@ var logChat = logger.New("chat", logger.Cyan)
 // ChatService orchestrates the full chat pipeline:
 // receive message → load conversation → assemble context → call LLM → persist → return.
 type ChatService struct {
-	provider           llm.Provider
-	assembler          *ContextAssembler
-	store              store.ConversationRepository
-	imageStore         *store.ImageStore // persists images to disk (nil = disabled)
-	imageHistoryTurns  int              // how many recent user turns to load images for (default 3)
-	personas           map[string]*domain.PersonaModule
-	toolRegistry       map[string]domain.Tool // tool name → tool instance
-	contextManager     *ContextManager        // pre-compaction memory flush (nil = disabled)
+	provider          llm.Provider
+	assembler         *ContextAssembler
+	store             store.ConversationRepository
+	imageStore        *store.ImageStore // persists images to disk (nil = disabled)
+	imageHistoryTurns int               // how many recent user turns to load images for (default 3)
+	personas          map[string]*domain.PersonaModule
+	toolRegistry      map[string]domain.Tool // tool name → tool instance
+	contextManager    *ContextManager        // pre-compaction memory flush (nil = disabled)
 }
 
 func NewChatService(
@@ -736,14 +736,43 @@ func formatToolResults(toolCalls []domain.ToolCall, results []domain.ToolResult)
 			toolName = call.Name
 		}
 
+		compressed := compressToolResult(toolName, result.Content)
 		formatted += fmt.Sprintf("Tool: %s (ID: %s)\n", toolName, result.ToolCallID)
 		if result.IsError {
-			formatted += fmt.Sprintf("Status: ERROR\n%s\n\n", result.Content)
+			formatted += fmt.Sprintf("Status: ERROR\n%s\n\n", compressed)
 		} else {
-			formatted += fmt.Sprintf("Status: SUCCESS\n%s\n\n", result.Content)
+			formatted += fmt.Sprintf("Status: SUCCESS\n%s\n\n", compressed)
 		}
 	}
 	return formatted
+}
+
+func compressToolResult(toolName, content string) string {
+	if content == "" {
+		return content
+	}
+
+	maxChars := 6000
+	switch toolName {
+	case "web_fetch":
+		// Keep metadata and a smaller excerpt of content body.
+		maxChars = 3500
+		if start := strings.Index(content, "--- CONTENT START ---"); start > 0 {
+			header := content[:start]
+			body := content[start:]
+			body = truncateLog(body, 2200)
+			return header + body + "\n\n[tool output truncated for token efficiency]"
+		}
+	case "web_search":
+		maxChars = 3000
+	case "file_read":
+		maxChars = 2500
+	}
+
+	if len(content) <= maxChars {
+		return content
+	}
+	return content[:maxChars] + "\n\n[tool output truncated for token efficiency]"
 }
 
 // formatToolUsageAnnotation creates a user-friendly annotation for tool usage
@@ -810,4 +839,3 @@ func truncateLog(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
-

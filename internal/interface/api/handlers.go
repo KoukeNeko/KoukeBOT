@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -440,49 +443,49 @@ func truncate(s string, maxLen int) string {
 // --- Settings endpoints ---
 
 type SettingsResponse struct {
-	GeminiAPIKey          string `json:"gemini_api_key"`
-	GeminiModel           string `json:"gemini_model"`
-	DiscordToken          string `json:"discord_token"`
-	ProviderType          string `json:"provider_type"`
-	BraveAPIKey           string `json:"brave_api_key"`
-	WebSearchEnabled      bool   `json:"web_search_enabled"`
-	DiscordUseReply       bool   `json:"discord_use_reply"`
-	PerplexityAPIKey      string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider        string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled       bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone              string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat            string `json:"time_format"`        // OpenClaw 相容
-	Location              string `json:"location"`           // OpenClaw 相容
-	ContextFlushEnabled   bool   `json:"context_flush_enabled"`
-	ContextFlushThreshold int    `json:"context_flush_threshold"`
-	ContextWindowSize     int    `json:"context_window_size"`
-	LogChannelID               string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID           string `json:"discord_persona_id"`
-	MemoryExtractionEnabled    bool   `json:"memory_extraction_enabled"`
-	MemoryExtractionModel      string `json:"memory_extraction_model"`
+	GeminiAPIKey            string `json:"gemini_api_key"`
+	GeminiModel             string `json:"gemini_model"`
+	DiscordToken            string `json:"discord_token"`
+	ProviderType            string `json:"provider_type"`
+	BraveAPIKey             string `json:"brave_api_key"`
+	WebSearchEnabled        bool   `json:"web_search_enabled"`
+	DiscordUseReply         bool   `json:"discord_use_reply"`
+	PerplexityAPIKey        string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider          string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled         bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat              string `json:"time_format"`        // OpenClaw 相容
+	Location                string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled     bool   `json:"context_flush_enabled"`
+	ContextFlushThreshold   int    `json:"context_flush_threshold"`
+	ContextWindowSize       int    `json:"context_window_size"`
+	LogChannelID            string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID        string `json:"discord_persona_id"`
+	MemoryExtractionEnabled bool   `json:"memory_extraction_enabled"`
+	MemoryExtractionModel   string `json:"memory_extraction_model"`
 }
 
 type SettingsUpdateRequest struct {
-	GeminiAPIKey          string `json:"gemini_api_key"`
-	GeminiModel           string `json:"gemini_model"`
-	DiscordToken          string `json:"discord_token"`
-	ProviderType          string `json:"provider_type"`
-	BraveAPIKey           string `json:"brave_api_key"`
-	WebSearchEnabled      *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
-	DiscordUseReply       *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
-	PerplexityAPIKey      string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider        string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled       *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone              string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat            string `json:"time_format"`        // OpenClaw 相容
-	Location              string `json:"location"`           // OpenClaw 相容
-	ContextFlushEnabled   *bool  `json:"context_flush_enabled"`
-	ContextFlushThreshold *int   `json:"context_flush_threshold"`
-	ContextWindowSize     *int   `json:"context_window_size"`
-	LogChannelID               string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID           string `json:"discord_persona_id"`
-	MemoryExtractionEnabled    *bool  `json:"memory_extraction_enabled"`
-	MemoryExtractionModel      string `json:"memory_extraction_model"`
+	GeminiAPIKey            string `json:"gemini_api_key"`
+	GeminiModel             string `json:"gemini_model"`
+	DiscordToken            string `json:"discord_token"`
+	ProviderType            string `json:"provider_type"`
+	BraveAPIKey             string `json:"brave_api_key"`
+	WebSearchEnabled        *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
+	DiscordUseReply         *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
+	PerplexityAPIKey        string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider          string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled         *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat              string `json:"time_format"`        // OpenClaw 相容
+	Location                string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled     *bool  `json:"context_flush_enabled"`
+	ContextFlushThreshold   *int   `json:"context_flush_threshold"`
+	ContextWindowSize       *int   `json:"context_window_size"`
+	LogChannelID            string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID        string `json:"discord_persona_id"`
+	MemoryExtractionEnabled *bool  `json:"memory_extraction_enabled"`
+	MemoryExtractionModel   string `json:"memory_extraction_model"`
 }
 
 type ProviderStatusResponse struct {
@@ -509,26 +512,26 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SettingsResponse{
-		GeminiAPIKey:          maskKey(settings.GeminiAPIKey),
-		GeminiModel:           settings.GeminiModel,
-		DiscordToken:          maskKey(settings.DiscordToken),
-		ProviderType:          settings.ProviderType,
-		BraveAPIKey:           maskKey(settings.BraveAPIKey),
-		WebSearchEnabled:      settings.WebSearchEnabled,
-		DiscordUseReply:       settings.DiscordUseReply,
-		PerplexityAPIKey:      maskKey(settings.PerplexityAPIKey),
-		SearchProvider:        searchProvider,
-		WebFetchEnabled:       settings.WebFetchEnabled,
-		Timezone:              settings.Timezone,
-		TimeFormat:            settings.TimeFormat,
-		Location:              settings.Location,
-		ContextFlushEnabled:   settings.ContextFlushEnabled,
-		ContextFlushThreshold: settings.ContextFlushThreshold,
-		ContextWindowSize:     settings.ContextWindowSize,
-		LogChannelID:               settings.LogChannelID,
-		DiscordPersonaID:           discordPersonaID,
-		MemoryExtractionEnabled:    settings.MemoryExtractionEnabled,
-		MemoryExtractionModel:      settings.MemoryExtractionModel,
+		GeminiAPIKey:            maskKey(settings.GeminiAPIKey),
+		GeminiModel:             settings.GeminiModel,
+		DiscordToken:            maskKey(settings.DiscordToken),
+		ProviderType:            settings.ProviderType,
+		BraveAPIKey:             maskKey(settings.BraveAPIKey),
+		WebSearchEnabled:        settings.WebSearchEnabled,
+		DiscordUseReply:         settings.DiscordUseReply,
+		PerplexityAPIKey:        maskKey(settings.PerplexityAPIKey),
+		SearchProvider:          searchProvider,
+		WebFetchEnabled:         settings.WebFetchEnabled,
+		Timezone:                settings.Timezone,
+		TimeFormat:              settings.TimeFormat,
+		Location:                settings.Location,
+		ContextFlushEnabled:     settings.ContextFlushEnabled,
+		ContextFlushThreshold:   settings.ContextFlushThreshold,
+		ContextWindowSize:       settings.ContextWindowSize,
+		LogChannelID:            settings.LogChannelID,
+		DiscordPersonaID:        discordPersonaID,
+		MemoryExtractionEnabled: settings.MemoryExtractionEnabled,
+		MemoryExtractionModel:   settings.MemoryExtractionModel,
 	})
 }
 
@@ -656,17 +659,25 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 			tokens = []*llm.OAuthTokenData{oauthData}
 		}
 		pool := app.NewProviderPool()
+		if s.AutoRetryCount > 0 {
+			pool.SetAutoRetryCount(s.AutoRetryCount)
+		}
 		for _, tokenData := range tokens {
 			if err := llm.RefreshIfNeeded(h.ctx, tokenData, ""); err != nil {
 				logAPI.Warnf("activate-provider: token refresh failed for %s: %v", tokenData.Email, err)
 				continue
+			}
+			if poolPath != "" && tokenData.Email != "" {
+				if err := llm.UpdateOAuthPoolToken(poolPath, tokenData.Email, tokenData); err != nil {
+					logAPI.Warnf("activate-provider: persist refreshed token failed for %s: %v", tokenData.Email, err)
+				}
 			}
 			p, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
 			if err != nil {
 				logAPI.Warnf("activate-provider: provider init failed for %s: %v", tokenData.Email, err)
 				continue
 			}
-			pool.Add(p, tokenData.Email)
+			pool.AddOrReplace(p, tokenData.Email)
 		}
 		if pool.Size() == 0 {
 			return fmt.Errorf("no OAuth accounts available")
@@ -769,10 +780,15 @@ func (h *Handlers) OAuthDetect(w http.ResponseWriter, r *http.Request) {
 type OAuthStartRequest struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
+	Mode         string `json:"mode"`         // "local" | "remote"
+	RedirectURL  string `json:"redirect_url"` // optional override
 }
 
 type OAuthStartResponse struct {
-	AuthURL string `json:"auth_url"`
+	FlowID    string `json:"flow_id"`
+	AuthURL   string `json:"auth_url"`
+	ExpiresAt string `json:"expires_at"`
+	Mode      string `json:"mode"`
 }
 
 func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
@@ -795,23 +811,48 @@ func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		clientSecret = creds.ClientSecret
 	}
 
-	// Always use the default loopback redirect URL (http://127.0.0.1:{port}/...).
-	// Gemini CLI credentials are Desktop type — Google only allows loopback redirects.
-	// For remote deployments, the user pastes the callback URL manually.
-	authURL, err := h.oauthFlow.StartFlow(clientID, clientSecret, "")
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		if isLikelyLocalHost(r.Host) {
+			mode = "local"
+		} else {
+			mode = "remote"
+		}
+	}
+	if mode != "local" && mode != "remote" {
+		writeError(w, http.StatusBadRequest, "mode must be 'local' or 'remote'")
+		return
+	}
+
+	redirectURL := strings.TrimSpace(req.RedirectURL)
+	if redirectURL == "" && mode == "remote" {
+		base := derivePublicBaseURL(r)
+		if base == "" {
+			writeError(w, http.StatusBadRequest, "cannot derive public callback URL for remote mode")
+			return
+		}
+		redirectURL = base + "/api/oauth/gemini/callback"
+	}
+
+	info, err := h.oauthFlow.StartFlowV2(clientID, clientSecret, mode, redirectURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "start OAuth flow: "+err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, OAuthStartResponse{AuthURL: authURL})
+	writeJSON(w, http.StatusOK, OAuthStartResponse{
+		FlowID:    info.FlowID,
+		AuthURL:   info.AuthURL,
+		ExpiresAt: info.ExpiresAt.Format(time.RFC3339),
+		Mode:      info.Mode,
+	})
 }
 
 // completeOAuthCallback is the shared logic for both automatic and manual OAuth callbacks.
-func (h *Handlers) completeOAuthCallback(code, state string) (email string, err error) {
-	tokenData, err := h.oauthFlow.HandleCallback(h.ctx, code, state)
+func (h *Handlers) completeOAuthCallback(flowID, code, state string) (*llm.OAuthTokenData, error) {
+	tokenData, err := h.oauthFlow.HandleCallbackWithFlow(h.ctx, flowID, code, state)
 	if err != nil {
-		return "", fmt.Errorf("token exchange: %w", err)
+		return nil, fmt.Errorf("token exchange: %w", err)
 	}
 
 	model := "gemini-2.5-pro"
@@ -821,7 +862,7 @@ func (h *Handlers) completeOAuthCallback(code, state string) (email string, err 
 
 	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
 	if err != nil {
-		return "", fmt.Errorf("provider creation: %w", err)
+		return nil, fmt.Errorf("provider creation: %w", err)
 	}
 
 	pool := h.providerManager.GetPool()
@@ -829,7 +870,7 @@ func (h *Handlers) completeOAuthCallback(code, state string) (email string, err 
 		pool = app.NewProviderPool()
 		h.providerManager.Update(pool)
 	}
-	pool.Add(provider, tokenData.Email)
+	pool.AddOrReplace(provider, tokenData.Email)
 	logAPI.Logf("OAuth account added to pool: %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
@@ -838,20 +879,21 @@ func (h *Handlers) completeOAuthCallback(code, state string) (email string, err 
 		_ = h.settingsStore.Save(s)
 	}
 
-	return tokenData.Email, nil
+	return tokenData, nil
 }
 
 // OAuthCallback handles the automatic redirect from Google (GET).
 func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
+	flowID := r.URL.Query().Get("flow_id")
 
 	if code == "" {
 		http.Error(w, "missing authorization code", http.StatusBadRequest)
 		return
 	}
 
-	email, err := h.completeOAuthCallback(code, state)
+	tokenData, err := h.completeOAuthCallback(flowID, code, state)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
@@ -863,7 +905,7 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"/></head>`+
 		`<body><h2>Gemini OAuth Complete</h2>`+
 		`<p>Account <b>%s</b> added to pool. You can close this window and return to KoukeBOT.</p>`+
-		`<script>window.close()</script></body></html>`, email)
+		`<script>window.close()</script></body></html>`, tokenData.Email)
 }
 
 // OAuthCallbackManual handles the paste-URL fallback for remote deployments (POST).
@@ -871,6 +913,7 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) OAuthCallbackManual(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CallbackURL string `json:"callback_url"`
+		FlowID      string `json:"flow_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -886,13 +929,87 @@ func (h *Handlers) OAuthCallbackManual(w http.ResponseWriter, r *http.Request) {
 	code := parsed.Query().Get("code")
 	state := parsed.Query().Get("state")
 
-	email, err := h.completeOAuthCallback(code, state)
+	tokenData, err := h.completeOAuthCallback(req.FlowID, code, state)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"email": email, "status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"email":      tokenData.Email,
+		"project_id": tokenData.ProjectID,
+		"status":     "ok",
+	})
+}
+
+// OAuthComplete handles explicit flow completion for remote fallback.
+func (h *Handlers) OAuthComplete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FlowID      string `json:"flow_id"`
+		CallbackURL string `json:"callback_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.FlowID) == "" {
+		writeError(w, http.StatusBadRequest, "flow_id is required")
+		return
+	}
+
+	parsed, err := url.Parse(req.CallbackURL)
+	if err != nil || parsed.Query().Get("code") == "" {
+		writeError(w, http.StatusBadRequest, "invalid callback URL: missing code parameter")
+		return
+	}
+
+	code := parsed.Query().Get("code")
+	state := parsed.Query().Get("state")
+
+	tokenData, err := h.completeOAuthCallback(req.FlowID, code, state)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"email":      tokenData.Email,
+		"project_id": tokenData.ProjectID,
+		"status":     "ok",
+	})
+}
+
+func isLikelyLocalHost(hostport string) bool {
+	host := hostport
+	if parsedHost, _, err := net.SplitHostPort(hostport); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(strings.TrimSpace(strings.ToLower(host)), "[]")
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func derivePublicBaseURL(r *http.Request) string {
+	if v := strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")); v != "" {
+		return strings.TrimSuffix(v, "/")
+	}
+
+	proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		return ""
+	}
+
+	return strings.TrimSuffix(fmt.Sprintf("%s://%s", proto, host), "/")
 }
 
 // OAuthImportPastedToken accepts raw oauth_creds.json content pasted by the user.
@@ -935,7 +1052,7 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 		pool = app.NewProviderPool()
 		h.providerManager.Update(pool)
 	}
-	pool.Add(provider, tokenData.Email)
+	pool.AddOrReplace(provider, tokenData.Email)
 	logAPI.Logf("Imported pasted token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
@@ -976,7 +1093,7 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 		pool = app.NewProviderPool()
 		h.providerManager.Update(pool)
 	}
-	pool.Add(provider, tokenData.Email)
+	pool.AddOrReplace(provider, tokenData.Email)
 	logAPI.Logf("Imported Gemini CLI token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 

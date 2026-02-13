@@ -1,4 +1,4 @@
-import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, OAuthDetectResult, OAuthStartResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation, PoolEntry } from './types'
+import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, OAuthDetectResult, OAuthStartResult, OAuthCompleteResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation, PoolEntry } from './types'
 
 const BASE = '/api'
 
@@ -67,19 +67,37 @@ export function detectGeminiCLI(): Promise<OAuthDetectResult> {
   return fetchJSON(`${BASE}/oauth/gemini/detect`, { method: 'POST' })
 }
 
-export function startGeminiOAuth(clientId?: string, clientSecret?: string): Promise<OAuthStartResult> {
+export function startGeminiOAuth(options?: {
+  clientId?: string
+  clientSecret?: string
+  mode?: 'local' | 'remote'
+  redirectUrl?: string
+}): Promise<OAuthStartResult> {
   return fetchJSON(`${BASE}/oauth/gemini/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: clientId ?? '', client_secret: clientSecret ?? '' }),
+    body: JSON.stringify({
+      client_id: options?.clientId ?? '',
+      client_secret: options?.clientSecret ?? '',
+      mode: options?.mode ?? '',
+      redirect_url: options?.redirectUrl ?? '',
+    }),
   })
 }
 
-export function submitOAuthCallback(callbackUrl: string): Promise<{ email: string; status: string }> {
+export function submitOAuthCallback(callbackUrl: string): Promise<OAuthCompleteResult> {
   return fetchJSON(`${BASE}/oauth/gemini/callback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ callback_url: callbackUrl }),
+  })
+}
+
+export function completeGeminiOAuth(flowId: string, callbackUrl: string): Promise<OAuthCompleteResult> {
+  return fetchJSON(`${BASE}/oauth/gemini/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flow_id: flowId, callback_url: callbackUrl }),
   })
 }
 

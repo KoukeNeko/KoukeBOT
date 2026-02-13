@@ -26,23 +26,47 @@ type Message struct {
 	RawLLMInput  string     `json:"raw_llm_input,omitempty"`  // Raw prompt sent to LLM (for debugging/transparency)
 	RawLLMOutput string     `json:"raw_llm_output,omitempty"` // Raw response from LLM (for debugging/transparency)
 	Timestamp    time.Time  `json:"timestamp"`
-	ImageRefs    []ImageRef `json:"image_refs,omitempty"`     // References to persisted images
+	ImageRefs    []ImageRef `json:"image_refs,omitempty"` // References to persisted images
+}
+
+// ConversationDigest is a compact structured summary of older history.
+// It allows token-efficient recall without replaying full raw turns.
+type ConversationDigest struct {
+	ID          string    `json:"id"`
+	Summary     string    `json:"summary"`
+	Facts       []string  `json:"facts,omitempty"`
+	Preferences []string  `json:"preferences,omitempty"`
+	OpenItems   []string  `json:"open_items,omitempty"`
+	Decisions   []string  `json:"decisions,omitempty"`
+	Keywords    []string  `json:"keywords,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Conversation tracks the full dialogue state for a channel-persona pair.
 type Conversation struct {
-	ID               string    `json:"id"`
-	ChannelID        string    `json:"channel_id"`
-	PersonaID        string    `json:"persona_id"`
-	Messages         []Message `json:"messages"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	CumulativeTokens int       `json:"cumulative_tokens"` // Running total for context window tracking
+	ID               string               `json:"id"`
+	ChannelID        string               `json:"channel_id"`
+	PersonaID        string               `json:"persona_id"`
+	Messages         []Message            `json:"messages"`
+	ContextDigests   []ConversationDigest `json:"context_digests,omitempty"`
+	CreatedAt        time.Time            `json:"created_at"`
+	UpdatedAt        time.Time            `json:"updated_at"`
+	CumulativeTokens int                  `json:"cumulative_tokens"` // Running total for context window tracking
 }
 
 // UpdateTokenUsage adds the token count from a turn to the cumulative total.
 func (c *Conversation) UpdateTokenUsage(tokens int) {
 	c.CumulativeTokens += tokens
+}
+
+// AddDigest appends a digest and caps retention to avoid unbounded growth.
+func (c *Conversation) AddDigest(digest ConversationDigest) {
+	const maxDigests = 64
+	c.ContextDigests = append(c.ContextDigests, digest)
+	if len(c.ContextDigests) > maxDigests {
+		c.ContextDigests = c.ContextDigests[len(c.ContextDigests)-maxDigests:]
+	}
+	c.UpdatedAt = time.Now()
 }
 
 // AppendUserMessage adds a user message and updates the timestamp.

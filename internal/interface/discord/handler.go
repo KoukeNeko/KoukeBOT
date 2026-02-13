@@ -25,7 +25,8 @@ const (
 	// Timeout for a single LLM call
 	llmTimeout = 300 * time.Second
 	// Channel history limit (same as openclaw's DEFAULT_GROUP_HISTORY_LIMIT)
-	defaultGroupHistoryLimit = 50
+	defaultGroupHistoryLimit = 24
+	defaultHistoryTarget     = 12
 	// Context markers — re-exported from domain for local use
 	historyContextMarker = domain.HistoryContextMarker
 	currentMessageMarker = domain.CurrentMessageMarker
@@ -575,7 +576,8 @@ func resolveSenderLabel(author *discordgo.User) string {
 
 // formatInboundEnvelope formats a message with openclaw-style envelope.
 // Format: [Discord sender (id: userID) timestamp] body
-//         [from: sender (id: userID)]
+//
+//	[from: sender (id: userID)]
 func formatInboundEnvelope(channel, sender, userID, timestamp, body string) string {
 	envelope := fmt.Sprintf("[%s %s (id: %s) %s] %s", channel, sender, userID, timestamp, body)
 	if sender != "" {
@@ -666,6 +668,7 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, cu
 	const (
 		maxHistoryImageScan = 10 // only scan last N messages for images
 		maxHistoryImages    = 5  // collect at most this many images
+		historyCharBudget   = 4500
 	)
 
 	messages, err := s.ChannelMessages(channelID, defaultGroupHistoryLimit, currentMessageID, "", "")
@@ -681,6 +684,7 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, cu
 	// Build history entries (reverse order - oldest first)
 	var entries []domain.ChannelHistoryEntry
 	imageCount := 0
+	usedChars := 0
 
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
@@ -721,9 +725,17 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, cu
 			}
 		}
 
-		// Truncate long messages to avoid excessive token usage
+		// Dynamic truncation by remaining budget.
 		if len(content) > 200 {
 			content = content[:200] + "..."
+		}
+		remaining := historyCharBudget - usedChars
+		hasImages := len(entryImages) > 0
+		if remaining <= 0 && !hasImages && len(entries) >= defaultHistoryTarget {
+			continue
+		}
+		if remaining > 0 && len(content) > remaining && !hasImages && len(entries) >= 6 {
+			content = content[:remaining] + "..."
 		}
 
 		// Format with envelope
@@ -739,6 +751,12 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, cu
 			FormattedText: formattedMsg,
 			Images:        entryImages,
 		})
+		usedChars += len(formattedMsg)
+
+		// Stop once we already have enough entries and budget is mostly consumed.
+		if len(entries) >= defaultHistoryTarget && usedChars >= historyCharBudget {
+			break
+		}
 	}
 
 	return entries

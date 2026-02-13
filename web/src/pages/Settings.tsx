@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
+  startGeminiOAuth,
+  completeGeminiOAuth,
   getSettings,
   updateSettings,
   getProviderStatus,
@@ -58,8 +60,22 @@ export default function Settings() {
 
   // OAuth state
   const [providerTab, setProviderTab] = useState<ProviderTab>("api-key");
-  const [, setOAuthStatus] = useState<OAuthStatus | null>(null);
-  const oauthStarting = false;
+  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus | null>(null);
+  const [oauthStarting, setOAuthStarting] = useState(false);
+  const [oauthCompleting, setOAuthCompleting] = useState(false);
+  const [oauthMode, setOAuthMode] = useState<"local" | "remote">(() => {
+    const host = window.location.hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1"
+      ? "local"
+      : "remote";
+  });
+  const [oauthFlow, setOAuthFlow] = useState<{
+    flow_id: string;
+    auth_url: string;
+    expires_at: string;
+    mode: "local" | "remote";
+  } | null>(null);
+  const [oauthCallbackURL, setOAuthCallbackURL] = useState("");
   const [addAccountOpen, setAddAccountOpen] = useState(false);
   const [importingCLI, setImportingCLI] = useState(false);
   const [pastedTokenJSON, setPastedTokenJSON] = useState("");
@@ -69,14 +85,29 @@ export default function Settings() {
   const [pool, setPool] = useState<PoolEntry[]>([]);
   const [removingEmail, setRemovingEmail] = useState<string | null>(null);
 
-  const refreshPool = useCallback(async () => {
+  const refreshPool = useCallback(async (): Promise<PoolEntry[]> => {
     try {
       const entries = await getOAuthPool();
       setPool(entries);
+      return entries;
     } catch {
       // Pool endpoint may not be available if no pool is active
+      setPool([]);
+      return [];
     }
   }, []);
+
+  const refreshOAuthSnapshot = useCallback(async () => {
+    const [oauth, st, poolEntries] = await Promise.all([
+      getOAuthStatus(),
+      getProviderStatus(),
+      refreshPool(),
+    ]);
+    setOAuthStatus(oauth);
+    setStatus(st);
+    setPool(poolEntries);
+    return { oauth, poolEntries };
+  }, [refreshPool]);
 
   useEffect(() => {
     Promise.all([
@@ -136,15 +167,112 @@ export default function Settings() {
     }
   };
 
+  const pollOAuthCompletion = useCallback(
+    async (previousPoolSize: number, timeoutMs: number): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        try {
+          const { oauth, poolEntries } = await refreshOAuthSnapshot();
+          const poolSize = poolEntries.length;
+          if (poolSize > previousPoolSize || (oauth.pool_size ?? 0) > previousPoolSize) {
+            return true;
+          }
+        } catch {
+          // Ignore polling error and continue until timeout.
+        }
+      }
+      return false;
+    },
+    [refreshOAuthSnapshot],
+  );
+
+  const handleStartOAuth = async () => {
+    setOAuthStarting(true);
+    setMessage(null);
+    const previousPoolSize = pool.length;
+    try {
+      const start = await startGeminiOAuth({ mode: oauthMode });
+      setOAuthFlow(start);
+      setOAuthCallbackURL("");
+
+      const popup = window.open(
+        start.auth_url,
+        "koukebot-oauth",
+        "popup=yes,width=560,height=760",
+      );
+      if (!popup) {
+        throw new Error("瀏覽器封鎖了授權視窗，請允許 popup 後重試");
+      }
+      popup.focus();
+
+      const completed = await pollOAuthCompletion(
+        previousPoolSize,
+        start.mode === "local" ? 120_000 : 45_000,
+      );
+      if (completed) {
+        setOAuthFlow(null);
+        setAddAccountOpen(false);
+        setMessage({ type: "ok", text: "Google 帳號已連線並加入帳號池。" });
+        return;
+      }
+
+      if (start.mode === "remote") {
+        setMessage({
+          type: "ok",
+          text: "已開啟 OAuth 授權頁。若無法自動完成，請將 callback URL 貼到下方完成綁定。",
+        });
+      } else {
+        setMessage({
+          type: "ok",
+          text: "授權視窗已完成，但尚未偵測到回寫。可將 callback URL 貼到下方手動完成。",
+        });
+      }
+    } catch (e) {
+      setMessage({
+        type: "err",
+        text: e instanceof Error ? e.message : "OAuth 啟動失敗",
+      });
+    } finally {
+      setOAuthStarting(false);
+    }
+  };
+
+  const handleCompleteOAuth = async () => {
+    if (!oauthFlow) {
+      setMessage({ type: "err", text: "找不到 OAuth flow，請重新開始" });
+      return;
+    }
+    if (!oauthCallbackURL.trim()) {
+      setMessage({ type: "err", text: "請貼上 callback URL" });
+      return;
+    }
+
+    setOAuthCompleting(true);
+    setMessage(null);
+    try {
+      const result = await completeGeminiOAuth(oauthFlow.flow_id, oauthCallbackURL.trim());
+      await refreshOAuthSnapshot();
+      setOAuthFlow(null);
+      setOAuthCallbackURL("");
+      setAddAccountOpen(false);
+      setMessage({ type: "ok", text: `OAuth 完成：${result.email}` });
+    } catch (e) {
+      setMessage({
+        type: "err",
+        text: e instanceof Error ? e.message : "OAuth 完成失敗",
+      });
+    } finally {
+      setOAuthCompleting(false);
+    }
+  };
+
   const handleImportCLIToken = async () => {
     setImportingCLI(true);
     setMessage(null);
     try {
       const result = await importGeminiCLIToken();
-      await refreshPool();
-      const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
-      setOAuthStatus(oauth);
-      setStatus(st);
+      await refreshOAuthSnapshot();
       setMessage({ type: "ok", text: `已匯入 Gemini CLI Token：${result.email}` });
       setAddAccountOpen(false);
     } catch (e) {
@@ -160,10 +288,7 @@ export default function Settings() {
     setMessage(null);
     try {
       const result = await importPastedToken(pastedTokenJSON.trim());
-      await refreshPool();
-      const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
-      setOAuthStatus(oauth);
-      setStatus(st);
+      await refreshOAuthSnapshot();
       setMessage({ type: "ok", text: `已匯入 Token：${result.email}` });
       setAddAccountOpen(false);
       setPastedTokenJSON("");
@@ -199,17 +324,11 @@ export default function Settings() {
         </div>
       )}
 
-            {message && (
-
-              <p className={message.type === "ok" ? "success message" : "error message"}>
-
-                {message.text}
-
-              </p>
-
-            )
-
-      }
+      {message && (
+        <p className={message.type === "ok" ? "success message" : "error message"}>
+          {message.text}
+        </p>
+      )}
 
       <section className="settings-section">
         <h3 className="settings-section-title">LLM Provider</h3>
@@ -262,6 +381,21 @@ export default function Settings() {
 
           {providerTab === "oauth" && (
             <>
+              <div className="oauth-status-banner">
+                {oauthStatus?.authenticated ? (
+                  <p className="meta">
+                    已驗證帳號：<code>{oauthStatus.email}</code>
+                    {oauthStatus.project_id && (
+                      <>
+                        {" "}| Project: <code>{oauthStatus.project_id}</code>
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  <p className="meta">尚未完成 OAuth 綁定，請先新增帳號。</p>
+                )}
+              </div>
+
               {/* Pool accounts list */}
               {pool.length > 0 && (
                 <div className="pool-cards compact">
@@ -328,6 +462,28 @@ export default function Settings() {
                                   </div>
                                 </>
                               )}
+                              {(entry.consecutive_failures ?? 0) > 0 && (
+                                <>
+                                  <div className="pool-quota-row">
+                                    <span className="pool-quota-label">連續失敗:</span>
+                                    <span className="pool-quota-total">{entry.consecutive_failures}</span>
+                                  </div>
+                                  {entry.last_error && (
+                                    <div className="pool-quota-row">
+                                      <span className="pool-quota-label">最後錯誤:</span>
+                                      <span className="pool-quota-time">{entry.last_error.slice(0, 64)}</span>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              {entry.last_success_at && (
+                                <div className="pool-quota-row">
+                                  <span className="pool-quota-label">最後成功:</span>
+                                  <span className="pool-quota-time">
+                                    {new Date(entry.last_success_at).toLocaleString("zh-TW")}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -339,10 +495,7 @@ export default function Settings() {
                           setRemovingEmail(entry.email);
                           try {
                             await removeOAuthPoolAccount(entry.email);
-                            await refreshPool();
-                            const [oauth, st] = await Promise.all([getOAuthStatus(), getProviderStatus()]);
-                            setOAuthStatus(oauth);
-                            setStatus(st);
+                            await refreshOAuthSnapshot();
                             setMessage({ type: "ok", text: `已移除 ${entry.email}` });
                           } catch (e) {
                             setMessage({ type: "err", text: e instanceof Error ? e.message : "移除失敗" });
@@ -363,7 +516,11 @@ export default function Settings() {
               {/* Add account button */}
               <button
                 className="btn-secondary pool-add-account-button"
-                onClick={() => setAddAccountOpen(true)}
+                onClick={() => {
+                  setOAuthFlow(null);
+                  setOAuthCallbackURL("");
+                  setAddAccountOpen(true);
+                }}
                 style={{ marginTop: pool.length > 0 ? "0.75rem" : 0 }}
               >
                 <span style={{ fontSize: "1.1rem" }}>+</span> 新增帳號
@@ -388,8 +545,6 @@ export default function Settings() {
               )}
             </>
           )}
-
-
         </div>
       </section>
 
@@ -397,14 +552,14 @@ export default function Settings() {
 
       {/* Add Account Modal */}
       {addAccountOpen && (
-        <div className="modal-overlay" onClick={() => !oauthStarting && setAddAccountOpen(false)}>
+        <div className="modal-overlay" onClick={() => !(oauthStarting || oauthCompleting) && setAddAccountOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title">新增 Google 帳號</h3>
               <button
                 className="modal-close"
-                onClick={() => !oauthStarting && setAddAccountOpen(false)}
-                disabled={oauthStarting}
+                onClick={() => !(oauthStarting || oauthCompleting) && setAddAccountOpen(false)}
+                disabled={oauthStarting || oauthCompleting}
               >
                 &times;
               </button>
@@ -417,10 +572,77 @@ export default function Settings() {
                 </p>
               )}
 
-              {/* Primary: Paste token JSON */}
+              {/* Primary: Browser OAuth flow */}
               <div className="oauth-detect-block">
                 <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
-                  在本地電腦執行 Gemini CLI 登入後，貼上 Token 檔案內容：
+                  推薦：直接使用 Google OAuth 授權，會自動加入帳號池。
+                </p>
+                <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+                  <button
+                    className={oauthMode === "local" ? "btn-primary" : "btn-secondary"}
+                    type="button"
+                    onClick={() => setOAuthMode("local")}
+                    disabled={oauthStarting || oauthCompleting}
+                  >
+                    Local 模式
+                  </button>
+                  <button
+                    className={oauthMode === "remote" ? "btn-primary" : "btn-secondary"}
+                    type="button"
+                    onClick={() => setOAuthMode("remote")}
+                    disabled={oauthStarting || oauthCompleting}
+                  >
+                    Remote 模式
+                  </button>
+                </div>
+                <button
+                  onClick={handleStartOAuth}
+                  disabled={oauthStarting || oauthCompleting}
+                  className="btn-primary"
+                >
+                  {oauthStarting ? "連線中..." : "Connect Google Account"}
+                </button>
+                {oauthFlow && (
+                  <div className="meta oauth-meta" style={{ marginTop: "0.6rem" }}>
+                    <div>
+                      flow_id: <code>{oauthFlow.flow_id}</code>
+                    </div>
+                    <div>
+                      expires: <code>{new Date(oauthFlow.expires_at).toLocaleString("zh-TW")}</code>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {(oauthFlow || oauthMode === "remote") && (
+                <div className="oauth-detect-block">
+                  <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
+                    若無法自動 callback，請把瀏覽器最終網址（含 <code>code</code> 與 <code>state</code>）貼到這裡：
+                  </p>
+                  <textarea
+                    value={oauthCallbackURL}
+                    onChange={(e) => setOAuthCallbackURL(e.target.value)}
+                    placeholder="http://localhost:8080/api/oauth/gemini/callback?code=...&state=..."
+                    rows={3}
+                    style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
+                    disabled={oauthCompleting}
+                  />
+                  <button
+                    onClick={handleCompleteOAuth}
+                    disabled={oauthCompleting || !oauthCallbackURL.trim() || !oauthFlow}
+                    className="btn-secondary"
+                  >
+                    {oauthCompleting ? "完成中..." : "Complete OAuth"}
+                  </button>
+                </div>
+              )}
+
+              <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
+
+              {/* Fallback 1: Paste token JSON */}
+              <div className="oauth-detect-block">
+                <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
+                  Fallback：在本地電腦執行 Gemini CLI 登入後，貼上 Token 檔案內容。
                 </p>
                 <ol className="meta oauth-meta" style={{ margin: "0 0 0.75rem 1.2rem", padding: 0, lineHeight: 1.8 }}>
                   <li>安裝並登入：<code>npx @google/gemini-cli</code></li>
@@ -446,7 +668,7 @@ export default function Settings() {
 
               <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
 
-              {/* Secondary: Import from server filesystem */}
+              {/* Fallback 2: Import from server filesystem */}
               <div className="oauth-detect-block">
                 <button
                   onClick={handleImportCLIToken}

@@ -88,7 +88,16 @@ export interface OAuthDetectResult {
 }
 
 export interface OAuthStartResult {
+  flow_id: string
   auth_url: string
+  expires_at: string
+  mode: 'local' | 'remote'
+}
+
+export interface OAuthCompleteResult {
+  email: string
+  project_id: string
+  status: string
 }
 
 export interface OAuthStatus {
@@ -109,6 +118,11 @@ export interface PoolEntry {
   request_count: number    // requests since last reset
   total_requests: number   // lifetime requests
   last_reset_time: string  // ISO timestamp
+
+  // Health tracking
+  consecutive_failures?: number
+  last_error?: string
+  last_success_at?: string
 }
 
 export interface Message {
@@ -139,8 +153,20 @@ export interface Conversation {
   channel_id: string
   persona_id: string
   messages: Message[]
+  context_digests?: ConversationDigest[]
   created_at: string
   updated_at: string
+}
+
+export interface ConversationDigest {
+  id: string
+  summary: string
+  facts?: string[]
+  preferences?: string[]
+  open_items?: string[]
+  decisions?: string[]
+  keywords?: string[]
+  created_at: string
 }
 
 export interface ConversationSummary {

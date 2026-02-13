@@ -69,19 +69,37 @@ type OAuthTokenData struct {
 	Email        string    `json:"email,omitempty"`
 }
 
+type oauthFlowState struct {
+	FlowID       string
+	State        string
+	CodeVerifier string
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+	Mode         string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+}
+
+// OAuthStartInfo contains metadata for an OAuth flow creation response.
+type OAuthStartInfo struct {
+	FlowID      string    `json:"flow_id"`
+	AuthURL     string    `json:"auth_url"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Mode        string    `json:"mode"`
+	RedirectURL string    `json:"redirect_url,omitempty"`
+}
+
 // GeminiOAuthFlow manages the entire OAuth lifecycle.
 type GeminiOAuthFlow struct {
 	mu          sync.Mutex
 	tokenPath   string
 	poolPath    string // Pool file path (e.g., data/oauth_pool.json)
 	redirectURL string // e.g., http://localhost:8080/api/oauth/gemini/callback
+	flowTTL     time.Duration
 
-	// In-flight OAuth state (single concurrent flow).
-	state           string
-	codeVerifier    string
-	clientID        string
-	clientSecret    string
-	flowRedirectURL string // per-flow redirect URL (overrides default)
+	// In-flight OAuth states (supports concurrent browser flows).
+	flows map[string]*oauthFlowState
 }
 
 // NewGeminiOAuthFlow creates a new flow manager.
@@ -90,6 +108,8 @@ func NewGeminiOAuthFlow(tokenPath, poolPath, redirectURL string) *GeminiOAuthFlo
 		tokenPath:   tokenPath,
 		poolPath:    poolPath,
 		redirectURL: redirectURL,
+		flowTTL:     10 * time.Minute,
+		flows:       make(map[string]*oauthFlowState),
 	}
 }
 
@@ -383,63 +403,140 @@ func generateState() string {
 
 // --- OAuth Flow ---
 
-// StartFlow generates an OAuth authorization URL and stores in-flight state.
-// If redirectURL is non-empty it overrides the default redirect URL for this flow.
-func (f *GeminiOAuthFlow) StartFlow(clientID, clientSecret, redirectURL string) (authURL string, err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.clientID = clientID
-	f.clientSecret = clientSecret
-	f.state = generateState()
-	f.codeVerifier, _ = generatePKCE()
-
-	// Use per-flow redirect URL if provided, otherwise fall back to default.
-	redir := f.redirectURL
-	if redirectURL != "" {
-		redir = redirectURL
+func generateFlowID() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		panic("crypto/rand failed: " + err.Error())
 	}
-	f.flowRedirectURL = redir
+	return hex.EncodeToString(buf)
+}
 
-	challenge := sha256.Sum256([]byte(f.codeVerifier))
+func (f *GeminiOAuthFlow) cleanupExpiredFlowsLocked() {
+	now := time.Now()
+	for id, flow := range f.flows {
+		if flow.ExpiresAt.Before(now) {
+			delete(f.flows, id)
+		}
+	}
+}
+
+func (f *GeminiOAuthFlow) resolveFlowLocked(flowID, state string) (*oauthFlowState, error) {
+	if flowID != "" {
+		flow, ok := f.flows[flowID]
+		if !ok {
+			return nil, errors.New("invalid or expired OAuth flow")
+		}
+		if state != "" && state != flow.State {
+			return nil, errors.New("invalid OAuth state for flow")
+		}
+		delete(f.flows, flowID)
+		return flow, nil
+	}
+
+	for id, flow := range f.flows {
+		if flow.State == state {
+			delete(f.flows, id)
+			return flow, nil
+		}
+	}
+	return nil, errors.New("invalid or expired OAuth state")
+}
+
+func buildAuthURL(clientID, redirectURL, state, codeVerifier string) string {
+	challenge := sha256.Sum256([]byte(codeVerifier))
 	codeChallenge := base64.RawURLEncoding.EncodeToString(challenge[:])
 
 	params := url.Values{
 		"client_id":             {clientID},
 		"response_type":         {"code"},
-		"redirect_uri":          {redir},
+		"redirect_uri":          {redirectURL},
 		"scope":                 {strings.Join(oauthScopes, " ")},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
-		"state":                 {f.state},
+		"state":                 {state},
 		"access_type":           {"offline"},
 		"prompt":                {"consent"},
 	}
 
-	return oauthAuthURL + "?" + params.Encode(), nil
+	return oauthAuthURL + "?" + params.Encode()
 }
 
-// HandleCallback processes the OAuth callback, exchanges code for tokens,
-// discovers the project, and persists the result.
-func (f *GeminiOAuthFlow) HandleCallback(ctx context.Context, code, state string) (*OAuthTokenData, error) {
-	f.mu.Lock()
-	expectedState := f.state
-	verifier := f.codeVerifier
-	clientID := f.clientID
-	clientSecret := f.clientSecret
-	redirectURL := f.flowRedirectURL
-	// Clear in-flight state.
-	f.state = ""
-	f.codeVerifier = ""
-	f.flowRedirectURL = ""
-	f.mu.Unlock()
+// StartFlow generates an OAuth authorization URL and stores in-flight state.
+// If redirectURL is non-empty it overrides the default redirect URL for this flow.
+func (f *GeminiOAuthFlow) StartFlow(clientID, clientSecret, redirectURL string) (authURL string, err error) {
+	info, err := f.StartFlowV2(clientID, clientSecret, "local", redirectURL)
+	if err != nil {
+		return "", err
+	}
+	return info.AuthURL, nil
+}
 
-	if expectedState == "" || state != expectedState {
-		return nil, errors.New("invalid or expired OAuth state")
+// StartFlowV2 creates a concurrent-safe OAuth flow and returns metadata for UI/API usage.
+func (f *GeminiOAuthFlow) StartFlowV2(clientID, clientSecret, mode, redirectURL string) (*OAuthStartInfo, error) {
+	if strings.TrimSpace(clientID) == "" {
+		return nil, errors.New("client_id is required")
+	}
+	if mode == "" {
+		mode = "local"
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.cleanupExpiredFlowsLocked()
+
+	redir := f.redirectURL
+	if strings.TrimSpace(redirectURL) != "" {
+		redir = strings.TrimSpace(redirectURL)
+	}
+
+	flowID := generateFlowID()
+	state := generateState()
+	verifier, _ := generatePKCE()
+	now := time.Now()
+	flow := &oauthFlowState{
+		FlowID:       flowID,
+		State:        state,
+		CodeVerifier: verifier,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redir,
+		Mode:         mode,
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(f.flowTTL),
+	}
+	f.flows[flowID] = flow
+
+	authURL := buildAuthURL(clientID, redir, state, verifier)
+
+	return &OAuthStartInfo{
+		FlowID:      flowID,
+		AuthURL:     authURL,
+		ExpiresAt:   flow.ExpiresAt,
+		Mode:        mode,
+		RedirectURL: redir,
+	}, nil
+}
+
+// HandleCallback processes the OAuth callback by state lookup.
+// Kept for backward compatibility.
+func (f *GeminiOAuthFlow) HandleCallback(ctx context.Context, code, state string) (*OAuthTokenData, error) {
+	return f.HandleCallbackWithFlow(ctx, "", code, state)
+}
+
+// HandleCallbackWithFlow processes the OAuth callback, exchanges code for tokens,
+// discovers the project, and persists the result.
+func (f *GeminiOAuthFlow) HandleCallbackWithFlow(ctx context.Context, flowID, code, state string) (*OAuthTokenData, error) {
+	f.mu.Lock()
+	f.cleanupExpiredFlowsLocked()
+	flow, err := f.resolveFlowLocked(flowID, state)
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
 
 	// Exchange authorization code for tokens.
-	token, err := exchangeCode(ctx, clientID, clientSecret, code, verifier, redirectURL)
+	token, err := exchangeCode(ctx, flow.ClientID, flow.ClientSecret, code, flow.CodeVerifier, flow.RedirectURL)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
@@ -454,8 +551,8 @@ func (f *GeminiOAuthFlow) HandleCallback(ctx context.Context, code, state string
 	}
 
 	data := &OAuthTokenData{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
+		ClientID:     flow.ClientID,
+		ClientSecret: flow.ClientSecret,
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
 		TokenType:    token.TokenType,
@@ -518,9 +615,9 @@ func fetchUserEmail(ctx context.Context, accessToken string) (string, error) {
 
 func codeAssistHeaders(accessToken string) map[string]string {
 	return map[string]string{
-		"Authorization":    "Bearer " + accessToken,
-		"Content-Type":     "application/json",
-		"User-Agent":       "google-api-nodejs-client/9.15.1",
+		"Authorization":     "Bearer " + accessToken,
+		"Content-Type":      "application/json",
+		"User-Agent":        "google-api-nodejs-client/9.15.1",
 		"X-Goog-Api-Client": "gl-node/koukeBOT",
 	}
 }
@@ -738,6 +835,11 @@ func RefreshIfNeeded(ctx context.Context, data *OAuthTokenData, tokenPath string
 	data.Expiry = newToken.Expiry
 	if newToken.RefreshToken != "" {
 		data.RefreshToken = newToken.RefreshToken
+	}
+
+	// Caller may choose to persist elsewhere (e.g., OAuth pool by email).
+	if tokenPath == "" {
+		return nil
 	}
 
 	return saveTokenData(tokenPath, data)

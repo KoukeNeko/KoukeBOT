@@ -77,6 +77,7 @@ func (s *SettingsStore) Load() (Settings, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return Settings{}, err
 	}
+	settings.ProviderType = normalizeProviderType(settings.ProviderType)
 	return settings, nil
 }
 
@@ -84,6 +85,8 @@ func (s *SettingsStore) Load() (Settings, error) {
 func (s *SettingsStore) Save(settings Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	settings.ProviderType = normalizeProviderType(settings.ProviderType)
 
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
@@ -95,4 +98,16 @@ func (s *SettingsStore) Save(settings Settings) error {
 	}
 
 	return os.WriteFile(s.path, data, 0o600)
+}
+
+func normalizeProviderType(providerType string) string {
+	switch providerType {
+	case "", ProviderAPIKey, ProviderOAuth:
+		return providerType
+	case "cli":
+		return ProviderOAuth
+	default:
+		// Backward compatibility: legacy non-empty values map to OAuth.
+		return ProviderOAuth
+	}
 }

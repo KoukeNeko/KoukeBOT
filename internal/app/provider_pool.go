@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,9 +25,15 @@ type poolEntry struct {
 	lastUsed       time.Time // for load balancing
 
 	// Quota tracking
-	requestCount   int       // requests since last reset
-	lastResetTime  time.Time // when quota counter was last reset
-	totalRequests  int       // lifetime request count
+	requestCount  int       // requests since last reset
+	lastResetTime time.Time // when quota counter was last reset
+	totalRequests int       // lifetime request count
+
+	// Health tracking
+	consecutiveFailures int
+	lastError           string
+	lastSuccessAt       time.Time
+	lastFailureAt       time.Time
 }
 
 // PoolStatus is the public view of a pool entry for API responses.
@@ -37,9 +44,14 @@ type PoolStatus struct {
 	Current        bool       `json:"current"`
 
 	// Quota tracking
-	RequestCount   int       `json:"request_count"`    // requests since last reset
-	TotalRequests  int       `json:"total_requests"`   // lifetime requests
-	LastResetTime  time.Time `json:"last_reset_time"`  // when quota counter was reset
+	RequestCount  int       `json:"request_count"`   // requests since last reset
+	TotalRequests int       `json:"total_requests"`  // lifetime requests
+	LastResetTime time.Time `json:"last_reset_time"` // when quota counter was reset
+
+	// Health tracking
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	LastError           string     `json:"last_error,omitempty"`
+	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
 }
 
 // ProviderPool wraps multiple llm.Provider instances with automatic 429 failover.
@@ -47,7 +59,7 @@ type PoolStatus struct {
 type ProviderPool struct {
 	mu             sync.RWMutex
 	entries        []poolEntry
-	current        int // round-robin index
+	current        int // weighted round-robin pointer
 	lastUsedEmail  string
 	tools          []domain.Tool
 	autoRetryCount int // number of retries for short-delay 429s
@@ -64,17 +76,40 @@ func NewProviderPool() *ProviderPool {
 func (pp *ProviderPool) SetAutoRetryCount(count int) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
+	if count < 0 {
+		count = 0
+	}
 	pp.autoRetryCount = count
 }
 
-// Add appends a provider to the pool.
+// Add appends or replaces a provider in the pool.
 func (pp *ProviderPool) Add(provider llm.Provider, email string) {
+	pp.AddOrReplace(provider, email)
+}
+
+// AddOrReplace inserts a new account or replaces an existing one with the same email.
+func (pp *ProviderPool) AddOrReplace(provider llm.Provider, email string) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
 
-	// Register existing tools with the new provider
+	// Register existing tools with the provider immediately.
 	if len(pp.tools) > 0 {
 		provider.RegisterTools(pp.tools)
+	}
+
+	for i := range pp.entries {
+		if pp.entries[i].email != email {
+			continue
+		}
+		pp.entries[i].provider = provider
+		pp.entries[i].exhaustedUntil = time.Time{}
+		pp.entries[i].consecutiveFailures = 0
+		pp.entries[i].lastError = ""
+		if pp.entries[i].lastResetTime.IsZero() {
+			pp.entries[i].lastResetTime = time.Now()
+		}
+		logPool.Logf("pool: replaced %s (%d account(s))", email, len(pp.entries))
+		return
 	}
 
 	pp.entries = append(pp.entries, poolEntry{
@@ -125,17 +160,62 @@ func (pp *ProviderPool) Entries() []PoolStatus {
 			t := e.exhaustedUntil
 			until = &t
 		}
+		var lastSuccessAt *time.Time
+		if !e.lastSuccessAt.IsZero() {
+			t := e.lastSuccessAt
+			lastSuccessAt = &t
+		}
 		result[i] = PoolStatus{
-			Email:          e.email,
-			Status:         status,
-			ExhaustedUntil: until,
-			Current:        e.email == pp.lastUsedEmail,
-			RequestCount:   e.requestCount,
-			TotalRequests:  e.totalRequests,
-			LastResetTime:  e.lastResetTime,
+			Email:               e.email,
+			Status:              status,
+			ExhaustedUntil:      until,
+			Current:             e.email == pp.lastUsedEmail,
+			RequestCount:        e.requestCount,
+			TotalRequests:       e.totalRequests,
+			LastResetTime:       e.lastResetTime,
+			ConsecutiveFailures: e.consecutiveFailures,
+			LastError:           e.lastError,
+			LastSuccessAt:       lastSuccessAt,
 		}
 	}
 	return result
+}
+
+// SelectNextProvider chooses the next best available account.
+// Selection policy: available first, healthier accounts first, then light round-robin.
+func (pp *ProviderPool) SelectNextProvider() (llm.Provider, string, bool) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+
+	idx, ok := pp.selectNextProviderLocked(time.Now())
+	if !ok {
+		return nil, "", false
+	}
+	entry := pp.entries[idx]
+	pp.current = (idx + 1) % len(pp.entries)
+	pp.lastUsedEmail = entry.email
+	return entry.provider, entry.email, true
+}
+
+// MarkTransientFailure marks a short-lived transient failure on an account.
+func (pp *ProviderPool) MarkTransientFailure(email string, err error, cooldown time.Duration) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+
+	entry := pp.findEntryByEmailLocked(email)
+	if entry == nil {
+		return
+	}
+	now := time.Now()
+	entry.consecutiveFailures++
+	entry.lastFailureAt = now
+	entry.lastError = truncateError(err, 240)
+	if cooldown > 0 {
+		next := now.Add(cooldown)
+		if entry.exhaustedUntil.Before(next) {
+			entry.exhaustedUntil = next
+		}
+	}
 }
 
 // Chat implements llm.Provider with automatic 429 failover.
@@ -183,151 +263,230 @@ func (pp *ProviderPool) RegisterTools(tools []domain.Tool) {
 	}
 }
 
-// tryPool is a generic failover function that tries providers in round-robin order.
-// On 429/RESOURCE_EXHAUSTED, it marks the provider as exhausted and tries the next one.
+// tryPool is a generic failover function.
+// Strategy: available-first selection, health-aware rotation, quota-aware failover.
 func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
-	pp.mu.Lock()
+	var zero T
 
-	if len(pp.entries) == 0 {
-		pp.mu.Unlock()
-		var zero T
+	pp.mu.RLock()
+	total := len(pp.entries)
+	pp.mu.RUnlock()
+	if total == 0 {
 		return zero, ErrProviderNotConfigured
 	}
 
-	now := time.Now()
-	tried := 0
-	total := len(pp.entries)
-	startIdx := pp.current
-
-	for tried < total {
-		idx := (startIdx + tried) % total
-		entry := &pp.entries[idx]
-
-		// Skip exhausted providers
-		if !entry.exhaustedUntil.IsZero() && entry.exhaustedUntil.After(now) {
-			tried++
-			continue
+	for tried := 0; tried < total; tried++ {
+		provider, email, ok := pp.SelectNextProvider()
+		if !ok {
+			pp.mu.RLock()
+			earliest := pp.findEarliestResetLocked()
+			totalEntries := len(pp.entries)
+			pp.mu.RUnlock()
+			if earliest != "" {
+				logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
+				return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
+			}
+			return zero, fmt.Errorf("all %d OAuth account(s) exhausted", totalEntries)
 		}
-
-		// Advance round-robin for next call
-		pp.current = (idx + 1) % total
-		email := entry.email
-		provider := entry.provider
-		pp.mu.Unlock()
 
 		result, err := fn(provider)
-
-		// Update usage stats regardless of success/failure
-		pp.mu.Lock()
-		for i := range pp.entries {
-			if pp.entries[i].email == email {
-				// Auto-reset quota counter if it's been more than 24 hours
-				if time.Since(pp.entries[i].lastResetTime) > 24*time.Hour {
-					pp.entries[i].requestCount = 0 // Reset to 0 before incrementing
-					pp.entries[i].lastResetTime = now
-				}
-
-				// Increment counters (includes current request)
-				pp.entries[i].requestCount++
-				pp.entries[i].totalRequests++
-				pp.entries[i].lastUsed = time.Now()
-				break
-			}
-		}
-		pp.lastUsedEmail = email
-		pp.mu.Unlock()
+		pp.recordAttempt(email, time.Now())
 
 		if err == nil {
+			pp.markSuccess(email, time.Now())
 			return result, nil
 		}
 
-		// Classify error type
 		errType := classifyError(err)
-
 		switch errType {
 		case errorQuota:
 			resetDuration := parseResetDelay(err.Error())
 
-			// Short-delay 429: wait and retry same account
+			// Short-delay quota errors: retry same account with exponential backoff + jitter.
 			if resetDuration <= 30*time.Second {
-				pp.mu.Lock()
-				retryCount := pp.autoRetryCount
-				pp.mu.Unlock()
-
+				retryCount := pp.getAutoRetryCount()
 				for retry := 0; retry < retryCount; retry++ {
-					logPool.Logf("account %s: short delay (%s), retry %d/%d...", email, formatDuration(resetDuration), retry+1, retryCount)
-					time.Sleep(resetDuration)
+					wait := exponentialBackoff(resetDuration, retry)
+					logPool.Logf("account %s: short delay (%s), retry %d/%d...", email, formatDuration(wait), retry+1, retryCount)
+					time.Sleep(wait)
 
 					result, err = fn(provider)
+					pp.recordAttempt(email, time.Now())
 					if err == nil {
-						pp.mu.Lock()
-						pp.lastUsedEmail = email
-						for i := range pp.entries {
-							if pp.entries[i].email == email {
-								pp.entries[i].lastUsed = time.Now()
-								break
-							}
-						}
-						pp.mu.Unlock()
+						pp.markSuccess(email, time.Now())
 						return result, nil
 					}
-
-					// Still quota error? Re-parse delay
-					if classifyError(err) == errorQuota {
-						resetDuration = parseResetDelay(err.Error())
-						if resetDuration > 30*time.Second {
-							break // Long delay: switch to next account
-						}
-					} else {
-						break // Non-quota error: stop retrying
+					if classifyError(err) != errorQuota {
+						break
+					}
+					resetDuration = parseResetDelay(err.Error())
+					if resetDuration > 30*time.Second {
+						break
 					}
 				}
 			}
 
-			// Long-delay or retry exhausted: mark exhausted and try next account
-			pp.mu.Lock()
-			for i := range pp.entries {
-				if pp.entries[i].email == email {
-					pp.entries[i].exhaustedUntil = now.Add(resetDuration)
-					break
-				}
-			}
+			pp.markExhausted(email, resetDuration, err)
 			logPool.Logf("account %s exhausted (reset in %s) — trying next...", email, formatDuration(resetDuration))
-			// Log raw error for debugging quota issues
-			errStr := err.Error()
-			if len(errStr) > 300 {
-				errStr = errStr[:300] + "..."
-			}
-			logPool.Logf("quota error detail: %s", errStr)
-			tried++
+			logPool.Logf("quota error detail: %s", truncateError(err, 300))
+			continue
+
+		case errorTransient:
+			cooldown := transientCooldown(2*time.Second, pp.failureCount(email))
+			pp.MarkTransientFailure(email, err, cooldown)
+			logPool.Warnf("transient error with %s (cooldown %s): %s", email, formatDuration(cooldown), truncateError(err, 220))
 			continue
 
 		case errorValidation:
-			// Validation error: don't switch accounts (same payload will fail everywhere)
 			logPool.Warnf("validation error with %s: %v", email, err)
 			return result, err
 
 		default:
-			// Other errors: return immediately
 			return result, err
 		}
 	}
 
-	// All providers exhausted — find the soonest reset
-	earliest := pp.findEarliestReset()
-	pp.mu.Unlock()
+	pp.mu.RLock()
+	earliest := pp.findEarliestResetLocked()
+	totalEntries := len(pp.entries)
+	pp.mu.RUnlock()
 
-	var zero T
 	if earliest != "" {
-		logPool.Warnf("all %d account(s) exhausted — next reset: %s", total, earliest)
-		return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", total, earliest)
+		logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
+		return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
 	}
-	return zero, fmt.Errorf("all %d OAuth account(s) exhausted", total)
+	return zero, fmt.Errorf("all %d OAuth account(s) exhausted", totalEntries)
 }
 
-// findEarliestReset returns a human-readable string for the soonest recovery time.
+// selectNextProviderLocked returns the best available provider index.
 // Must be called with pp.mu held.
-func (pp *ProviderPool) findEarliestReset() string {
+func (pp *ProviderPool) selectNextProviderLocked(now time.Time) (int, bool) {
+	if len(pp.entries) == 0 {
+		return -1, false
+	}
+
+	available := make([]int, 0, len(pp.entries))
+	for i := range pp.entries {
+		e := &pp.entries[i]
+		if e.exhaustedUntil.IsZero() || !e.exhaustedUntil.After(now) {
+			available = append(available, i)
+		}
+	}
+	if len(available) == 0 {
+		return -1, false
+	}
+
+	best := available[0]
+	for _, idx := range available[1:] {
+		if betterCandidate(pp.entries[idx], pp.entries[best], idx, best, pp.current, len(pp.entries)) {
+			best = idx
+		}
+	}
+	return best, true
+}
+
+func betterCandidate(a, b poolEntry, idxA, idxB, current, size int) bool {
+	if a.consecutiveFailures != b.consecutiveFailures {
+		return a.consecutiveFailures < b.consecutiveFailures
+	}
+
+	if !a.lastUsed.Equal(b.lastUsed) {
+		if a.lastUsed.IsZero() {
+			return true
+		}
+		if b.lastUsed.IsZero() {
+			return false
+		}
+		return a.lastUsed.Before(b.lastUsed)
+	}
+
+	return circularDistance(idxA, current, size) < circularDistance(idxB, current, size)
+}
+
+func circularDistance(idx, current, size int) int {
+	if idx >= current {
+		return idx - current
+	}
+	return size - current + idx
+}
+
+func (pp *ProviderPool) findEntryByEmailLocked(email string) *poolEntry {
+	for i := range pp.entries {
+		if pp.entries[i].email == email {
+			return &pp.entries[i]
+		}
+	}
+	return nil
+}
+
+func (pp *ProviderPool) recordAttempt(email string, now time.Time) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+
+	entry := pp.findEntryByEmailLocked(email)
+	if entry == nil {
+		return
+	}
+
+	if now.Sub(entry.lastResetTime) > 24*time.Hour || entry.lastResetTime.IsZero() {
+		entry.requestCount = 0
+		entry.lastResetTime = now
+	}
+	entry.requestCount++
+	entry.totalRequests++
+	entry.lastUsed = now
+	pp.lastUsedEmail = email
+}
+
+func (pp *ProviderPool) markSuccess(email string, now time.Time) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+
+	entry := pp.findEntryByEmailLocked(email)
+	if entry == nil {
+		return
+	}
+	entry.consecutiveFailures = 0
+	entry.lastError = ""
+	entry.exhaustedUntil = time.Time{}
+	entry.lastSuccessAt = now
+}
+
+func (pp *ProviderPool) markExhausted(email string, resetDuration time.Duration, err error) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+
+	entry := pp.findEntryByEmailLocked(email)
+	if entry == nil {
+		return
+	}
+	now := time.Now()
+	entry.exhaustedUntil = now.Add(resetDuration)
+	entry.consecutiveFailures++
+	entry.lastError = truncateError(err, 240)
+	entry.lastFailureAt = now
+}
+
+func (pp *ProviderPool) failureCount(email string) int {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+	for i := range pp.entries {
+		if pp.entries[i].email == email {
+			return pp.entries[i].consecutiveFailures
+		}
+	}
+	return 0
+}
+
+func (pp *ProviderPool) getAutoRetryCount() int {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+	return pp.autoRetryCount
+}
+
+// findEarliestResetLocked returns a human-readable string for the soonest recovery time.
+// Must be called with pp.mu held.
+func (pp *ProviderPool) findEarliestResetLocked() string {
 	var earliest time.Time
 	var earliestEmail string
 	now := time.Now()
@@ -354,6 +513,7 @@ const (
 	errorNone       errorType = iota // not an error
 	errorQuota                       // 429 rate limit / RESOURCE_EXHAUSTED
 	errorValidation                  // format/validation errors (don't switch accounts)
+	errorTransient                   // transient server/network failures
 	errorOther                       // other errors (return immediately)
 )
 
@@ -363,6 +523,7 @@ func classifyError(err error) errorType {
 		return errorNone
 	}
 	s := err.Error()
+	lower := strings.ToLower(s)
 
 	// Quota/rate-limit errors → retry with next account
 	if strings.Contains(s, "429") || strings.Contains(s, "RESOURCE_EXHAUSTED") {
@@ -370,10 +531,26 @@ func classifyError(err error) errorType {
 	}
 
 	// Validation errors → don't switch accounts (same payload will fail everywhere)
-	if strings.Contains(s, "tool_use_id") ||
-		strings.Contains(s, "invalid_request_error") ||
-		strings.Contains(s, "validation") {
+	if strings.Contains(lower, "tool_use_id") ||
+		strings.Contains(lower, "invalid_request_error") ||
+		strings.Contains(lower, "validation") {
 		return errorValidation
+	}
+
+	// Transient failures → switch account with short cooldown
+	if strings.Contains(lower, "http 5") ||
+		strings.Contains(lower, "internal server error") ||
+		strings.Contains(lower, "bad gateway") ||
+		strings.Contains(lower, "service unavailable") ||
+		strings.Contains(lower, "gateway timeout") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "dial tcp") ||
+		strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "temporary") ||
+		strings.Contains(lower, "context deadline exceeded") ||
+		strings.Contains(s, "EOF") {
+		return errorTransient
 	}
 
 	// Other errors → return immediately
@@ -397,6 +574,7 @@ var humanResetDelayRe = regexp.MustCompile(`reset (?:after|in) ((?:\d+h)?(?:\d+m
 //  1. JSON format: "quotaResetDelay":"123s"
 //  2. Human-readable: "reset after 1h38m34s" or "reset in 5m"
 //  3. "No capacity available" → 30 seconds (short retry for transient overload)
+//
 // Falls back to 2 minutes if unparseable.
 func parseResetDelay(errMsg string) time.Duration {
 	// Try JSON format first
@@ -423,6 +601,52 @@ func parseResetDelay(errMsg string) time.Duration {
 
 	// Default: 2 minutes (short enough to recover from per-minute rate limits)
 	return 2 * time.Minute
+}
+
+func transientCooldown(base time.Duration, failureCount int) time.Duration {
+	if base <= 0 {
+		base = 2 * time.Second
+	}
+	if failureCount < 1 {
+		failureCount = 1
+	}
+	cooldown := base * time.Duration(1<<(failureCount-1))
+	if cooldown > 30*time.Second {
+		cooldown = 30 * time.Second
+	}
+	return addJitter(cooldown, 250*time.Millisecond)
+}
+
+func exponentialBackoff(base time.Duration, retry int) time.Duration {
+	if base <= 0 {
+		base = 1 * time.Second
+	}
+	if retry < 0 {
+		retry = 0
+	}
+	delay := base * time.Duration(1<<retry)
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
+	return addJitter(delay, 500*time.Millisecond)
+}
+
+func addJitter(base, maxJitter time.Duration) time.Duration {
+	if maxJitter <= 0 {
+		return base
+	}
+	return base + time.Duration(rand.Int63n(int64(maxJitter)))
+}
+
+func truncateError(err error, maxLen int) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // formatDuration returns a compact human-readable duration (e.g., "6h22m").

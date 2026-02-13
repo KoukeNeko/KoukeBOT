@@ -247,16 +247,21 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 	}
 
 	for _, tokenData := range tokens {
-		if err := llm.RefreshIfNeeded(ctx, tokenData, oauthTokenPath); err != nil {
+		if err := llm.RefreshIfNeeded(ctx, tokenData, ""); err != nil {
 			logLLM.Warnf("OAuth token refresh failed for %s: %v", tokenData.Email, err)
 			continue
+		}
+		if tokenData.Email != "" {
+			if err := llm.UpdateOAuthPoolToken(oauthPoolPath, tokenData.Email, tokenData); err != nil {
+				logLLM.Warnf("failed to persist refreshed pool token for %s: %v", tokenData.Email, err)
+			}
 		}
 		provider, err := llm.NewGeminiOAuthProvider(ctx, tokenData, model)
 		if err != nil {
 			logLLM.Warnf("failed to init OAuth provider for %s: %v", tokenData.Email, err)
 			continue
 		}
-		pool.Add(provider, tokenData.Email)
+		pool.AddOrReplace(provider, tokenData.Email)
 	}
 
 	if pool.Size() == 0 {

@@ -79,6 +79,24 @@ func RemoveFromOAuthPool(path string, email string) error {
 	return SaveOAuthPool(path, filtered)
 }
 
+// UpdateOAuthPoolToken updates an existing token entry by email.
+// Returns an error if the email does not exist in the pool.
+func UpdateOAuthPoolToken(path string, email string, token *OAuthTokenData) error {
+	tokens, err := LoadOAuthPool(path)
+	if err != nil {
+		return err
+	}
+
+	for i, t := range tokens {
+		if t.Email == email {
+			tokens[i] = token
+			return SaveOAuthPool(path, tokens)
+		}
+	}
+
+	return fmt.Errorf("email not found in OAuth pool: %s", email)
+}
+
 // MigrateSingleTokenToPool checks if a single-token file exists but a pool file doesn't,
 // and migrates the single token into the pool.
 func MigrateSingleTokenToPool(singlePath, poolPath string) {
