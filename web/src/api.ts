@@ -35,6 +35,7 @@ export function sendChat(
   personaId: string,
   message: string,
   channelId = 'web-test',
+  conversationId?: string,
 ): Promise<ChatResponse> {
   return fetchJSON(`${BASE}/chat`, {
     method: 'POST',
@@ -42,6 +43,7 @@ export function sendChat(
     body: JSON.stringify({
       channel_id: channelId,
       persona_id: personaId,
+      conversation_id: conversationId ?? '',
       message,
     }),
   })
@@ -129,8 +131,18 @@ export function getConversation(channelId: string, personaId: string): Promise<C
   return fetchJSON(`${BASE}/conversations/${encodeURIComponent(channelId)}/${encodeURIComponent(personaId)}`)
 }
 
+export function getConversationByID(conversationId: string): Promise<Conversation> {
+  return fetchJSON(`${BASE}/conversations/by-id/${encodeURIComponent(conversationId)}`)
+}
+
 export function deleteConversation(channelId: string, personaId: string): Promise<{ status: string }> {
   return fetchJSON(`${BASE}/conversations/${encodeURIComponent(channelId)}/${encodeURIComponent(personaId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function deleteConversationByID(conversationId: string): Promise<{ status: string; new_conversation_id?: string }> {
+  return fetchJSON(`${BASE}/conversations/by-id/${encodeURIComponent(conversationId)}`, {
     method: 'DELETE',
   })
 }

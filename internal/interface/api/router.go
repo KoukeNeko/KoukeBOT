@@ -55,6 +55,8 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/conversations", r.handlers.ListConversations)
 	r.mux.HandleFunc("GET /api/conversations/{channelID}/{personaID}", r.handlers.GetConversation)
 	r.mux.HandleFunc("DELETE /api/conversations/{channelID}/{personaID}", r.handlers.DeleteConversation)
+	r.mux.HandleFunc("GET /api/conversations/by-id/{conversationID}", r.handlers.GetConversationByID)
+	r.mux.HandleFunc("DELETE /api/conversations/by-id/{conversationID}", r.handlers.DeleteConversationByID)
 
 	// Settings
 	r.mux.HandleFunc("GET /api/settings", r.handlers.GetSettings)

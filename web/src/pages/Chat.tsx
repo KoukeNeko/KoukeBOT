@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useNavigate, useParams } from 'react-router-dom'
-import { listPersonas, listConversations, getConversation, deleteConversation } from '../api'
+import { listPersonas, listConversations, getConversation, getConversationByID, deleteConversationByID } from '../api'
 import type { PersonaSummary, ConversationSummary, Message } from '../types'
 import { SidebarList, SidebarItem } from '../components/SidebarList'
 import { useIsMobile } from '../hooks/useMediaQuery'
@@ -13,7 +13,7 @@ export default function Chat() {
   const isMobile = useIsMobile()
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
-  const [selectedConv, setSelectedConv] = useState<{ channelId: string; personaId: string } | null>(null)
+  const [selectedConv, setSelectedConv] = useState<{ conversationId: string; channelId: string; personaId: string } | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -31,19 +31,19 @@ export default function Chat() {
     loadConversations()
   }, [])
 
-  // Sync selectedConv with URL if present
+  // Sync selected conversation with URL persona
   useEffect(() => {
-    if (urlPersonaId && (!selectedConv || selectedConv.personaId !== urlPersonaId)) {
-      setSelectedConv({ channelId: 'web-test', personaId: urlPersonaId })
-    }
+    if (!urlPersonaId) return
+    if (selectedConv && selectedConv.personaId === urlPersonaId) return
+    void selectActiveConversation('web-test', urlPersonaId)
   }, [urlPersonaId])
 
   // Load selected conversation messages
   useEffect(() => {
-    if (selectedConv) {
-      loadConversationMessages(selectedConv.channelId, selectedConv.personaId)
+    if (selectedConv?.conversationId) {
+      loadConversationMessages(selectedConv.conversationId)
     }
-  }, [selectedConv])
+  }, [selectedConv?.conversationId])
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -71,9 +71,9 @@ export default function Chat() {
     }
   }
 
-  const loadConversationMessages = async (channelId: string, personaId: string) => {
+  const loadConversationMessages = async (conversationId: string) => {
     try {
-      const conv = await getConversation(channelId, personaId)
+      const conv = await getConversationByID(conversationId)
       setMessages(conv.messages.map((m) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
@@ -88,32 +88,52 @@ export default function Chat() {
     }
   }
 
-  const handleSelectConv = (channelId: string, personaId: string) => {
-    setSelectedConv({ channelId, personaId })
-    if (isMobile) {
-      navigate(`/chat/${personaId}`)
+  const selectActiveConversation = async (channelId: string, personaId: string) => {
+    try {
+      const conv = await getConversation(channelId, personaId)
+      setSelectedConv({
+        conversationId: conv.id,
+        channelId: conv.channel_id,
+        personaId: conv.persona_id,
+      })
+      setMessages(conv.messages.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        display_text: m.display_text,
+        raw_llm_input: m.raw_llm_input,
+        raw_llm_output: m.raw_llm_output,
+        timestamp: m.timestamp,
+      })))
+    } catch (e) {
+      console.error('Failed to select active conversation:', e)
+      setMessages([])
     }
   }
 
-  const handleNewConv = () => {
+  const handleSelectConv = (conv: ConversationSummary) => {
+    setSelectedConv({ conversationId: conv.id, channelId: conv.channel_id, personaId: conv.persona_id })
+    if (isMobile) {
+      navigate(`/chat/${conv.persona_id}`)
+    }
+  }
+
+  const handleNewConv = async () => {
     if (!newConvPersonaId) return
-    const channelId = 'web-test'
-    setSelectedConv({ channelId, personaId: newConvPersonaId })
-    setMessages([])
+    await selectActiveConversation('web-test', newConvPersonaId)
     setShowNewConvModal(false)
     if (isMobile) {
       navigate(`/chat/${newConvPersonaId}`)
     }
   }
 
-  const handleDeleteConv = async (channelId: string, personaId: string, e: React.MouseEvent) => {
+  const handleDeleteConv = async (conv: ConversationSummary, e: React.MouseEvent) => {
     e.stopPropagation()
     if (!confirm('確定要刪除此對話？')) return
 
     try {
-      await deleteConversation(channelId, personaId)
+      await deleteConversationByID(conv.id)
       loadConversations()
-      if (selectedConv?.channelId === channelId && selectedConv?.personaId === personaId) {
+      if (selectedConv?.conversationId === conv.id) {
         setSelectedConv(null)
         setMessages([])
         if (isMobile) navigate('/chat')
@@ -148,6 +168,7 @@ export default function Chat() {
         formData.append('persona_id', selectedConv.personaId)
         formData.append('message', text || '這張圖片顯示了什麼？')
         formData.append('channel_id', selectedConv.channelId)
+        formData.append('conversation_id', selectedConv.conversationId)
         images.forEach((img) => formData.append('images', img))
 
         // Upload via POST, then get response stream URL
@@ -263,6 +284,7 @@ export default function Chat() {
           persona_id: selectedConv.personaId,
           message: text,
           channel_id: selectedConv.channelId,
+          conversation_id: selectedConv.conversationId,
         })
 
         eventSource = new EventSource(`/api/chat/stream?${params}`)
@@ -447,9 +469,9 @@ export default function Chat() {
             return (
               <SidebarItem
                 key={conv.id}
-                active={selectedConv?.channelId === conv.channel_id && selectedConv?.personaId === conv.persona_id}
-                onClick={() => handleSelectConv(conv.channel_id, conv.persona_id)}
-                title={conv.persona_name}
+                active={selectedConv?.conversationId === conv.id}
+                onClick={() => handleSelectConv(conv)}
+                title={conv.is_active ? `${conv.persona_name} (Active)` : conv.persona_name}
                 subtitle={
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '0.5rem' }}>
                     <span
@@ -477,7 +499,7 @@ export default function Chat() {
                 <button
                   className="btn-icon"
                   title="刪除對話"
-                  onClick={(e) => handleDeleteConv(conv.channel_id, conv.persona_id, e)}
+                  onClick={(e) => handleDeleteConv(conv, e)}
                   style={{ padding: '4px', opacity: 0.6, marginLeft: 'auto' }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

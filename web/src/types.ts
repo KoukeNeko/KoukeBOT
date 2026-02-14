@@ -193,6 +193,7 @@ export interface ConversationSummary {
   channel_id: string
   persona_id: string
   persona_name: string
+  is_active?: boolean
   message_count: number
   last_message?: string
   last_timestamp: string

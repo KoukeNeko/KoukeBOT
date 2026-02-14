@@ -1,69 +1,67 @@
 package discord
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
 
-func TestResetConversationState(t *testing.T) {
-	cutoff := time.Date(2026, time.February, 14, 12, 0, 0, 0, time.FixedZone("UTC+8", 8*3600))
-	conv := &domain.Conversation{
-		Messages: []domain.Message{
-			{Role: domain.RoleUser, Content: "hello"},
-		},
-		ContextDigests:   []domain.ConversationDigest{{ID: "d1", Summary: "old"}},
-		CumulativeTokens: 42,
-		UsageTokensTotal: 100,
+func TestRotateResetSessionCreatesNewActiveAndPreservesOld(t *testing.T) {
+	ctx := context.Background()
+	convStore := store.NewMemoryStore()
+
+	oldCutoff := time.Date(2026, time.February, 14, 8, 0, 0, 0, time.UTC)
+	oldSession, err := convStore.CreateSession(ctx, "ch-1", "satsuki", oldCutoff)
+	if err != nil {
+		t.Fatalf("CreateSession old failed: %v", err)
+	}
+	oldSession.Messages = append(oldSession.Messages, domain.Message{
+		Role:      domain.RoleUser,
+		Content:   "hello",
+		Timestamp: time.Now().UTC(),
+	})
+	if err := convStore.Save(ctx, oldSession); err != nil {
+		t.Fatalf("Save old session failed: %v", err)
 	}
 
-	resetConversationState(conv, "ch-1", "satsuki", cutoff)
+	newCutoff := time.Date(2026, time.February, 14, 12, 0, 0, 0, time.UTC)
+	previous, current, err := rotateResetSession(ctx, convStore, "ch-1", "satsuki", newCutoff)
+	if err != nil {
+		t.Fatalf("rotateResetSession failed: %v", err)
+	}
 
-	if conv.ChannelID != "ch-1" || conv.PersonaID != "satsuki" {
-		t.Fatalf("conversation identifiers not reset: channel=%s persona=%s", conv.ChannelID, conv.PersonaID)
+	if previous == nil || previous.ID != oldSession.ID {
+		t.Fatalf("expected previous session %s, got %+v", oldSession.ID, previous)
 	}
-	if conv.ID != "ch-1:satsuki" {
-		t.Fatalf("expected synthesized ID, got %q", conv.ID)
+	if current == nil {
+		t.Fatal("expected new active session")
 	}
-	if len(conv.Messages) != 0 {
-		t.Fatalf("expected empty messages, got %d", len(conv.Messages))
+	if current.ID == oldSession.ID {
+		t.Fatalf("expected new session ID, got same ID %s", current.ID)
 	}
-	if conv.ContextDigests != nil {
-		t.Fatalf("expected digests to be nil, got %v", conv.ContextDigests)
+	if len(current.Messages) != 0 {
+		t.Fatalf("expected new session to be empty, got %d messages", len(current.Messages))
 	}
-	if conv.CumulativeTokens != 0 {
-		t.Fatalf("expected cumulative tokens reset to 0, got %d", conv.CumulativeTokens)
+	if current.HistoryCutoffAt == nil || !current.HistoryCutoffAt.Equal(newCutoff.UTC()) {
+		t.Fatalf("expected cutoff %s, got %v", newCutoff.UTC(), current.HistoryCutoffAt)
 	}
-	if conv.UsageTokensTotal != 0 {
-		t.Fatalf("expected usage tokens reset to 0, got %d", conv.UsageTokensTotal)
-	}
-	if conv.HistoryCutoffAt == nil {
-		t.Fatal("expected history cutoff to be set")
-	}
-	if !conv.HistoryCutoffAt.Equal(cutoff.UTC()) {
-		t.Fatalf("expected cutoff %s, got %s", cutoff.UTC(), conv.HistoryCutoffAt.UTC())
-	}
-}
 
-func TestResetConversationStatePreservesExistingIdentity(t *testing.T) {
-	existingCreatedAt := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-	conv := &domain.Conversation{
-		ID:        "custom-id",
-		CreatedAt: existingCreatedAt,
-		Messages:  []domain.Message{{Role: domain.RoleAssistant, Content: "old"}},
+	activeID, err := convStore.GetActiveID(ctx, "ch-1", "satsuki")
+	if err != nil {
+		t.Fatalf("GetActiveID failed: %v", err)
 	}
-	cutoff := time.Date(2026, time.February, 14, 1, 2, 3, 0, time.UTC)
+	if activeID != current.ID {
+		t.Fatalf("expected active ID %s, got %s", current.ID, activeID)
+	}
 
-	resetConversationState(conv, "channel-x", "persona-y", cutoff)
-
-	if conv.ID != "custom-id" {
-		t.Fatalf("expected existing ID to be preserved, got %q", conv.ID)
+	preserved, err := convStore.GetByID(ctx, oldSession.ID)
+	if err != nil {
+		t.Fatalf("GetByID old session failed: %v", err)
 	}
-	if !conv.CreatedAt.Equal(existingCreatedAt) {
-		t.Fatalf("expected created_at to stay %s, got %s", existingCreatedAt, conv.CreatedAt)
-	}
-	if conv.HistoryCutoffAt == nil || !conv.HistoryCutoffAt.Equal(cutoff) {
-		t.Fatalf("expected cutoff %s, got %v", cutoff, conv.HistoryCutoffAt)
+	if len(preserved.Messages) != 1 || preserved.Messages[0].Content != "hello" {
+		t.Fatalf("expected old session messages preserved, got %+v", preserved.Messages)
 	}
 }

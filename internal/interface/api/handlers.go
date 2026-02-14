@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -168,9 +169,10 @@ func (h *Handlers) ReloadPersonas(w http.ResponseWriter, r *http.Request) {
 // --- Chat endpoint ---
 
 type ChatRequest struct {
-	ChannelID string `json:"channel_id"`
-	PersonaID string `json:"persona_id"`
-	Message   string `json:"message"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	ChannelID      string `json:"channel_id"`
+	PersonaID      string `json:"persona_id"`
+	Message        string `json:"message"`
 }
 
 type ChatResponseBody struct {
@@ -184,19 +186,30 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAPI.Logf("chat: channel=%s persona=%s msg=%s",
-		req.ChannelID, req.PersonaID, truncate(req.Message, 50))
-
-	if req.Message == "" || req.PersonaID == "" {
-		writeError(w, http.StatusBadRequest, "message and persona_id are required")
+	if req.Message == "" {
+		writeError(w, http.StatusBadRequest, "message is required")
 		return
 	}
 
-	if req.ChannelID == "" {
-		req.ChannelID = "web-test"
+	conversationID, channelID, personaID, err := h.resolveConversationRouting(r.Context(), req.ConversationID, req.ChannelID, req.PersonaID)
+	if err != nil {
+		if errors.Is(err, store.ErrConversationNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
+		return
 	}
 
-	response, err := h.chatService.HandleMessage(r.Context(), req.ChannelID, req.PersonaID, req.Message)
+	logAPI.Logf("chat: channel=%s persona=%s conversation=%s msg=%s",
+		channelID, personaID, conversationID, truncate(req.Message, 50))
+
+	var response string
+	if conversationID != "" {
+		response, err = h.chatService.HandleMessageByConversationID(r.Context(), conversationID, req.Message)
+	} else {
+		response, err = h.chatService.HandleMessage(r.Context(), channelID, personaID, req.Message)
+	}
 	if err != nil {
 		logAPI.Errorf("chat: %v", err)
 		// Distinguish between configuration errors and actual server errors
@@ -213,10 +226,10 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 }
 
 // ChatStream handles Server-Sent Events streaming for real-time chat responses.
-// GET /api/chat/stream?persona_id=xxx&message=xxx&channel_id=web-test (text only)
-// POST /api/chat/stream with multipart/form-data (text + images)
+// GET /api/chat/stream?persona_id=xxx&message=xxx&channel_id=web-test&conversation_id=... (text only)
+// POST /api/chat/stream with multipart/form-data (text + images + optional conversation_id)
 func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
-	var personaID, message, channelID string
+	var personaID, message, channelID, conversationID string
 	var images []domain.ImageInput
 
 	// Parse request based on method
@@ -225,6 +238,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		personaID = r.URL.Query().Get("persona_id")
 		message = r.URL.Query().Get("message")
 		channelID = r.URL.Query().Get("channel_id")
+		conversationID = r.URL.Query().Get("conversation_id")
 	} else if r.Method == http.MethodPost {
 		// POST: Multipart form data (text + images)
 		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32 MB max
@@ -235,6 +249,7 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		personaID = r.FormValue("persona_id")
 		message = r.FormValue("message")
 		channelID = r.FormValue("channel_id")
+		conversationID = r.FormValue("conversation_id")
 
 		// Parse images
 		if files := r.MultipartForm.File["images"]; len(files) > 0 {
@@ -272,19 +287,23 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set default channel ID
-	if channelID == "" {
-		channelID = "web-test"
-	}
-
-	logAPI.Logf("chat-stream: channel=%s persona=%s msg=%s images=%d",
-		channelID, personaID, truncate(message, 50), len(images))
-
-	// Validate inputs
-	if personaID == "" || message == "" {
-		writeError(w, http.StatusBadRequest, "missing persona_id or message")
+	if message == "" {
+		writeError(w, http.StatusBadRequest, "missing message")
 		return
 	}
+
+	conversationID, channelID, personaID, err := h.resolveConversationRouting(r.Context(), conversationID, channelID, personaID)
+	if err != nil {
+		if errors.Is(err, store.ErrConversationNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+
+	logAPI.Logf("chat-stream: channel=%s persona=%s conversation=%s msg=%s images=%d",
+		channelID, personaID, conversationID, truncate(message, 50), len(images))
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -301,12 +320,18 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 	// Start streaming (with or without images)
 	ctx := r.Context()
 	var streamCh <-chan llm.StreamChunk
-	var err error
-
 	if len(images) > 0 {
-		streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, channelID, personaID, message, images)
+		if conversationID != "" {
+			streamCh, err = h.chatService.HandleMessageStreamWithImagesByConversationID(ctx, conversationID, message, images)
+		} else {
+			streamCh, err = h.chatService.HandleMessageStreamWithImages(ctx, channelID, personaID, message, images)
+		}
 	} else {
-		streamCh, err = h.chatService.HandleMessageStream(ctx, channelID, personaID, message)
+		if conversationID != "" {
+			streamCh, err = h.chatService.HandleMessageStreamByConversationID(ctx, conversationID, message)
+		} else {
+			streamCh, err = h.chatService.HandleMessageStream(ctx, channelID, personaID, message)
+		}
 	}
 
 	if err != nil {
@@ -360,6 +385,33 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 	logAPI.Logf("chat-stream: streamed %d chunks", totalChunks)
 	fmt.Fprintf(w, "event: done\ndata: \n\n")
 	flusher.Flush()
+}
+
+func (h *Handlers) resolveConversationRouting(ctx context.Context, conversationID, channelID, personaID string) (resolvedConversationID, resolvedChannelID, resolvedPersonaID string, err error) {
+	if strings.TrimSpace(conversationID) == "" {
+		if channelID == "" {
+			channelID = "web-test"
+		}
+		if personaID == "" {
+			return "", "", "", fmt.Errorf("missing persona_id or conversation_id")
+		}
+		return "", channelID, personaID, nil
+	}
+
+	conv, err := h.convStore.GetByID(ctx, conversationID)
+	if err != nil {
+		return "", "", "", fmt.Errorf("get conversation %s: %w", conversationID, err)
+	}
+	if conv == nil {
+		return "", "", "", fmt.Errorf("%w: %s", store.ErrConversationNotFound, conversationID)
+	}
+	if personaID != "" && personaID != conv.PersonaID {
+		return "", "", "", fmt.Errorf("conversation_id/persona_id mismatch: %s != %s", conv.PersonaID, personaID)
+	}
+	if channelID != "" && channelID != conv.ChannelID {
+		return "", "", "", fmt.Errorf("conversation_id/channel_id mismatch: %s != %s", conv.ChannelID, channelID)
+	}
+	return conv.ID, conv.ChannelID, conv.PersonaID, nil
 }
 
 // --- Health ---
@@ -1273,6 +1325,7 @@ type ConversationSummary struct {
 	ChannelID     string `json:"channel_id"`
 	PersonaID     string `json:"persona_id"`
 	PersonaName   string `json:"persona_name"`
+	IsActive      bool   `json:"is_active"`
 	MessageCount  int    `json:"message_count"`
 	LastMessage   string `json:"last_message,omitempty"`
 	LastTimestamp string `json:"last_timestamp"`
@@ -1287,6 +1340,7 @@ func (h *Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	summaries := make([]ConversationSummary, 0, len(conversations))
+	activeCache := make(map[string]string)
 	for _, conv := range conversations {
 		personaName := conv.PersonaID
 		if h.personaService != nil {
@@ -1312,11 +1366,23 @@ func (h *Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
 			lastTimestamp = conv.HistoryCutoffAt.UTC()
 		}
 
+		pairKey := conv.ChannelID + ":" + conv.PersonaID
+		activeID, ok := activeCache[pairKey]
+		if !ok {
+			id, activeErr := h.convStore.GetActiveID(h.ctx, conv.ChannelID, conv.PersonaID)
+			if activeErr != nil {
+				logAPI.Warnf("list conversations: get active id failed for %s/%s: %v", conv.ChannelID, conv.PersonaID, activeErr)
+			}
+			activeID = id
+			activeCache[pairKey] = activeID
+		}
+
 		summary := ConversationSummary{
 			ID:            conv.ID,
 			ChannelID:     conv.ChannelID,
 			PersonaID:     conv.PersonaID,
 			PersonaName:   personaName,
+			IsActive:      activeID != "" && activeID == conv.ID,
 			MessageCount:  messageCount,
 			LastMessage:   lastMessage,
 			LastTimestamp: lastTimestamp.Format("2006-01-02 15:04:05"),
@@ -1341,32 +1407,112 @@ func (h *Handlers) GetConversation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, conv)
 }
 
+func (h *Handlers) GetConversationByID(w http.ResponseWriter, r *http.Request) {
+	conversationID := r.PathValue("conversationID")
+	conv, err := h.convStore.GetByID(h.ctx, conversationID)
+	if err != nil {
+		if errors.Is(err, store.ErrConversationNotFound) {
+			writeError(w, http.StatusNotFound, "conversation not found: "+conversationID)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get conversation: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, conv)
+}
+
 func (h *Handlers) DeleteConversation(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("channelID")
 	personaID := r.PathValue("personaID")
 
-	// Clean up stored images before deleting conversation
-	if h.imageStore != nil {
-		if conv, err := h.convStore.Get(h.ctx, channelID, personaID); err == nil {
-			var keys []string
-			for _, msg := range conv.Messages {
-				for _, ref := range msg.ImageRefs {
-					keys = append(keys, ref.StorageKey)
-				}
-			}
-			if len(keys) > 0 {
-				h.imageStore.DeleteKeys(keys)
-				logAPI.Logf("delete-conv: cleaned up %d image(s)", len(keys))
-			}
-		}
+	conv, err := h.convStore.Get(h.ctx, channelID, personaID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get conversation: "+err.Error())
+		return
 	}
+	h.cleanupConversationImages(conv)
 
 	if err := h.convStore.Delete(h.ctx, channelID, personaID); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete conversation: "+err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	newActive, err := h.convStore.CreateSession(h.ctx, channelID, personaID, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "create replacement session: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":              "deleted",
+		"new_conversation_id": newActive.ID,
+	})
+}
+
+func (h *Handlers) DeleteConversationByID(w http.ResponseWriter, r *http.Request) {
+	conversationID := r.PathValue("conversationID")
+	conv, err := h.convStore.GetByID(h.ctx, conversationID)
+	if err != nil {
+		if errors.Is(err, store.ErrConversationNotFound) {
+			writeError(w, http.StatusNotFound, "conversation not found: "+conversationID)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get conversation: "+err.Error())
+		return
+	}
+
+	activeID, err := h.convStore.GetActiveID(h.ctx, conv.ChannelID, conv.PersonaID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get active conversation: "+err.Error())
+		return
+	}
+	wasActive := activeID != "" && activeID == conv.ID
+
+	h.cleanupConversationImages(conv)
+
+	if err := h.convStore.DeleteByID(h.ctx, conversationID); err != nil {
+		if errors.Is(err, store.ErrConversationNotFound) {
+			writeError(w, http.StatusNotFound, "conversation not found: "+conversationID)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "delete conversation: "+err.Error())
+		return
+	}
+
+	resp := map[string]interface{}{
+		"status":     "deleted",
+		"was_active": wasActive,
+		"deleted_id": conversationID,
+		"channel_id": conv.ChannelID,
+		"persona_id": conv.PersonaID,
+	}
+	if wasActive {
+		newActive, createErr := h.convStore.CreateSession(h.ctx, conv.ChannelID, conv.PersonaID, time.Now().UTC())
+		if createErr != nil {
+			writeError(w, http.StatusInternalServerError, "create replacement session: "+createErr.Error())
+			return
+		}
+		resp["new_conversation_id"] = newActive.ID
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handlers) cleanupConversationImages(conv *domain.Conversation) {
+	if h.imageStore == nil || conv == nil {
+		return
+	}
+	var keys []string
+	for _, msg := range conv.Messages {
+		for _, ref := range msg.ImageRefs {
+			keys = append(keys, ref.StorageKey)
+		}
+	}
+	if len(keys) == 0 {
+		return
+	}
+	h.imageStore.DeleteKeys(keys)
+	logAPI.Logf("delete-conv: cleaned up %d image(s)", len(keys))
 }
 
 // isValidImageMIME checks if the MIME type is a supported image format.

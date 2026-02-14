@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -129,39 +130,20 @@ func (sc *SlashCommands) handleReset(s *discordgo.Session, i *discordgo.Interact
 	channelID := i.ChannelID
 	personaID := sc.bot.PersonaID()
 	ctx := context.Background()
-	conv, err := sc.convStore.Get(ctx, channelID, personaID)
+
+	previous, current, err := rotateResetSession(ctx, sc.convStore, channelID, personaID, time.Now().UTC())
 	if err != nil {
-		logCmd.Errorf("reset [%s]: get conversation: %v", channelID, err)
-		respondEphemeral(s, i, "❌ 清除失敗: "+err.Error())
-		return
-	}
-	if conv == nil {
-		conv = &domain.Conversation{}
-	}
-
-	// Clean up stored images before resetting conversation
-	if sc.imageStore != nil {
-		var keys []string
-		for _, msg := range conv.Messages {
-			for _, ref := range msg.ImageRefs {
-				keys = append(keys, ref.StorageKey)
-			}
-		}
-		if len(keys) > 0 {
-			sc.imageStore.DeleteKeys(keys)
-			logCmd.Logf("reset [%s]: cleaned up %d image(s)", channelID, len(keys))
-		}
-	}
-
-	resetConversationState(conv, channelID, personaID, time.Now().UTC())
-
-	if err := sc.convStore.Save(ctx, conv); err != nil {
 		logCmd.Errorf("reset [%s]: %v", channelID, err)
 		respondEphemeral(s, i, "❌ 清除失敗: "+err.Error())
 		return
 	}
+	prevID := "(none)"
+	if previous != nil && previous.ID != "" {
+		prevID = previous.ID
+	}
+	logCmd.Logf("reset [%s]: rotated session %s -> %s", channelID, prevID, current.ID)
 
-	respondEphemeral(s, i, "🗑️ 對話紀錄已清除，後續訊息不會帶入 reset 前內容。")
+	respondEphemeral(s, i, "🆕 已建立新對話。後續訊息只會使用新 session，舊對話仍可在 Web/API 查看與續聊。")
 }
 
 func (sc *SlashCommands) handleStatus(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -285,24 +267,26 @@ func respondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, cont
 	}
 }
 
-func resetConversationState(conv *domain.Conversation, channelID, personaID string, cutoff time.Time) {
-	if conv == nil {
-		return
+func rotateResetSession(
+	ctx context.Context,
+	convStore store.ConversationRepository,
+	channelID, personaID string,
+	cutoff time.Time,
+) (previousActive, newActive *domain.Conversation, err error) {
+	activeID, err := convStore.GetActiveID(ctx, channelID, personaID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get active conversation id: %w", err)
+	}
+	if activeID != "" {
+		previousActive, err = convStore.GetByID(ctx, activeID)
+		if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
+			return nil, nil, fmt.Errorf("get active conversation: %w", err)
+		}
 	}
 
-	cutoffUTC := cutoff.UTC()
-	conv.ChannelID = channelID
-	conv.PersonaID = personaID
-	if conv.ID == "" {
-		conv.ID = fmt.Sprintf("%s:%s", channelID, personaID)
+	newActive, err = convStore.CreateSession(ctx, channelID, personaID, cutoff.UTC())
+	if err != nil {
+		return previousActive, nil, fmt.Errorf("create reset session: %w", err)
 	}
-	if conv.CreatedAt.IsZero() {
-		conv.CreatedAt = cutoffUTC
-	}
-	conv.Messages = make([]domain.Message, 0)
-	conv.ContextDigests = nil
-	conv.CumulativeTokens = 0
-	conv.UsageTokensTotal = 0
-	conv.HistoryCutoffAt = &cutoffUTC
-	conv.UpdatedAt = cutoffUTC
+	return previousActive, newActive, nil
 }

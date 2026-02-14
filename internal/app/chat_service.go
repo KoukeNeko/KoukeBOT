@@ -76,14 +76,18 @@ func (s *ChatService) UpdatePromptGuardPolicy(policy PromptGuardPolicy) {
 
 // HandleMessage processes a user message and returns the assistant response.
 func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, userMessage string) (string, error) {
-	persona, err := s.resolvePersona(personaID)
+	return s.handleMessageInternal(ctx, channelID, personaID, "", userMessage)
+}
+
+// HandleMessageByConversationID processes a message targeting a specific conversation session.
+func (s *ChatService) HandleMessageByConversationID(ctx context.Context, conversationID, userMessage string) (string, error) {
+	return s.handleMessageInternal(ctx, "", "", conversationID, userMessage)
+}
+
+func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, personaID, conversationID, userMessage string) (string, error) {
+	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, conversationID)
 	if err != nil {
 		return "", err
-	}
-
-	conv, err := s.store.Get(ctx, channelID, personaID)
-	if err != nil {
-		return "", fmt.Errorf("get conversation: %w", err)
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
 
@@ -118,7 +122,7 @@ func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, u
 	s.applyTokenAccounting(conv, resp.TokensUsed)
 
 	if err := s.store.Save(ctx, conv); err != nil {
-		return "", fmt.Errorf("save conversation: %w", err)
+		return "", fmt.Errorf("save conversation [%s/%s]: %w", conv.ChannelID, resolvedPersonaID, err)
 	}
 
 	if view.Display != "" {
@@ -132,24 +136,28 @@ func (s *ChatService) HandleMessageStream(ctx context.Context, channelID, person
 	return s.HandleMessageStreamWithContext(ctx, channelID, personaID, userMessage, userMessage)
 }
 
+// HandleMessageStreamByConversationID processes a user message for a specific conversation session.
+func (s *ChatService) HandleMessageStreamByConversationID(ctx context.Context, conversationID, userMessage string) (<-chan llm.StreamChunk, error) {
+	return s.handleMessageStreamWithContextInternal(ctx, "", "", conversationID, userMessage, userMessage)
+}
+
 // HandleMessageStreamWithContext processes a user message with separate display and storage versions.
 // contextForLLM: the full message (with channel history) sent to LLM
 // messageToStore: the clean message (without channel history markers) saved to conversation store
 func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string) (<-chan llm.StreamChunk, error) {
-	persona, err := s.resolvePersona(personaID)
+	return s.handleMessageStreamWithContextInternal(ctx, channelID, personaID, "", contextForLLM, messageToStore)
+}
+
+func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context, channelID, personaID, conversationID, contextForLLM, messageToStore string) (<-chan llm.StreamChunk, error) {
+	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, conversationID)
 	if err != nil {
 		return nil, err
-	}
-
-	conv, err := s.store.Get(ctx, channelID, personaID)
-	if err != nil {
-		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.executeMemoryFlush(ctx, conv, persona, personaID); err != nil {
+		if err := s.executeMemoryFlush(ctx, conv, persona, resolvedPersonaID); err != nil {
 			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
 		}
 	}
@@ -178,12 +186,17 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 	}
 
 	// Handle tool calling loop and wrap stream for persistence
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, nil, nil), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, resolvedPersonaID, rawLLMInput, nil, nil), nil
 }
 
 // HandleMessageStreamWithImages processes a user message with images and returns a streaming channel.
 func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channelID, personaID, userMessage string, images []domain.ImageInput) (<-chan llm.StreamChunk, error) {
 	return s.HandleMessageStreamWithImagesAndContext(ctx, channelID, personaID, userMessage, userMessage, images, nil)
+}
+
+// HandleMessageStreamWithImagesByConversationID processes a multimodal message for a specific conversation session.
+func (s *ChatService) HandleMessageStreamWithImagesByConversationID(ctx context.Context, conversationID, userMessage string, images []domain.ImageInput) (<-chan llm.StreamChunk, error) {
+	return s.handleMessageStreamWithImagesAndContextInternal(ctx, "", "", conversationID, userMessage, userMessage, images, nil)
 }
 
 // HandleMessageStreamWithImagesAndContext processes a user message with images and separate display/storage versions.
@@ -192,20 +205,19 @@ func (s *ChatService) HandleMessageStreamWithImages(ctx context.Context, channel
 // images: direct attachment images — persisted to disk and sent to LLM
 // historyEntries: structured channel history entries with per-message images (ephemeral, not persisted)
 func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Context, channelID, personaID, contextForLLM, messageToStore string, images []domain.ImageInput, historyEntries []domain.ChannelHistoryEntry) (<-chan llm.StreamChunk, error) {
-	persona, err := s.resolvePersona(personaID)
+	return s.handleMessageStreamWithImagesAndContextInternal(ctx, channelID, personaID, "", contextForLLM, messageToStore, images, historyEntries)
+}
+
+func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx context.Context, channelID, personaID, conversationID, contextForLLM, messageToStore string, images []domain.ImageInput, historyEntries []domain.ChannelHistoryEntry) (<-chan llm.StreamChunk, error) {
+	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, conversationID)
 	if err != nil {
 		return nil, err
-	}
-
-	conv, err := s.store.Get(ctx, channelID, personaID)
-	if err != nil {
-		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.executeMemoryFlush(ctx, conv, persona, personaID); err != nil {
+		if err := s.executeMemoryFlush(ctx, conv, persona, resolvedPersonaID); err != nil {
 			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
 		}
 	}
@@ -224,7 +236,35 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 		}
 	}
 
-	return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, images, historyEntries, imageRefs...)
+	return s.streamWithMultimodalHistory(ctx, conv, persona, resolvedPersonaID, contextForLLM, messageToStore, images, historyEntries, imageRefs...)
+}
+
+func (s *ChatService) resolveConversationAndPersona(ctx context.Context, channelID, personaID, conversationID string) (*domain.Conversation, *domain.PersonaModule, string, error) {
+	if conversationID != "" {
+		conv, err := s.store.GetByID(ctx, conversationID)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("get conversation by id: %w", err)
+		}
+		if conv == nil {
+			return nil, nil, "", fmt.Errorf("conversation %q not found", conversationID)
+		}
+		persona, err := s.resolvePersona(conv.PersonaID)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return conv, persona, conv.PersonaID, nil
+	}
+
+	persona, err := s.resolvePersona(personaID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	conv, err := s.store.Get(ctx, channelID, personaID)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("get conversation: %w", err)
+	}
+	return conv, persona, personaID, nil
 }
 
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {

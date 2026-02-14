@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,9 @@ func TestListConversationsIncludesResetConversation(t *testing.T) {
 			if item.LastMessage != "[對話已重置]" {
 				t.Fatalf("reset conversation last_message = %q, want reset marker", item.LastMessage)
 			}
+			if !item.IsActive {
+				t.Fatalf("expected reset conversation to be active")
+			}
 		}
 		if item.ChannelID == "ch-empty" && item.PersonaID == "persona-b" {
 			foundEmpty = true
@@ -79,5 +83,73 @@ func TestListConversationsIncludesResetConversation(t *testing.T) {
 	}
 	if foundEmpty {
 		t.Fatalf("expected plain empty conversation to be hidden")
+	}
+}
+
+func TestResolveConversationRoutingRejectsPersonaMismatch(t *testing.T) {
+	convStore := store.NewMemoryStore()
+	conv, err := convStore.CreateSession(context.Background(), "ch-1", "persona-a", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+
+	h := &Handlers{
+		convStore: convStore,
+		ctx:       context.Background(),
+	}
+	_, _, _, err = h.resolveConversationRouting(context.Background(), conv.ID, "ch-1", "persona-b")
+	if err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	if !strings.Contains(err.Error(), "conversation_id/persona_id mismatch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteConversationByIDActiveCreatesReplacementSession(t *testing.T) {
+	convStore := store.NewMemoryStore()
+	conv, err := convStore.CreateSession(context.Background(), "ch-1", "persona-a", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	conv.Messages = append(conv.Messages, domain.Message{
+		Role:      domain.RoleUser,
+		Content:   "hello",
+		Timestamp: time.Now().UTC(),
+	})
+	if err := convStore.Save(context.Background(), conv); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	h := &Handlers{
+		convStore: convStore,
+		ctx:       context.Background(),
+	}
+	req := httptest.NewRequest("DELETE", "/api/conversations/by-id/"+conv.ID, nil)
+	req.SetPathValue("conversationID", conv.ID)
+	rec := httptest.NewRecorder()
+	h.DeleteConversationByID(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	newID, _ := body["new_conversation_id"].(string)
+	if newID == "" {
+		t.Fatalf("expected replacement new_conversation_id, body=%v", body)
+	}
+	if newID == conv.ID {
+		t.Fatalf("expected new session id different from deleted id")
+	}
+
+	activeID, err := convStore.GetActiveID(context.Background(), "ch-1", "persona-a")
+	if err != nil {
+		t.Fatalf("GetActiveID failed: %v", err)
+	}
+	if activeID != newID {
+		t.Fatalf("active id = %s, want %s", activeID, newID)
 	}
 }
