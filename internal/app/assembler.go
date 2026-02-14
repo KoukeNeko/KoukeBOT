@@ -28,6 +28,7 @@ type ContextBudgetManager struct {
 	MaxRecentMessages     int     // hard cap for recent raw turns
 	MaxDigests            int     // max digest blocks to include
 	DigestBudgetRatio     float64 // % of history budget reserved for digest blocks
+	PersonaLockEveryTurns int     // inject a short persona lock reminder every N user turns
 }
 
 func NewContextBudgetManager() *ContextBudgetManager {
@@ -36,6 +37,7 @@ func NewContextBudgetManager() *ContextBudgetManager {
 		MaxRecentMessages:     40,
 		MaxDigests:            4,
 		DigestBudgetRatio:     0.30,
+		PersonaLockEveryTurns: 8,
 	}
 }
 
@@ -83,7 +85,7 @@ func (a *ContextAssembler) Assemble(
 
 	var messages []domain.Message
 	if caps.SupportsThinking {
-		messages = a.assembleThinkingModel(conv, systemPrompt, caps, persona.Config.Generation)
+		messages = a.assembleThinkingModel(persona, conv, systemPrompt, caps, persona.Config.Generation)
 	} else {
 		messages = a.assembleLegacyModel(persona, conv)
 	}
@@ -163,6 +165,7 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule) (st
 }
 
 func (a *ContextAssembler) assembleThinkingModel(
+	persona *domain.PersonaModule,
 	conv *domain.Conversation,
 	systemPrompt string,
 	caps llm.ModelCapabilities,
@@ -189,6 +192,12 @@ func (a *ContextAssembler) assembleThinkingModel(
 			Content: digestMsg,
 		})
 	}
+	if a.shouldInjectPersonaLock(conv) {
+		out = append(out, domain.Message{
+			Role:    domain.RoleUser,
+			Content: a.buildPersonaLockMessage(persona),
+		})
+	}
 
 	recent := a.selectRecentMessages(conv.Messages, recentBudget, a.budget.MaxRecentMessages)
 	out = append(out, recent...)
@@ -197,6 +206,48 @@ func (a *ContextAssembler) assembleThinkingModel(
 		return a.selectRecentMessages(conv.Messages, 1200, 8)
 	}
 	return out
+}
+
+func (a *ContextAssembler) shouldInjectPersonaLock(conv *domain.Conversation) bool {
+	n := a.budget.PersonaLockEveryTurns
+	if n <= 0 {
+		return false
+	}
+
+	userTurns := 0
+	for _, msg := range conv.Messages {
+		if msg.Role == domain.RoleUser {
+			userTurns++
+		}
+	}
+	return userTurns >= n && userTurns%n == 0
+}
+
+func (a *ContextAssembler) buildPersonaLockMessage(persona *domain.PersonaModule) string {
+	name := strings.TrimSpace(persona.Config.Meta.Name)
+	if name == "" {
+		name = strings.TrimSpace(persona.Config.Meta.ID)
+	}
+	if name == "" {
+		name = "the configured persona"
+	}
+
+	// Use one anchor snippet as lightweight style reinforcement.
+	styleRef := ""
+	if len(persona.Anchors) > 0 {
+		styleRef = truncate(strings.TrimSpace(persona.Anchors[0].BotResponse), 180)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("[Persona lock]\n")
+	sb.WriteString("Stay fully in character as ")
+	sb.WriteString(name)
+	sb.WriteString(". Keep your established tone, quirks, and relationship style consistent.")
+	if styleRef != "" {
+		sb.WriteString("\nStyle reference: ")
+		sb.WriteString(styleRef)
+	}
+	return sb.String()
 }
 
 func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budgetTokens, maxMessages int) []domain.Message {

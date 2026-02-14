@@ -131,11 +131,6 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 		}
 	}
 
-	// If history has recent images, delegate to the multimodal path (no new images, but load from history)
-	if s.imageStore != nil && s.historyHasRecentImages(conv) {
-		return s.streamWithMultimodalHistory(ctx, conv, persona, personaID, contextForLLM, messageToStore, nil, nil)
-	}
-
 	// Temporarily append the LLM context version for assembly
 	conv.AppendUserMessage(contextForLLM)
 
@@ -564,21 +559,6 @@ func (s *ChatService) handleToolCallingStream(
 	return outputCh
 }
 
-// historyHasRecentImages checks if any of the last N user messages have image refs.
-func (s *ChatService) historyHasRecentImages(conv *domain.Conversation) bool {
-	userCount := 0
-	for i := len(conv.Messages) - 1; i >= 0 && userCount < s.imageHistoryTurns; i-- {
-		msg := conv.Messages[i]
-		if msg.Role == domain.RoleUser {
-			userCount++
-			if len(msg.ImageRefs) > 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // streamWithMultimodalHistory builds a multimodal history (loading images from disk for recent turns)
 // and streams the response. `currentImages` are the images for the current message (may be nil for text-only follow-ups).
 // `currentImageRefs` are the refs to persist in the conversation JSON.
@@ -592,8 +572,24 @@ func (s *ChatService) streamWithMultimodalHistory(
 	historyEntries []domain.ChannelHistoryEntry,
 	currentImageRefs ...domain.ImageRef,
 ) (<-chan llm.StreamChunk, error) {
-	// Build multimodal history from stored messages (load images from disk)
-	multimodalHistory := s.buildMultimodalHistory(conv.Messages)
+	// Assemble budgeted text context first, including the current user turn for digest relevance.
+	conv.AppendUserMessage(contextForLLM)
+	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+	if err != nil {
+		conv.Messages = conv.Messages[:len(conv.Messages)-1]
+		return nil, fmt.Errorf("assemble context: %w", err)
+	}
+	conv.Messages = conv.Messages[:len(conv.Messages)-1]
+
+	// Convert assembler output to multimodal text history and drop the temporary current turn.
+	baseMessages := assembled.Messages
+	if n := len(baseMessages); n > 0 {
+		last := baseMessages[n-1]
+		if last.Role == domain.RoleUser && last.Content == contextForLLM {
+			baseMessages = baseMessages[:n-1]
+		}
+	}
+	multimodalHistory := buildTextMultimodalHistory(baseMessages)
 
 	// Build current user message parts with interleaved history images
 	var userParts []domain.MessagePart
@@ -636,11 +632,6 @@ func (s *ChatService) streamWithMultimodalHistory(
 	}
 	logChat.Logf("multimodal history: %d messages, %d total images → LLM", len(multimodalHistory), totalImages)
 
-	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
-	if err != nil {
-		return nil, fmt.Errorf("assemble context: %w", err)
-	}
-
 	// Build raw LLM input for transparency
 	var textOnlyMessages []domain.Message
 	for _, mm := range multimodalHistory {
@@ -668,50 +659,12 @@ func (s *ChatService) streamWithMultimodalHistory(
 	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, currentImageRefs, multimodalHistory), nil
 }
 
-// buildMultimodalHistory converts stored messages to MultimodalMessage format,
-// loading images from disk for the most recent N user turns.
-func (s *ChatService) buildMultimodalHistory(messages []domain.Message) []domain.MultimodalMessage {
-	// Find which user messages are within the image history window
-	recentImageTurns := make(map[int]bool)
-	userCount := 0
-	for i := len(messages) - 1; i >= 0 && userCount < s.imageHistoryTurns; i-- {
-		if messages[i].Role == domain.RoleUser {
-			userCount++
-			if len(messages[i].ImageRefs) > 0 {
-				recentImageTurns[i] = true
-			}
-		}
-	}
-
+func buildTextMultimodalHistory(messages []domain.Message) []domain.MultimodalMessage {
 	result := make([]domain.MultimodalMessage, 0, len(messages))
-	for i, msg := range messages {
-		parts := []domain.MessagePart{{Text: msg.Content}}
-
-		if recentImageTurns[i] && s.imageStore != nil {
-			// Load images from disk for recent turns
-			for _, ref := range msg.ImageRefs {
-				img, err := s.imageStore.Load(ref)
-				if err != nil {
-					logChat.Warnf("load image %s: %v (substituting placeholder)", ref.StorageKey, err)
-					parts = append(parts, domain.MessagePart{
-						Text: fmt.Sprintf("[Image unavailable: %s]", ref.OriginalFilename),
-					})
-					continue
-				}
-				parts = append(parts, domain.MessagePart{ImageData: &img})
-			}
-		} else if len(msg.ImageRefs) > 0 {
-			// Older turns: add text placeholders
-			for _, ref := range msg.ImageRefs {
-				parts = append(parts, domain.MessagePart{
-					Text: fmt.Sprintf("[Previous image: %s]", ref.OriginalFilename),
-				})
-			}
-		}
-
+	for _, msg := range messages {
 		result = append(result, domain.MultimodalMessage{
 			Role:      msg.Role,
-			Parts:     parts,
+			Parts:     []domain.MessagePart{{Text: msg.Content}},
 			Timestamp: msg.Timestamp,
 		})
 	}

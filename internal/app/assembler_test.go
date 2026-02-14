@@ -52,3 +52,43 @@ func TestAssembleThinkingModelIncludesRelevantDigestAndRecentMessage(t *testing.
 		t.Fatalf("latest recent message should be preserved, got role=%s content=%q", last.Role, last.Content)
 	}
 }
+
+func TestAssembleThinkingModelInjectsPersonaLockEveryNTurns(t *testing.T) {
+	assembler := NewContextAssembler()
+	assembler.budget.PersonaLockEveryTurns = 2
+
+	persona := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			Meta:           domain.PersonaMeta{Name: "Satsuki"},
+			SystemTemplate: "You are {{.Lore}}\n{{.Anchors}}\n{{.Time}}",
+		},
+		Lore: "a persona",
+	}
+
+	conv := &domain.Conversation{
+		Messages: []domain.Message{
+			{Role: domain.RoleUser, Content: "hi", Timestamp: time.Now().Add(-2 * time.Minute)},
+			{Role: domain.RoleAssistant, Content: "yo", Timestamp: time.Now().Add(-90 * time.Second)},
+			{Role: domain.RoleUser, Content: "second user turn", Timestamp: time.Now()},
+		},
+	}
+
+	assembled, err := assembler.Assemble(persona, conv, llm.ModelCapabilities{
+		SupportsThinking: true,
+		ContextWindow:    8000,
+	})
+	if err != nil {
+		t.Fatalf("Assemble() error = %v", err)
+	}
+
+	found := false
+	for _, msg := range assembled.Messages {
+		if strings.Contains(msg.Content, "[Persona lock]") && strings.Contains(msg.Content, "Satsuki") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected persona lock message to be injected")
+	}
+}
