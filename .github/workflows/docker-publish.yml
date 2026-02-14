@@ -73,31 +73,3 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "chore: update image tag to sha-$(echo ${{ github.sha }} | cut -c1-7)"
           git push
-
-  deploy-to-k3s:
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Pull latest kustomization change
-        run: git pull origin main
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Configure kubeconfig
-        run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
-          chmod 600 $HOME/.kube/config
-
-      - name: Deploy to k3s
-        run: |
-          kubectl apply -k k8s/
-          kubectl rollout status deployment/kouke-bot -n kouke-bot --timeout=300s
