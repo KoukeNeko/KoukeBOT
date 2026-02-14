@@ -410,6 +410,11 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 					// Update existing message with tool status
 					_ = h.bot.EditMessage(channelID, messageID, toolMsg)
 				}
+			} else if chunk.ToolStatus == "tool_error" {
+				errMsg := formatToolStatusError(chunk.ToolName, chunk.ToolInput, chunk.ToolError)
+				if err := h.bot.SendMessage(channelID, errMsg); err != nil {
+					logHandler.Errorf("send tool error [%s]: %v", channelID, err)
+				}
 			} else if chunk.ToolStatus == "tool_done" {
 				// Tool execution done, ready for LLM response
 				// Clear the accumulated response to prepare for final output
@@ -702,6 +707,41 @@ func formatToolCallIndicator(toolCalls []domain.ToolCall) string {
 	}
 
 	return strings.Join(indicators, "\n")
+}
+
+func formatToolStatusError(toolName string, toolInput map[string]interface{}, rawErr string) string {
+	errText := strings.TrimSpace(rawErr)
+	if errText == "" {
+		errText = "未知錯誤"
+	}
+	errText = truncateError(errText, 220)
+
+	switch toolName {
+	case "file_write":
+		return fmt.Sprintf("❌ 儲存檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
+	case "file_append":
+		return fmt.Sprintf("❌ 追加檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
+	case "file_read":
+		return fmt.Sprintf("❌ 讀取檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
+	default:
+		if toolName == "" {
+			toolName = "unknown"
+		}
+		return fmt.Sprintf("❌ 工具 %s 執行失敗：%s", toolName, errText)
+	}
+}
+
+func extractToolFilename(toolInput map[string]interface{}) string {
+	if toolInput == nil {
+		return "unknown"
+	}
+	if v, ok := toolInput["filename"].(string); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	if v, ok := toolInput["file"].(string); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	return "unknown"
 }
 
 // formatDiscordError converts technical errors to user-friendly Discord messages

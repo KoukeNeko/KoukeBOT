@@ -337,6 +337,9 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 			if chunk.ToolInput != nil {
 				toolData["input"] = chunk.ToolInput
 			}
+			if chunk.ToolError != "" {
+				toolData["error"] = chunk.ToolError
+			}
 			toolJSON, _ := json.Marshal(toolData)
 			fmt.Fprintf(w, "event: tool\ndata: %s\n\n", string(toolJSON))
 			flusher.Flush()

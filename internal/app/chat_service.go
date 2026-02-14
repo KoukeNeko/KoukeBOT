@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -15,6 +17,8 @@ import (
 
 var logChat = logger.New("chat", logger.Cyan)
 var tripletParseFailedCount uint64
+
+const personaConfigsBaseDir = "configs/personas"
 
 // ChatService orchestrates the full chat pipeline:
 // receive message → load conversation → assemble context → call LLM → persist → return.
@@ -141,7 +145,7 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.executeMemoryFlush(ctx, conv, persona); err != nil {
+		if err := s.executeMemoryFlush(ctx, conv, persona, personaID); err != nil {
 			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
 		}
 	}
@@ -196,7 +200,7 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.executeMemoryFlush(ctx, conv, persona); err != nil {
+		if err := s.executeMemoryFlush(ctx, conv, persona, personaID); err != nil {
 			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
 		}
 	}
@@ -228,7 +232,7 @@ func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, e
 
 // executeMemoryFlush performs a silent turn: asks the agent to save important
 // memories via file tools, then compacts history. Invisible to the user.
-func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conversation, persona *domain.PersonaModule) error {
+func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conversation, persona *domain.PersonaModule, personaID string) error {
 	logChat.Log("executing pre-compaction memory flush...")
 
 	flushPrompt := fmt.Sprintf(
@@ -293,7 +297,7 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 		}
 		logChat.Logf("flush tool calls: %s", strings.Join(names, ", "))
 
-		toolResults := s.executeTools(ctx, pendingToolCalls)
+		toolResults := s.executeTools(ctx, pendingToolCalls, personaID)
 		toolResultsText := formatToolResults(pendingToolCalls, toolResults)
 
 		// Append tool exchange to conversation for next round
@@ -351,26 +355,27 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 }
 
 // executeTools executes a list of tool calls and returns the results
-func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolCall) []domain.ToolResult {
+func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolCall, personaID string) []domain.ToolResult {
 	results := make([]domain.ToolResult, 0, len(toolCalls))
 
 	for _, call := range toolCalls {
-		tool, exists := s.toolRegistry[call.Name]
-		if !exists {
-			// Tool not found - return error result
+		targetSummary := summarizeToolTarget(call, personaID)
+		tool, err := s.resolveTool(call.Name, personaID)
+		if err != nil {
 			results = append(results, domain.ToolResult{
 				ToolCallID: call.ID,
-				Content:    fmt.Sprintf("Error: tool %q not found", call.Name),
+				Content:    err.Error(),
 				IsError:    true,
 			})
+			logChat.Warnf("tool %s failed%s: %s", call.Name, targetSummary, truncateLog(err.Error(), 140))
 			continue
 		}
 
 		// Execute tool
-		logChat.Logf("executing: %s", call.Name)
+		logChat.Logf("executing: %s%s", call.Name, targetSummary)
 		result, err := tool.Execute(ctx, call.Input)
 		if err != nil {
-			logChat.Warnf("tool %s error: %v", call.Name, err)
+			logChat.Warnf("tool %s error%s: %v", call.Name, targetSummary, err)
 			results = append(results, domain.ToolResult{
 				ToolCallID: call.ID,
 				Content:    fmt.Sprintf("Error executing tool: %v", err),
@@ -380,9 +385,9 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 		}
 
 		if result.IsError {
-			logChat.Warnf("tool %s failed: %s", call.Name, truncateLog(result.Content, 100))
+			logChat.Warnf("tool %s failed%s: %s", call.Name, targetSummary, truncateLog(result.Content, 140))
 		} else {
-			logChat.Logf("tool %s done: %d chars", call.Name, len(result.Content))
+			logChat.Logf("tool %s done%s: %d chars", call.Name, targetSummary, len(result.Content))
 		}
 
 		// Success - set tool call ID
@@ -391,6 +396,81 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 	}
 
 	return results
+}
+
+func (s *ChatService) resolveTool(name, personaID string) (domain.Tool, error) {
+	if isPersonaFileTool(name) {
+		personaDir, err := resolvePersonaToolDir(personaID)
+		if err != nil {
+			return nil, err
+		}
+		switch name {
+		case "file_read":
+			return llm.NewFileReadTool(personaDir), nil
+		case "file_write":
+			return llm.NewFileWriteTool(personaDir), nil
+		case "file_append":
+			return llm.NewFileAppendTool(personaDir), nil
+		}
+	}
+
+	tool, exists := s.toolRegistry[name]
+	if !exists {
+		return nil, fmt.Errorf("tool %q not found", name)
+	}
+	return tool, nil
+}
+
+func isPersonaFileTool(name string) bool {
+	return name == "file_read" || name == "file_write" || name == "file_append"
+}
+
+func resolvePersonaToolDir(personaID string) (string, error) {
+	if strings.TrimSpace(personaID) == "" {
+		return "", fmt.Errorf("persona ID is empty for file tool execution")
+	}
+
+	personaDir := filepath.Join(personaConfigsBaseDir, personaID)
+	info, err := os.Stat(personaDir)
+	if err != nil {
+		return "", fmt.Errorf("persona %q directory not found: %s (%v)", personaID, personaDir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("persona %q path is not a directory: %s", personaID, personaDir)
+	}
+	return personaDir, nil
+}
+
+func summarizeToolTarget(call domain.ToolCall, personaID string) string {
+	if call.Input == nil {
+		if isPersonaFileTool(call.Name) {
+			return fmt.Sprintf(" (persona=%s)", personaID)
+		}
+		return ""
+	}
+
+	switch call.Name {
+	case "file_read", "file_write", "file_append":
+		file := ""
+		if filename, ok := call.Input["filename"].(string); ok && filename != "" {
+			file = filename
+		} else if filename, ok := call.Input["file"].(string); ok && filename != "" {
+			file = filename
+		}
+		if file != "" {
+			return fmt.Sprintf(" (persona=%s, file=%s)", personaID, file)
+		}
+		return fmt.Sprintf(" (persona=%s)", personaID)
+	case "web_fetch":
+		if url, ok := call.Input["url"].(string); ok && url != "" {
+			return fmt.Sprintf(" (%s)", truncateLog(url, 80))
+		}
+	case "web_search":
+		if query, ok := call.Input["query"].(string); ok && query != "" {
+			return fmt.Sprintf(" (%s)", truncateLog(query, 80))
+		}
+	}
+	return ""
 }
 
 // handleToolCallingStream handles the tool calling loop with streaming.
@@ -477,7 +557,23 @@ func (s *ChatService) handleToolCallingStream(
 			}
 
 			// Execute tools
-			toolResults := s.executeTools(ctx, pendingToolCalls)
+			toolResults := s.executeTools(ctx, pendingToolCalls, personaID)
+			toolCallMap := make(map[string]domain.ToolCall, len(pendingToolCalls))
+			for _, call := range pendingToolCalls {
+				toolCallMap[call.ID] = call
+			}
+			for _, result := range toolResults {
+				if !result.IsError {
+					continue
+				}
+				call := toolCallMap[result.ToolCallID]
+				outputCh <- llm.StreamChunk{
+					ToolStatus: "tool_error",
+					ToolName:   call.Name,
+					ToolInput:  call.Input,
+					ToolError:  truncateLog(result.Content, 240),
+				}
+			}
 
 			// Send tool execution done status
 			outputCh <- llm.StreamChunk{ToolStatus: "tool_done"}
@@ -570,7 +666,9 @@ func (s *ChatService) handleToolCallingStream(
 				content = strings.TrimSpace(fullResponse)
 			}
 			conv.AppendAssistantMessageWithDisplayAndRaw(content, finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
-			_ = s.store.Save(ctx, conv)
+			if err := s.store.Save(ctx, conv); err != nil {
+				logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
+			}
 
 		} else {
 			// No tool calls - store conversation normally with raw LLM data
@@ -581,7 +679,9 @@ func (s *ChatService) handleToolCallingStream(
 					conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 				}
 				conv.AppendAssistantMessageWithDisplayAndRaw(finalView.Content, finalView.Display, rawLLMInput, finalView.RawOutput)
-				_ = s.store.Save(ctx, conv)
+				if err := s.store.Save(ctx, conv); err != nil {
+					logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
+				}
 			}
 		}
 

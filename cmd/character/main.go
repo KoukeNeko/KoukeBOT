@@ -94,18 +94,11 @@ func run() error {
 	}
 	logStore.Log("data/images")
 
-	// Initialize tools (OpenClaw-style web search)
-	// Get the first persona directory for file operations (single-persona mode)
-	var firstPersonaDir string
-	entries, _ := os.ReadDir(personasDir)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			firstPersonaDir = entry.Name()
-			break
-		}
-	}
-
-	tools := initializeTools(settings, firstPersonaDir)
+	// Initialize tools (OpenClaw-style web search).
+	// File tool declarations use a startup fallback persona, while runtime execution
+	// is persona-snapshotted per request inside ChatService.
+	fileToolPersonaID := selectFileToolPersonaID(personasDir, settings.DiscordPersonaID)
+	tools := initializeTools(settings, fileToolPersonaID)
 	if len(tools) > 0 {
 		providerManager.RegisterTools(tools)
 	}
@@ -415,16 +408,19 @@ func initializeTools(settings config.Settings, personaID string) []domain.Tool {
 	tools = append(tools, llm.NewSessionStatusTool(timezone, timeFormat))
 	toolNames = append(toolNames, fmt.Sprintf("session_status (tz: %s)", timezone))
 
-	// File Operations Tools
-	if personaID != "" {
-		personaDir := filepath.Join("configs/personas", personaID)
-		tools = append(tools,
-			llm.NewFileReadTool(personaDir),
-			llm.NewFileWriteTool(personaDir),
-			llm.NewFileAppendTool(personaDir),
-		)
-		toolNames = append(toolNames, fmt.Sprintf("file_read, file_write, file_append (persona: %s)", personaID))
+	// File Operations Tools (declarations only).
+	// Actual file tool execution is resolved dynamically by request persona at runtime.
+	declarationPersonaID := personaID
+	if declarationPersonaID == "" {
+		declarationPersonaID = "_template"
 	}
+	declarationDir := filepath.Join("configs/personas", declarationPersonaID)
+	tools = append(tools,
+		llm.NewFileReadTool(declarationDir),
+		llm.NewFileWriteTool(declarationDir),
+		llm.NewFileAppendTool(declarationDir),
+	)
+	toolNames = append(toolNames, "file_read, file_write, file_append (declarations only; runtime persona-bound execution enabled)")
 
 	// Print all tools in compact format
 	for _, name := range toolNames {
@@ -433,4 +429,25 @@ func initializeTools(settings config.Settings, personaID string) []domain.Tool {
 	logTools.Logf("total: %d tool(s) registered", len(tools))
 
 	return tools
+}
+
+func selectFileToolPersonaID(baseDir, preferred string) string {
+	if preferred != "" {
+		path := filepath.Join(baseDir, preferred)
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			return preferred
+		}
+	}
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), "_") {
+			continue
+		}
+		return entry.Name()
+	}
+	return ""
 }

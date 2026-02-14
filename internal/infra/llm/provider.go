@@ -9,10 +9,10 @@ import (
 // ModelCapabilities describes what a model supports,
 // used by the Assembler to choose the correct context topology.
 type ModelCapabilities struct {
-	SupportsThinking bool   // Thinking/CoT model (e.g., Gemini 2.5 Pro+)
-	ContextWindow    int    // Max tokens in context
+	SupportsThinking  bool   // Thinking/CoT model (e.g., Gemini 2.5 Pro+)
+	ContextWindow     int    // Max tokens in context
 	SupportsStreaming bool   // Whether streaming is available
-	ProviderName     string // Human-readable provider identifier
+	ProviderName      string // Human-readable provider identifier
 }
 
 // ChatRequest is the input to a provider.
@@ -35,9 +35,10 @@ type StreamChunk struct {
 	Done       bool
 	Error      error
 	ToolCalls  []domain.ToolCall      // Function calls requested by LLM
-	ToolStatus string                 // Tool execution status: "tool_start", "tool_executing", "tool_done"
+	ToolStatus string                 // Tool execution status: "tool_start", "tool_executing", "tool_error", "tool_done"
 	ToolName   string                 // Name of the tool being executed
 	ToolInput  map[string]interface{} // Tool input parameters (optional)
+	ToolError  string                 // Tool error summary when ToolStatus == "tool_error"
 	TokensUsed int                    // Total tokens for this turn (sent in final chunk)
 }
 
