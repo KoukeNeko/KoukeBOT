@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
@@ -127,30 +129,39 @@ func (sc *SlashCommands) handleReset(s *discordgo.Session, i *discordgo.Interact
 	channelID := i.ChannelID
 	personaID := sc.bot.PersonaID()
 	ctx := context.Background()
+	conv, err := sc.convStore.Get(ctx, channelID, personaID)
+	if err != nil {
+		logCmd.Errorf("reset [%s]: get conversation: %v", channelID, err)
+		respondEphemeral(s, i, "❌ 清除失敗: "+err.Error())
+		return
+	}
+	if conv == nil {
+		conv = &domain.Conversation{}
+	}
 
-	// Clean up stored images before deleting conversation
+	// Clean up stored images before resetting conversation
 	if sc.imageStore != nil {
-		if conv, err := sc.convStore.Get(ctx, channelID, personaID); err == nil {
-			var keys []string
-			for _, msg := range conv.Messages {
-				for _, ref := range msg.ImageRefs {
-					keys = append(keys, ref.StorageKey)
-				}
+		var keys []string
+		for _, msg := range conv.Messages {
+			for _, ref := range msg.ImageRefs {
+				keys = append(keys, ref.StorageKey)
 			}
-			if len(keys) > 0 {
-				sc.imageStore.DeleteKeys(keys)
-				logCmd.Logf("reset [%s]: cleaned up %d image(s)", channelID, len(keys))
-			}
+		}
+		if len(keys) > 0 {
+			sc.imageStore.DeleteKeys(keys)
+			logCmd.Logf("reset [%s]: cleaned up %d image(s)", channelID, len(keys))
 		}
 	}
 
-	if err := sc.convStore.Delete(ctx, channelID, personaID); err != nil {
+	resetConversationState(conv, channelID, personaID, time.Now().UTC())
+
+	if err := sc.convStore.Save(ctx, conv); err != nil {
 		logCmd.Errorf("reset [%s]: %v", channelID, err)
 		respondEphemeral(s, i, "❌ 清除失敗: "+err.Error())
 		return
 	}
 
-	respondEphemeral(s, i, "🗑️ 對話紀錄已清除。")
+	respondEphemeral(s, i, "🗑️ 對話紀錄已清除，後續訊息不會帶入 reset 前內容。")
 }
 
 func (sc *SlashCommands) handleStatus(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -172,24 +183,24 @@ func (sc *SlashCommands) handleStatus(s *discordgo.Session, i *discordgo.Interac
 	// Add OAuth pool quota information if available
 	if sc.providerManager != nil {
 		if pool := sc.providerManager.GetPool(); pool != nil && pool.Size() > 0 {
-		sb.WriteString("\n**🔐 OAuth Pool Status**\n")
-		entries := pool.Entries()
-		for _, entry := range entries {
-			maskedEmail := maskEmail(entry.Email)
-			status := "✅"
-			if entry.Status == "exhausted" {
-				status = "⏳"
-			}
-			if entry.Current {
-				status += " [使用中]"
-			}
+			sb.WriteString("\n**🔐 OAuth Pool Status**\n")
+			entries := pool.Entries()
+			for _, entry := range entries {
+				maskedEmail := maskEmail(entry.Email)
+				status := "✅"
+				if entry.Status == "exhausted" {
+					status = "⏳"
+				}
+				if entry.Current {
+					status += " [使用中]"
+				}
 
-			sb.WriteString(fmt.Sprintf("%s `%s`", status, maskedEmail))
-			if entry.RequestCount > 0 {
-				sb.WriteString(fmt.Sprintf(" • 24h: %d", entry.RequestCount))
+				sb.WriteString(fmt.Sprintf("%s `%s`", status, maskedEmail))
+				if entry.RequestCount > 0 {
+					sb.WriteString(fmt.Sprintf(" • 24h: %d", entry.RequestCount))
+				}
+				sb.WriteString("\n")
 			}
-			sb.WriteString("\n")
-		}
 		}
 	}
 
@@ -272,4 +283,25 @@ func respondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, cont
 	}); err != nil {
 		logCmd.Errorf("interaction respond: %v", err)
 	}
+}
+
+func resetConversationState(conv *domain.Conversation, channelID, personaID string, cutoff time.Time) {
+	if conv == nil {
+		return
+	}
+
+	cutoffUTC := cutoff.UTC()
+	conv.ChannelID = channelID
+	conv.PersonaID = personaID
+	if conv.ID == "" {
+		conv.ID = fmt.Sprintf("%s:%s", channelID, personaID)
+	}
+	if conv.CreatedAt.IsZero() {
+		conv.CreatedAt = cutoffUTC
+	}
+	conv.Messages = make([]domain.Message, 0)
+	conv.ContextDigests = nil
+	conv.CumulativeTokens = 0
+	conv.HistoryCutoffAt = &cutoffUTC
+	conv.UpdatedAt = cutoffUTC
 }

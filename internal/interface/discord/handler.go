@@ -15,6 +15,7 @@ import (
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
 
 var logHandler = logger.New("discord", logger.Magenta)
@@ -36,13 +37,15 @@ const (
 type Handler struct {
 	bot         *discordbot.Bot
 	chatService *app.ChatService
+	convStore   store.ConversationRepository
 	useReply    bool // Whether to use Discord reply feature
 }
 
-func NewHandler(bot *discordbot.Bot, chatService *app.ChatService, useReply bool) *Handler {
+func NewHandler(bot *discordbot.Bot, chatService *app.ChatService, convStore store.ConversationRepository, useReply bool) *Handler {
 	return &Handler{
 		bot:         bot,
 		chatService: chatService,
+		convStore:   convStore,
 		useReply:    useReply,
 	}
 }
@@ -110,6 +113,20 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
 	defer cancel()
+	personaID := h.bot.PersonaID()
+	var historyCutoff *time.Time
+	if h.convStore != nil {
+		conv, err := h.convStore.Get(ctx, m.ChannelID, personaID)
+		if err != nil {
+			logHandler.Errorf("conversation state load failed [%s]: %v", m.ChannelID, err)
+			_ = h.bot.SendMessage(m.ChannelID, "❌ 讀取對話狀態失敗，請稍後再試。")
+			return
+		}
+		if conv != nil && conv.HistoryCutoffAt != nil {
+			cutoff := conv.HistoryCutoffAt.UTC()
+			historyCutoff = &cutoff
+		}
+	}
 
 	// Start typing indicator and keep it alive until response is sent
 	stopTyping := h.keepTyping(ctx, m.ChannelID)
@@ -140,9 +157,9 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	// Build structured channel history entries (each with per-message images)
 	var historyEntries []domain.ChannelHistoryEntry
 	if !isDM(m) {
-		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, m.ID)
+		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, m.ID, historyCutoff)
 	}
-	if replyEntry := h.buildReplyReferenceEntry(s, m); replyEntry != nil {
+	if replyEntry := h.buildReplyReferenceEntry(s, m, historyCutoff); replyEntry != nil {
 		historyEntries = append(historyEntries, *replyEntry)
 	}
 
@@ -163,10 +180,10 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	var err error
 	if len(images) > 0 || hasHistoryImages {
 		streamCh, err = h.chatService.HandleMessageStreamWithImagesAndContext(
-			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage, images, historyEntries)
+			ctx, m.ChannelID, personaID, contextForLLM, currentMessage, images, historyEntries)
 	} else {
 		streamCh, err = h.chatService.HandleMessageStreamWithContext(
-			ctx, m.ChannelID, h.bot.PersonaID(), contextForLLM, currentMessage)
+			ctx, m.ChannelID, personaID, contextForLLM, currentMessage)
 	}
 
 	if err != nil {
@@ -180,7 +197,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 // buildReplyReferenceEntry extracts the replied-to message as high-priority context.
 // If Discord did not include ReferencedMessage payload, it falls back to an API fetch.
-func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.MessageCreate) *domain.ChannelHistoryEntry {
+func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.MessageCreate, cutoff *time.Time) *domain.ChannelHistoryEntry {
 	if m == nil || m.MessageReference == nil || m.MessageReference.MessageID == "" {
 		return nil
 	}
@@ -199,6 +216,9 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 		refMsg = fetched
 	}
 	if refMsg == nil {
+		return nil
+	}
+	if !shouldIncludeDiscordTimestamp(refMsg.Timestamp, cutoff) {
 		return nil
 	}
 
@@ -735,7 +755,7 @@ func truncateError(msg string, maxLen int) string {
 // message. Images from the most recent maxHistoryImageScan messages are
 // downloaded and attached to their corresponding entry (up to maxHistoryImages
 // total).
-func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, currentMessageID string) []domain.ChannelHistoryEntry {
+func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, currentMessageID string, cutoff *time.Time) []domain.ChannelHistoryEntry {
 	const (
 		maxHistoryImageScan = 10 // only scan last N messages for images
 		maxHistoryImages    = 5  // collect at most this many images
@@ -759,6 +779,9 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, cu
 
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
+		if !shouldIncludeDiscordTimestamp(msg.Timestamp, cutoff) {
+			continue
+		}
 		content := msg.Content
 
 		// If no text content, use attachment placeholder (openclaw style)
@@ -831,6 +854,13 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, cu
 	}
 
 	return entries
+}
+
+func shouldIncludeDiscordTimestamp(ts time.Time, cutoff *time.Time) bool {
+	if cutoff == nil {
+		return true
+	}
+	return ts.After(*cutoff)
 }
 
 // buildContextForLLM rebuilds the flat context string from structured history

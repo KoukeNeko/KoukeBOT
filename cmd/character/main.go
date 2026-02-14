@@ -306,7 +306,7 @@ func startDiscordBot(token string, useReply bool, preferredPersonaID string, per
 	}
 
 	// Register message handler (responds to @mentions and DMs)
-	handler := discordhandler.NewHandler(bot, chatService, useReply)
+	handler := discordhandler.NewHandler(bot, chatService, convStore, useReply)
 	handler.Register()
 
 	// Connection must be open before registering slash commands

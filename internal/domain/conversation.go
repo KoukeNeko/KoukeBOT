@@ -54,6 +54,7 @@ type Conversation struct {
 	PersonaID        string               `json:"persona_id"`
 	Messages         []Message            `json:"messages"`
 	ContextDigests   []ConversationDigest `json:"context_digests,omitempty"`
+	HistoryCutoffAt  *time.Time           `json:"history_cutoff_at,omitempty"` // Discord /reset boundary: ignore history/replies at or before this time.
 	CreatedAt        time.Time            `json:"created_at"`
 	UpdatedAt        time.Time            `json:"updated_at"`
 	CumulativeTokens int                  `json:"cumulative_tokens"` // Running total for context window tracking
