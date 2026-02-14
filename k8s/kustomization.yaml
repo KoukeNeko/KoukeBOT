@@ -22,4 +22,4 @@ commonLabels:
 
 images:
   - name: ghcr.io/koukeneko/koukebot
-    newTag: sha-71d5b3d
+    newTag: sha-1d4cead
