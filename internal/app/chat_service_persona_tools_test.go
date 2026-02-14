@@ -50,6 +50,40 @@ func TestExecuteToolsFileWriteUsesRuntimePersona(t *testing.T) {
 	}
 }
 
+func TestExecuteToolsFileWriteUsesPersonaDirNameMapping(t *testing.T) {
+	t.Chdir(t.TempDir())
+	mustWriteFile(t, filepath.Join(personaConfigsBaseDir, "satsuki", "user.md"), "before\n")
+
+	service := NewChatService(nil, nil, nil, nil, 0, map[string]*domain.PersonaModule{
+		"koto_satsuki_watanare": {
+			DirName: "satsuki",
+		},
+	}, nil, nil)
+
+	results := service.executeTools(context.Background(), []domain.ToolCall{
+		{
+			ID:   "1",
+			Name: "file_write",
+			Input: map[string]interface{}{
+				"filename": "user.md",
+				"content":  "persona-id-mapped-write",
+			},
+		},
+	}, "koto_satsuki_watanare")
+
+	if len(results) != 1 {
+		t.Fatalf("results len = %d, want 1", len(results))
+	}
+	if results[0].IsError {
+		t.Fatalf("tool should succeed, got error: %s", results[0].Content)
+	}
+
+	content := mustReadFile(t, filepath.Join(personaConfigsBaseDir, "satsuki", "user.md"))
+	if !strings.Contains(content, "persona-id-mapped-write") {
+		t.Fatalf("expected mapped directory write, got: %q", content)
+	}
+}
+
 func TestExecuteToolsFileWriteReturnsErrorWhenPersonaMissing(t *testing.T) {
 	t.Chdir(t.TempDir())
 	service := NewChatService(nil, nil, nil, nil, 0, nil, nil, nil)

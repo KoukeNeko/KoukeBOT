@@ -400,7 +400,7 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 
 func (s *ChatService) resolveTool(name, personaID string) (domain.Tool, error) {
 	if isPersonaFileTool(name) {
-		personaDir, err := resolvePersonaToolDir(personaID)
+		personaDir, err := s.resolvePersonaToolDir(personaID)
 		if err != nil {
 			return nil, err
 		}
@@ -425,11 +425,31 @@ func isPersonaFileTool(name string) bool {
 	return name == "file_read" || name == "file_write" || name == "file_append"
 }
 
-func resolvePersonaToolDir(personaID string) (string, error) {
+func (s *ChatService) resolvePersonaToolDir(personaID string) (string, error) {
 	if strings.TrimSpace(personaID) == "" {
 		return "", fmt.Errorf("persona ID is empty for file tool execution")
 	}
 
+	// Primary path: resolve Meta.ID -> loaded persona directory name
+	if s != nil && s.personas != nil {
+		if persona, ok := s.personas[personaID]; ok && persona != nil {
+			dirName := strings.TrimSpace(persona.DirName)
+			if dirName == "" {
+				dirName = personaID
+			}
+			personaDir := filepath.Join(personaConfigsBaseDir, dirName)
+			info, err := os.Stat(personaDir)
+			if err != nil {
+				return "", fmt.Errorf("persona %q resolved directory not found: %s (%v)", personaID, personaDir, err)
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("persona %q resolved path is not a directory: %s", personaID, personaDir)
+			}
+			return personaDir, nil
+		}
+	}
+
+	// Legacy compatibility: allow direct folder-name persona IDs.
 	personaDir := filepath.Join(personaConfigsBaseDir, personaID)
 	info, err := os.Stat(personaDir)
 	if err != nil {
