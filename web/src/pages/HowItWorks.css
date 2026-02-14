@@ -1,0 +1,102 @@
+.how-page {
+  padding: 2rem 2.5rem;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.how-intro {
+  margin-top: 0.5rem;
+  margin-bottom: 1.5rem;
+  color: #a8a8c8;
+  max-width: 72ch;
+}
+
+.how-section {
+  background: #16162a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.how-section h3 {
+  margin: 0 0 0.9rem;
+  color: #ececff;
+  font-size: 1.03rem;
+}
+
+.how-section h4 {
+  margin: 0 0 0.55rem;
+  color: #d6d8ff;
+  font-size: 0.95rem;
+}
+
+.how-flow {
+  background: #101122;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.9rem;
+}
+
+.how-flow pre {
+  margin: 0;
+  color: #cfd4ff;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.how-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #c9cbe3;
+}
+
+.how-list li {
+  margin-bottom: 0.42rem;
+}
+
+.how-code {
+  background: #101122;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.how-code code {
+  color: #aab2ff;
+  font-size: 0.88rem;
+}
+
+.how-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.how-card {
+  background: #111124;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 0.85rem;
+}
+
+.how-card p {
+  margin: 0;
+  color: #bfc2dc;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .how-page {
+    padding: 1.2rem 1rem;
+  }
+
+  .how-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
