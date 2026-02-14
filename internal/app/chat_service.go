@@ -101,6 +101,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	if err != nil {
 		return "", fmt.Errorf("assemble context: %w", err)
 	}
+	s.logPromptSnapshot("chat", conv.ChannelID, resolvedPersonaID, conv.ID, assembled)
 
 	fmt.Printf("[ChatService] Calling LLM - System prompt length: %d, Messages: %d\n",
 		len(assembled.SystemPrompt), len(assembled.Messages))
@@ -169,6 +170,7 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 	if err != nil {
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
+	s.logPromptSnapshot("stream", conv.ChannelID, resolvedPersonaID, conv.ID, assembled)
 
 	// Remove the temporary message - we'll store the clean version later
 	conv.Messages = conv.Messages[:len(conv.Messages)-1]
@@ -743,6 +745,7 @@ func (s *ChatService) handleToolCallingStream(
 				outputCh <- llm.StreamChunk{Error: fmt.Errorf("assemble context after tools: %w", err), Done: true}
 				return
 			}
+			s.logPromptSnapshot("stream-continuation", conv.ChannelID, conv.PersonaID, conv.ID, assembled)
 
 			// Use multimodal continuation when images are present to preserve image context
 			if multimodalHistory != nil {
@@ -851,6 +854,7 @@ func (s *ChatService) streamWithMultimodalHistory(
 		conv.Messages = conv.Messages[:len(conv.Messages)-1]
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
+	s.logPromptSnapshot("multimodal-stream", conv.ChannelID, personaID, conv.ID, assembled)
 	conv.Messages = conv.Messages[:len(conv.Messages)-1]
 
 	// Convert assembler output to multimodal text history and drop the temporary current turn.
@@ -941,6 +945,29 @@ func buildTextMultimodalHistory(messages []domain.Message) []domain.MultimodalMe
 		})
 	}
 	return result
+}
+
+func (s *ChatService) logPromptSnapshot(path, channelID, personaID, conversationID string, assembled *AssembledContext) {
+	if assembled == nil {
+		return
+	}
+	systemChars := len(assembled.SystemPrompt)
+	systemInjected := strings.TrimSpace(assembled.SystemPrompt) != ""
+	personaLock := hasPersonaLockMessage(assembled.Messages)
+	logChat.Logf("prompt[%s]: system_injected=%t, system_chars=%d, messages=%d, persona_lock=%t, channel=%s, persona=%s, conversation=%s",
+		path, systemInjected, systemChars, len(assembled.Messages), personaLock, channelID, personaID, conversationID)
+}
+
+func hasPersonaLockMessage(messages []domain.Message) bool {
+	for _, msg := range messages {
+		if msg.Role != domain.RoleUser {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "[Persona lock]") {
+			return true
+		}
+	}
+	return false
 }
 
 // formatToolResults formats tool results for LLM consumption
