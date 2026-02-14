@@ -20,7 +20,7 @@ var punctuationPattern = regexp.MustCompile(`[!?！？]{2,}`)
 var digestStyleFieldCount uint64
 var digestStyleQuoteCount uint64
 
-// ContextManager tracks token usage and triggers pre-compaction memory flush.
+// ContextManager tracks prompt context footprint and triggers pre-compaction memory flush.
 // Implements OpenClaw's approach: when approaching context window limit,
 // inject a silent turn asking the agent to save memories before compacting history.
 type ContextManager struct {
@@ -41,8 +41,11 @@ func NewContextManager(flushThreshold, windowSize int) *ContextManager {
 	}
 }
 
-// ShouldFlush returns true when cumulative tokens approach the context window limit.
+// ShouldFlush returns true when estimated context tokens approach the context window limit.
 func (cm *ContextManager) ShouldFlush(conv *domain.Conversation) bool {
+	if conv == nil {
+		return false
+	}
 	threshold := cm.windowSize - cm.flushThreshold
 	if conv.CumulativeTokens >= threshold {
 		logCtx.Logf("approaching limit: %d tokens (threshold: %d)", conv.CumulativeTokens, threshold)
@@ -67,8 +70,65 @@ func (cm *ContextManager) CompactHistory(conv *domain.Conversation, persona *dom
 	}
 
 	conv.Messages = conv.Messages[removedCount:]
-	conv.CumulativeTokens = 0 // Reset — next turn will rebuild accurate count
+	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
 	logCtx.Logf("compacted: removed %d old messages, kept %d recent, digests=%d", removedCount, keepRecent, len(conv.ContextDigests))
+}
+
+// EstimateConversationContextTokens estimates current context footprint from
+// recent conversation messages + retained digests. This is used for flush tracking.
+func EstimateConversationContextTokens(conv *domain.Conversation) int {
+	if conv == nil {
+		return 0
+	}
+
+	const maxRecentMessages = 40
+	const maxDigests = 4
+	const perMessageOverhead = 12
+	const perDigestOverhead = 24
+	const perImageRefOverhead = 512
+
+	total := 0
+
+	start := 0
+	if len(conv.Messages) > maxRecentMessages {
+		start = len(conv.Messages) - maxRecentMessages
+	}
+	for _, msg := range conv.Messages[start:] {
+		if msg.Content != "" {
+			total += estimateTokens(msg.Content)
+		}
+		total += perMessageOverhead
+		if len(msg.ImageRefs) > 0 {
+			total += len(msg.ImageRefs) * perImageRefOverhead
+		}
+	}
+
+	digestStart := 0
+	if len(conv.ContextDigests) > maxDigests {
+		digestStart = len(conv.ContextDigests) - maxDigests
+	}
+	for _, digest := range conv.ContextDigests[digestStart:] {
+		total += perDigestOverhead
+		total += estimateTokens(digest.Summary)
+		total += estimateStringSliceTokens(digest.Facts)
+		total += estimateStringSliceTokens(digest.Preferences)
+		total += estimateStringSliceTokens(digest.OpenItems)
+		total += estimateStringSliceTokens(digest.Decisions)
+		total += estimateStringSliceTokens(digest.StyleQuotes)
+	}
+
+	if total < 0 {
+		return 0
+	}
+	return total
+}
+
+func estimateStringSliceTokens(items []string) int {
+	total := 0
+	for _, item := range items {
+		total += estimateTokens(item)
+	}
+	return total
 }
 
 func (cm *ContextManager) buildDigest(messages []domain.Message, persona *domain.PersonaModule) (domain.ConversationDigest, bool) {

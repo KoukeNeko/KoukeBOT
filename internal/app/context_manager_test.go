@@ -52,3 +52,23 @@ func TestCompactHistoryAddsDigestAndKeepsRecentMessages(t *testing.T) {
 		t.Fatalf("expected attitude to be classified")
 	}
 }
+
+func TestEstimateConversationContextTokens(t *testing.T) {
+	conv := &domain.Conversation{
+		Messages: []domain.Message{
+			{Role: domain.RoleUser, Content: "hello world"},
+			{Role: domain.RoleAssistant, Content: "this is a longer assistant response for token estimation"},
+		},
+		ContextDigests: []domain.ConversationDigest{
+			{
+				Summary: "user prefers concise responses",
+				Facts:   []string{"User works on KoukeBOT"},
+			},
+		},
+	}
+
+	got := EstimateConversationContextTokens(conv)
+	if got <= 0 {
+		t.Fatalf("EstimateConversationContextTokens() = %d, want > 0", got)
+	}
+}

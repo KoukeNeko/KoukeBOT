@@ -302,6 +302,7 @@ func resetConversationState(conv *domain.Conversation, channelID, personaID stri
 	conv.Messages = make([]domain.Message, 0)
 	conv.ContextDigests = nil
 	conv.CumulativeTokens = 0
+	conv.UsageTokensTotal = 0
 	conv.HistoryCutoffAt = &cutoffUTC
 	conv.UpdatedAt = cutoffUTC
 }

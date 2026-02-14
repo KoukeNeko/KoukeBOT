@@ -57,12 +57,22 @@ type Conversation struct {
 	HistoryCutoffAt  *time.Time           `json:"history_cutoff_at,omitempty"` // Discord /reset boundary: ignore history/replies at or before this time.
 	CreatedAt        time.Time            `json:"created_at"`
 	UpdatedAt        time.Time            `json:"updated_at"`
-	CumulativeTokens int                  `json:"cumulative_tokens"` // Running total for context window tracking
+	CumulativeTokens int                  `json:"cumulative_tokens"`            // Estimated current prompt context footprint (for flush tracking)
+	UsageTokensTotal int                  `json:"usage_tokens_total,omitempty"` // Lifetime token usage accumulated from provider responses
 }
 
-// UpdateTokenUsage adds the token count from a turn to the cumulative total.
+// AddUsageTokens adds token usage from a turn to the lifetime usage counter.
+func (c *Conversation) AddUsageTokens(tokens int) {
+	if tokens <= 0 {
+		return
+	}
+	c.UsageTokensTotal += tokens
+}
+
+// UpdateTokenUsage is kept for backward compatibility with older call sites.
+// New code should use AddUsageTokens and update CumulativeTokens separately.
 func (c *Conversation) UpdateTokenUsage(tokens int) {
-	c.CumulativeTokens += tokens
+	c.AddUsageTokens(tokens)
 }
 
 // AddDigest appends a digest and caps retention to avoid unbounded growth.

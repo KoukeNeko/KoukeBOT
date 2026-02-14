@@ -26,4 +26,7 @@ func TestConversationJSONBackwardCompatibilityWithoutHistoryCutoff(t *testing.T)
 	if conv.CumulativeTokens != 123 {
 		t.Fatalf("expected cumulative_tokens=123, got %d", conv.CumulativeTokens)
 	}
+	if conv.UsageTokensTotal != 0 {
+		t.Fatalf("expected default usage_tokens_total=0 for legacy JSON, got %d", conv.UsageTokensTotal)
+	}
 }

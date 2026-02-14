@@ -15,6 +15,7 @@ func TestResetConversationState(t *testing.T) {
 		},
 		ContextDigests:   []domain.ConversationDigest{{ID: "d1", Summary: "old"}},
 		CumulativeTokens: 42,
+		UsageTokensTotal: 100,
 	}
 
 	resetConversationState(conv, "ch-1", "satsuki", cutoff)
@@ -33,6 +34,9 @@ func TestResetConversationState(t *testing.T) {
 	}
 	if conv.CumulativeTokens != 0 {
 		t.Fatalf("expected cumulative tokens reset to 0, got %d", conv.CumulativeTokens)
+	}
+	if conv.UsageTokensTotal != 0 {
+		t.Fatalf("expected usage tokens reset to 0, got %d", conv.UsageTokensTotal)
 	}
 	if conv.HistoryCutoffAt == nil {
 		t.Fatal("expected history cutoff to be set")

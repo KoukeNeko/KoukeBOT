@@ -84,6 +84,7 @@ func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, u
 	if err != nil {
 		return "", fmt.Errorf("get conversation: %w", err)
 	}
+	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
 
 	conv.AppendUserMessage(userMessage)
 
@@ -113,6 +114,7 @@ func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, u
 	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
 	view := s.prepareAssistantOutputForStorage(resp.Content)
 	conv.AppendAssistantMessageWithDisplayAndRaw(view.Content, view.Display, rawLLMInput, view.RawOutput)
+	s.applyTokenAccounting(conv, resp.TokensUsed)
 
 	if err := s.store.Save(ctx, conv); err != nil {
 		return "", fmt.Errorf("save conversation: %w", err)
@@ -142,6 +144,7 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 	if err != nil {
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
+	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
@@ -197,6 +200,7 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 	if err != nil {
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
+	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
@@ -267,11 +271,15 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 	// Consume stream, handle tool calls (up to 3 rounds)
 	const maxFlushRounds = 3
 	var flushResponse string
+	var flushTokens int
 	for round := 0; round <= maxFlushRounds; round++ {
 		var pendingToolCalls []domain.ToolCall
 		flushResponse = ""
 
 		for chunk := range streamCh {
+			if chunk.TokensUsed > 0 {
+				flushTokens += chunk.TokensUsed
+			}
 			if len(chunk.ToolCalls) > 0 {
 				pendingToolCalls = chunk.ToolCalls
 				continue
@@ -344,6 +352,10 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 
 	// Compact history
 	s.contextManager.CompactHistory(conv, persona)
+	conv.AddUsageTokens(flushTokens)
+	if flushTokens > 0 {
+		logChat.Logf("flush tokens: +%d (usage_total: %d, context_estimate: %d)", flushTokens, conv.UsageTokensTotal, conv.CumulativeTokens)
+	}
 
 	// Persist compacted conversation
 	if err := s.store.Save(ctx, conv); err != nil {
@@ -649,11 +661,6 @@ func (s *ChatService) handleToolCallingStream(
 			}
 		}
 
-		// Update token tracking
-		if totalTokens > 0 {
-			conv.UpdateTokenUsage(totalTokens)
-			logChat.Logf("tokens: +%d (cumulative: %d)", totalTokens, conv.CumulativeTokens)
-		}
 		finalView := s.prepareAssistantOutputForStorage(fullResponse)
 
 		if hideAnalysis && finalView.Display != "" {
@@ -686,6 +693,7 @@ func (s *ChatService) handleToolCallingStream(
 				content = strings.TrimSpace(fullResponse)
 			}
 			conv.AppendAssistantMessageWithDisplayAndRaw(content, finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
+			s.applyTokenAccounting(conv, totalTokens)
 			if err := s.store.Save(ctx, conv); err != nil {
 				logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
 			}
@@ -699,6 +707,7 @@ func (s *ChatService) handleToolCallingStream(
 					conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 				}
 				conv.AppendAssistantMessageWithDisplayAndRaw(finalView.Content, finalView.Display, rawLLMInput, finalView.RawOutput)
+				s.applyTokenAccounting(conv, totalTokens)
 				if err := s.store.Save(ctx, conv); err != nil {
 					logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
 				}
@@ -955,6 +964,18 @@ func (s *ChatService) prepareAssistantOutputForStorage(raw string) assistantOutp
 		view.RawOutput = strings.TrimSpace(raw)
 	}
 	return view
+}
+
+func (s *ChatService) applyTokenAccounting(conv *domain.Conversation, turnTokens int) {
+	if conv == nil {
+		return
+	}
+	conv.AddUsageTokens(turnTokens)
+	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
+
+	if turnTokens > 0 {
+		logChat.Logf("tokens: +%d (usage_total: %d, context_estimate: %d)", turnTokens, conv.UsageTokensTotal, conv.CumulativeTokens)
+	}
 }
 
 // truncateLog truncates a string for log output
