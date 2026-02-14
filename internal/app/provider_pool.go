@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"regexp"
@@ -256,21 +257,21 @@ func (pp *ProviderPool) MarkTransientFailure(email string, err error, cooldown t
 
 // Chat implements llm.Provider with automatic 429 failover.
 func (pp *ProviderPool) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-	return tryPool(pp, func(p llm.Provider) (*llm.ChatResponse, error) {
+	return tryPool(ctx, pp, func(p llm.Provider) (*llm.ChatResponse, error) {
 		return p.Chat(ctx, req)
 	})
 }
 
 // StreamChat implements llm.Provider with automatic 429 failover.
 func (pp *ProviderPool) StreamChat(ctx context.Context, req llm.ChatRequest) (<-chan llm.StreamChunk, error) {
-	return tryPool(pp, func(p llm.Provider) (<-chan llm.StreamChunk, error) {
+	return tryPool(ctx, pp, func(p llm.Provider) (<-chan llm.StreamChunk, error) {
 		return p.StreamChat(ctx, req)
 	})
 }
 
 // StreamChatMultimodal implements llm.Provider with automatic 429 failover.
 func (pp *ProviderPool) StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
-	return tryPool(pp, func(p llm.Provider) (<-chan llm.StreamChunk, error) {
+	return tryPool(ctx, pp, func(p llm.Provider) (<-chan llm.StreamChunk, error) {
 		return p.StreamChatMultimodal(ctx, systemPrompt, messages, generation)
 	})
 }
@@ -301,7 +302,7 @@ func (pp *ProviderPool) RegisterTools(tools []domain.Tool) {
 
 // tryPool is a generic failover function.
 // Strategy: available-first selection, health-aware rotation, quota-aware failover.
-func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
+func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
 	var zero T
 
 	pp.mu.RLock()
@@ -312,6 +313,12 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 	}
 
 	for tried := 0; tried < total; tried++ {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return zero, err
+			}
+		}
+
 		provider, email, ok := pp.SelectNextProvider()
 		if !ok {
 			pp.mu.RLock()
@@ -331,6 +338,11 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 		if err == nil {
 			pp.markSuccess(email, time.Now())
 			return result, nil
+		}
+		if isContextTerminated(err) {
+			// Request-level timeout/cancel is not account-specific.
+			// Do not mark provider exhausted or fail over to another account.
+			return result, err
 		}
 
 		errType := classifyError(err)
@@ -602,6 +614,18 @@ func classifyError(err error) errorType {
 
 	// Other errors → return immediately
 	return errorOther
+}
+
+func isContextTerminated(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "context deadline exceeded") ||
+		strings.Contains(lower, "context canceled")
 }
 
 // isQuotaError checks if an error indicates a 429/RESOURCE_EXHAUSTED response.

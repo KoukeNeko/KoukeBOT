@@ -39,6 +39,32 @@ func (p *stubProvider) RegisterTools(tools []domain.Tool) {
 	p.tools = append([]domain.Tool(nil), tools...)
 }
 
+type errProvider struct {
+	err   error
+	calls int
+}
+
+func (p *errProvider) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	p.calls++
+	return nil, p.err
+}
+
+func (p *errProvider) StreamChat(context.Context, llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+	p.calls++
+	return nil, p.err
+}
+
+func (p *errProvider) StreamChatMultimodal(context.Context, string, []domain.MultimodalMessage, domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
+	p.calls++
+	return nil, p.err
+}
+
+func (p *errProvider) ModelInfo() llm.ModelCapabilities {
+	return llm.ModelCapabilities{ProviderName: "err-provider"}
+}
+
+func (p *errProvider) RegisterTools([]domain.Tool) {}
+
 func TestParseResetDelay(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -233,5 +259,35 @@ func TestAddOrReplaceKeepsExistingUsageWhenNewUsageMissing(t *testing.T) {
 	}
 	if entries[0].AttemptsTotal != 5 {
 		t.Fatalf("attempts total = %d, want 5", entries[0].AttemptsTotal)
+	}
+}
+
+func TestProviderPoolContextDeadlineDoesNotFailoverOrExhaust(t *testing.T) {
+	pool := NewProviderPool()
+	first := &errProvider{err: context.DeadlineExceeded}
+	second := &errProvider{err: nil}
+	pool.AddOrReplace(first, "first@example.com")
+	pool.AddOrReplace(second, "second@example.com")
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{SystemPrompt: "x", Messages: []domain.Message{{Role: domain.RoleUser, Content: "hi"}}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
+	}
+
+	if first.calls != 1 {
+		t.Fatalf("first provider calls = %d, want 1", first.calls)
+	}
+	if second.calls != 0 {
+		t.Fatalf("second provider should not be called, calls = %d", second.calls)
+	}
+
+	entries := pool.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("entries length = %d, want 2", len(entries))
+	}
+	for _, e := range entries {
+		if e.Email == "first@example.com" && e.Status != "available" {
+			t.Fatalf("first account status = %s, want available", e.Status)
+		}
 	}
 }
