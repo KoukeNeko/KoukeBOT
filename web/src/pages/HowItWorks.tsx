@@ -96,7 +96,41 @@ export default function HowItWorks() {
           </article>
         </div>
       </section>
+
+      <section className="how-section">
+        <h3>6) 長對話為何會「掉角色感」？（已修正）</h3>
+        <div className="how-grid">
+          <article className="how-card">
+            <h4>先釐清：System Prompt 仍是每回合注入</h4>
+            <p>
+              角色設定不是只在第一輪送出，而是每次請求都會帶入。問題不在「沒注入」，而在上下文組裝方式讓角色訊號被稀釋。
+            </p>
+          </article>
+          <article className="how-card">
+            <h4>根因：多模態路徑曾吃進過長歷史</h4>
+            <p>
+              舊邏輯在特定多模態情境會帶入接近全量歷史，導致近期雜訊壓過角色特徵。長聊越久，語氣越容易偏離。
+            </p>
+          </article>
+          <article className="how-card">
+            <h4>修正 1：多模態也走 Budgeted Context</h4>
+            <p>
+              現在多模態會先經過 ContextAssembler（System + Digest + Recent），再轉成 multimodal history，不再繞過預算策略。
+            </p>
+          </article>
+          <article className="how-card">
+            <h4>修正 2：Persona Lock 週期補強</h4>
+            <p>
+              每 N 個 user turn（預設 8）插入一則短的 persona lock 提醒，並帶一段 anchor 風格參考，降低長對話漂移。
+            </p>
+          </article>
+        </div>
+        <ol className="how-list" style={{ marginTop: "0.85rem" }}>
+          <li>如果你發現角色語氣變淡，先看對話是否已非常長、是否包含大量工具輸出。</li>
+          <li>目前策略會優先保留近期對話與相關 digest，並定期補強 persona 穩定度。</li>
+          <li>若仍需更「硬」的人格一致性，可把 Persona Lock 週期調得更短（例如每 6 turn）。</li>
+        </ol>
+      </section>
     </div>
   );
 }
-
