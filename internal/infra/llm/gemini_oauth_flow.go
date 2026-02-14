@@ -59,14 +59,32 @@ var (
 
 // OAuthTokenData is persisted to data/gemini_oauth.json.
 type OAuthTokenData struct {
-	ClientID     string    `json:"client_id"`
-	ClientSecret string    `json:"client_secret"`
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	TokenType    string    `json:"token_type"`
-	Expiry       time.Time `json:"expiry"`
-	ProjectID    string    `json:"project_id"`
-	Email        string    `json:"email,omitempty"`
+	ClientID     string           `json:"client_id"`
+	ClientSecret string           `json:"client_secret"`
+	AccessToken  string           `json:"access_token"`
+	RefreshToken string           `json:"refresh_token"`
+	TokenType    string           `json:"token_type"`
+	Expiry       time.Time        `json:"expiry"`
+	ProjectID    string           `json:"project_id"`
+	Email        string           `json:"email,omitempty"`
+	UsageStats   *OAuthUsageStats `json:"usage_stats,omitempty"`
+}
+
+// OAuthUsageBucket stores aggregated account usage for one hour.
+type OAuthUsageBucket struct {
+	HourStart time.Time `json:"hour_start"`
+	Attempts  int       `json:"attempts"`
+	Successes int       `json:"successes"`
+	Failures  int       `json:"failures"`
+}
+
+// OAuthUsageStats stores persisted usage counters for one OAuth account.
+type OAuthUsageStats struct {
+	AttemptsTotal  int                `json:"attempts_total"`
+	SuccessesTotal int                `json:"successes_total"`
+	FailuresTotal  int                `json:"failures_total"`
+	HourlyBuckets  []OAuthUsageBucket `json:"hourly_buckets,omitempty"`
+	LastAttemptAt  time.Time          `json:"last_attempt_at,omitempty"`
 }
 
 type oauthFlowState struct {

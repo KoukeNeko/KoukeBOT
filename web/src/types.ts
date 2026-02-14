@@ -114,10 +114,17 @@ export interface PoolEntry {
   exhausted_until?: string
   current?: boolean
 
-  // Quota tracking
-  request_count: number    // requests since last reset
-  total_requests: number   // lifetime requests
-  last_reset_time: string  // ISO timestamp
+  // Usage tracking
+  request_count: number    // legacy alias: attempts_24h
+  total_requests: number   // legacy alias: attempts_total
+  last_reset_time: string  // legacy field
+  attempts_24h?: number
+  successes_24h?: number
+  failures_24h?: number
+  attempts_total?: number
+  successes_total?: number
+  failures_total?: number
+  last_attempt_at?: string
 
   // Health tracking
   consecutive_failures?: number

@@ -423,45 +423,68 @@ export default function Settings() {
                               </>
                             )}
                           </div>
-                          {entry.request_count > 0 && (
-                            <div className="pool-card-quota">
-                              <div className="pool-quota-row">
-                                <span className="pool-quota-label">24h 使用量:</span>
-                                <span className="pool-quota-value">{entry.request_count}</span>
-                              </div>
-                              <div className="pool-quota-row">
-                                <span className="pool-quota-label">總計請求:</span>
-                                <span className="pool-quota-total">{entry.total_requests.toLocaleString()}</span>
-                              </div>
-                              {entry.last_reset_time && (
-                                <>
+                          {(() => {
+                            const attempts24h = entry.attempts_24h ?? entry.request_count ?? 0;
+                            const attemptsTotal = entry.attempts_total ?? entry.total_requests ?? 0;
+                            const successes24h = entry.successes_24h ?? 0;
+                            const failures24h = entry.failures_24h ?? 0;
+                            const successesTotal = entry.successes_total ?? 0;
+                            const failuresTotal = entry.failures_total ?? 0;
+                            const hasUsage =
+                              attempts24h > 0 ||
+                              attemptsTotal > 0 ||
+                              successes24h > 0 ||
+                              failures24h > 0 ||
+                              successesTotal > 0 ||
+                              failuresTotal > 0;
+                            if (!hasUsage) return null;
+                            return (
+                              <div className="pool-card-quota">
+                                <div className="pool-quota-row">
+                                  <span className="pool-quota-label">24h 嘗試:</span>
+                                  <span className="pool-quota-value">{attempts24h}</span>
+                                </div>
+                                <div className="pool-quota-row">
+                                  <span className="pool-quota-label">24h 成功:</span>
+                                  <span className="pool-quota-total">{successes24h}</span>
+                                </div>
+                                <div className="pool-quota-row">
+                                  <span className="pool-quota-label">24h 失敗:</span>
+                                  <span className="pool-quota-total">{failures24h}</span>
+                                </div>
+                                <div className="pool-quota-row">
+                                  <span className="pool-quota-label">總嘗試:</span>
+                                  <span className="pool-quota-total">{attemptsTotal.toLocaleString()}</span>
+                                </div>
+                                <div className="pool-quota-row">
+                                  <span className="pool-quota-label">總成功:</span>
+                                  <span className="pool-quota-total">{successesTotal.toLocaleString()}</span>
+                                </div>
+                                <div className="pool-quota-row">
+                                  <span className="pool-quota-label">總失敗:</span>
+                                  <span className="pool-quota-total">{failuresTotal.toLocaleString()}</span>
+                                </div>
+                                {entry.last_attempt_at && (
                                   <div className="pool-quota-row">
-                                    <span className="pool-quota-label">上次重置:</span>
+                                    <span className="pool-quota-label">最近嘗試:</span>
                                     <span className="pool-quota-time">
-                                      {new Date(entry.last_reset_time).toLocaleString('zh-TW', {
-                                        month: '2-digit',
-                                        day: '2-digit',
-                                        hour: '2-digit',
-                                        minute: '2-digit'
+                                      {new Date(entry.last_attempt_at).toLocaleString("zh-TW")}
+                                    </span>
+                                  </div>
+                                )}
+                                {entry.last_reset_time && (
+                                  <div className="pool-quota-row">
+                                    <span className="pool-quota-label">窗口起點:</span>
+                                    <span className="pool-quota-time">
+                                      {new Date(entry.last_reset_time).toLocaleString("zh-TW", {
+                                        month: "2-digit",
+                                        day: "2-digit",
+                                        hour: "2-digit",
+                                        minute: "2-digit"
                                       })}
                                     </span>
                                   </div>
-                                  <div className="pool-quota-row">
-                                    <span className="pool-quota-label">下次重置:</span>
-                                    <span className="pool-quota-time">
-                                      {(() => {
-                                        const resetTime = new Date(entry.last_reset_time);
-                                        resetTime.setHours(resetTime.getHours() + 24);
-                                        const now = new Date();
-                                        const diff = resetTime.getTime() - now.getTime();
-                                        const hours = Math.floor(diff / (1000 * 60 * 60));
-                                        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                                        return `${hours}h ${minutes}m 後`;
-                                      })()}
-                                    </span>
-                                  </div>
-                                </>
-                              )}
+                                )}
                               {(entry.consecutive_failures ?? 0) > 0 && (
                                 <>
                                   <div className="pool-quota-row">
@@ -484,8 +507,9 @@ export default function Settings() {
                                   </span>
                                 </div>
                               )}
-                            </div>
-                          )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                       <button

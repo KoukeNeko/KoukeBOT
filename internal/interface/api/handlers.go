@@ -659,6 +659,7 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 			tokens = []*llm.OAuthTokenData{oauthData}
 		}
 		pool := app.NewProviderPool()
+		pool.SetPoolStorePath(poolPath)
 		if s.AutoRetryCount > 0 {
 			pool.SetAutoRetryCount(s.AutoRetryCount)
 		}
@@ -677,7 +678,7 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 				logAPI.Warnf("activate-provider: provider init failed for %s: %v", tokenData.Email, err)
 				continue
 			}
-			pool.AddOrReplace(p, tokenData.Email)
+			pool.AddOrReplaceWithUsage(p, tokenData.Email, tokenData.UsageStats)
 		}
 		if pool.Size() == 0 {
 			return fmt.Errorf("no OAuth accounts available")
@@ -866,11 +867,15 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state string) (*llm.OAuth
 	}
 
 	pool := h.providerManager.GetPool()
+	poolPath := h.oauthFlow.PoolPath()
 	if pool == nil {
 		pool = app.NewProviderPool()
+		pool.SetPoolStorePath(poolPath)
 		h.providerManager.Update(pool)
+	} else {
+		pool.SetPoolStorePath(poolPath)
 	}
-	pool.AddOrReplace(provider, tokenData.Email)
+	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("OAuth account added to pool: %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
@@ -1048,11 +1053,15 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 	}
 
 	pool := h.providerManager.GetPool()
+	poolPath := h.oauthFlow.PoolPath()
 	if pool == nil {
 		pool = app.NewProviderPool()
+		pool.SetPoolStorePath(poolPath)
 		h.providerManager.Update(pool)
+	} else {
+		pool.SetPoolStorePath(poolPath)
 	}
-	pool.AddOrReplace(provider, tokenData.Email)
+	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("Imported pasted token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
@@ -1089,11 +1098,15 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pool := h.providerManager.GetPool()
+	poolPath := h.oauthFlow.PoolPath()
 	if pool == nil {
 		pool = app.NewProviderPool()
+		pool.SetPoolStorePath(poolPath)
 		h.providerManager.Update(pool)
+	} else {
+		pool.SetPoolStorePath(poolPath)
 	}
-	pool.AddOrReplace(provider, tokenData.Email)
+	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("Imported Gemini CLI token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 

@@ -24,10 +24,8 @@ type poolEntry struct {
 	exhaustedUntil time.Time // zero value = available
 	lastUsed       time.Time // for load balancing
 
-	// Quota tracking
-	requestCount  int       // requests since last reset
-	lastResetTime time.Time // when quota counter was last reset
-	totalRequests int       // lifetime request count
+	// Usage tracking (persisted to oauth_pool.json)
+	usage *llm.OAuthUsageStats
 
 	// Health tracking
 	consecutiveFailures int
@@ -43,10 +41,17 @@ type PoolStatus struct {
 	ExhaustedUntil *time.Time `json:"exhausted_until,omitempty"`
 	Current        bool       `json:"current"`
 
-	// Quota tracking
-	RequestCount  int       `json:"request_count"`   // requests since last reset
-	TotalRequests int       `json:"total_requests"`  // lifetime requests
-	LastResetTime time.Time `json:"last_reset_time"` // when quota counter was reset
+	// Usage tracking
+	RequestCount   int        `json:"request_count"`   // legacy alias: attempts_24h
+	TotalRequests  int        `json:"total_requests"`  // legacy alias: attempts_total
+	LastResetTime  time.Time  `json:"last_reset_time"` // legacy field, no longer quota-reset time
+	Attempts24h    int        `json:"attempts_24h"`
+	Successes24h   int        `json:"successes_24h"`
+	Failures24h    int        `json:"failures_24h"`
+	AttemptsTotal  int        `json:"attempts_total"`
+	SuccessesTotal int        `json:"successes_total"`
+	FailuresTotal  int        `json:"failures_total"`
+	LastAttemptAt  *time.Time `json:"last_attempt_at,omitempty"`
 
 	// Health tracking
 	ConsecutiveFailures int        `json:"consecutive_failures"`
@@ -63,6 +68,7 @@ type ProviderPool struct {
 	lastUsedEmail  string
 	tools          []domain.Tool
 	autoRetryCount int // number of retries for short-delay 429s
+	poolStorePath  string
 }
 
 // NewProviderPool creates an empty provider pool.
@@ -82,13 +88,25 @@ func (pp *ProviderPool) SetAutoRetryCount(count int) {
 	pp.autoRetryCount = count
 }
 
+// SetPoolStorePath sets the OAuth pool JSON path used for persisting usage stats.
+func (pp *ProviderPool) SetPoolStorePath(path string) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	pp.poolStorePath = strings.TrimSpace(path)
+}
+
 // Add appends or replaces a provider in the pool.
 func (pp *ProviderPool) Add(provider llm.Provider, email string) {
-	pp.AddOrReplace(provider, email)
+	pp.AddOrReplaceWithUsage(provider, email, nil)
 }
 
 // AddOrReplace inserts a new account or replaces an existing one with the same email.
 func (pp *ProviderPool) AddOrReplace(provider llm.Provider, email string) {
+	pp.AddOrReplaceWithUsage(provider, email, nil)
+}
+
+// AddOrReplaceWithUsage inserts/replaces a provider and optional persisted usage stats.
+func (pp *ProviderPool) AddOrReplaceWithUsage(provider llm.Provider, email string, usage *llm.OAuthUsageStats) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
 
@@ -105,18 +123,23 @@ func (pp *ProviderPool) AddOrReplace(provider llm.Provider, email string) {
 		pp.entries[i].exhaustedUntil = time.Time{}
 		pp.entries[i].consecutiveFailures = 0
 		pp.entries[i].lastError = ""
-		if pp.entries[i].lastResetTime.IsZero() {
-			pp.entries[i].lastResetTime = time.Now()
+		if usage != nil {
+			pp.entries[i].usage = cloneUsageStats(usage)
+		} else if pp.entries[i].usage == nil {
+			pp.entries[i].usage = &llm.OAuthUsageStats{}
 		}
 		logPool.Logf("pool: replaced %s (%d account(s))", email, len(pp.entries))
 		return
 	}
 
 	pp.entries = append(pp.entries, poolEntry{
-		provider:      provider,
-		email:         email,
-		lastResetTime: time.Now(), // Initialize reset time for quota tracking
+		provider: provider,
+		email:    email,
+		usage:    cloneUsageStats(usage),
 	})
+	if pp.entries[len(pp.entries)-1].usage == nil {
+		pp.entries[len(pp.entries)-1].usage = &llm.OAuthUsageStats{}
+	}
 	logPool.Logf("pool: added %s (%d account(s))", email, len(pp.entries))
 }
 
@@ -165,14 +188,27 @@ func (pp *ProviderPool) Entries() []PoolStatus {
 			t := e.lastSuccessAt
 			lastSuccessAt = &t
 		}
+		attempts24h, successes24h, failures24h, windowStart := summarizeUsage24h(e.usage, now)
+		lastAttemptAt := usageLastAttemptAt(e.usage)
+		attemptsTotal, successesTotal, failuresTotal := summarizeUsageTotals(e.usage)
+		if windowStart.IsZero() && lastAttemptAt != nil {
+			windowStart = lastAttemptAt.Add(-24 * time.Hour).Truncate(time.Hour)
+		}
 		result[i] = PoolStatus{
 			Email:               e.email,
 			Status:              status,
 			ExhaustedUntil:      until,
 			Current:             e.email == pp.lastUsedEmail,
-			RequestCount:        e.requestCount,
-			TotalRequests:       e.totalRequests,
-			LastResetTime:       e.lastResetTime,
+			RequestCount:        attempts24h,
+			TotalRequests:       attemptsTotal,
+			LastResetTime:       windowStart,
+			Attempts24h:         attempts24h,
+			Successes24h:        successes24h,
+			Failures24h:         failures24h,
+			AttemptsTotal:       attemptsTotal,
+			SuccessesTotal:      successesTotal,
+			FailuresTotal:       failuresTotal,
+			LastAttemptAt:       lastAttemptAt,
 			ConsecutiveFailures: e.consecutiveFailures,
 			LastError:           e.lastError,
 			LastSuccessAt:       lastSuccessAt,
@@ -290,7 +326,7 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 		}
 
 		result, err := fn(provider)
-		pp.recordAttempt(email, time.Now())
+		pp.recordAttempt(email, time.Now(), err == nil)
 
 		if err == nil {
 			pp.markSuccess(email, time.Now())
@@ -311,7 +347,7 @@ func tryPool[T any](pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, erro
 					time.Sleep(wait)
 
 					result, err = fn(provider)
-					pp.recordAttempt(email, time.Now())
+					pp.recordAttempt(email, time.Now(), err == nil)
 					if err == nil {
 						pp.markSuccess(email, time.Now())
 						return result, nil
@@ -419,23 +455,22 @@ func (pp *ProviderPool) findEntryByEmailLocked(email string) *poolEntry {
 	return nil
 }
 
-func (pp *ProviderPool) recordAttempt(email string, now time.Time) {
+func (pp *ProviderPool) recordAttempt(email string, now time.Time, success bool) {
+	var snapshot *llm.OAuthUsageStats
+
 	pp.mu.Lock()
-	defer pp.mu.Unlock()
-
 	entry := pp.findEntryByEmailLocked(email)
-	if entry == nil {
-		return
+	if entry != nil {
+		entry.lastUsed = now
+		pp.lastUsedEmail = email
+		entry.usage = updateUsageStats(entry.usage, now, success)
+		snapshot = cloneUsageStats(entry.usage)
 	}
+	pp.mu.Unlock()
 
-	if now.Sub(entry.lastResetTime) > 24*time.Hour || entry.lastResetTime.IsZero() {
-		entry.requestCount = 0
-		entry.lastResetTime = now
+	if snapshot != nil {
+		pp.persistUsageStats(email, snapshot)
 	}
-	entry.requestCount++
-	entry.totalRequests++
-	entry.lastUsed = now
-	pp.lastUsedEmail = email
 }
 
 func (pp *ProviderPool) markSuccess(email string, now time.Time) {
@@ -482,6 +517,18 @@ func (pp *ProviderPool) getAutoRetryCount() int {
 	pp.mu.RLock()
 	defer pp.mu.RUnlock()
 	return pp.autoRetryCount
+}
+
+func (pp *ProviderPool) persistUsageStats(email string, usage *llm.OAuthUsageStats) {
+	pp.mu.RLock()
+	path := pp.poolStorePath
+	pp.mu.RUnlock()
+	if path == "" || usage == nil || email == "" {
+		return
+	}
+	if err := llm.UpdateOAuthPoolUsageStats(path, email, usage); err != nil {
+		logPool.Warnf("pool: persist usage failed for %s: %v", email, err)
+	}
 }
 
 // findEarliestResetLocked returns a human-readable string for the soonest recovery time.
@@ -636,6 +683,103 @@ func addJitter(base, maxJitter time.Duration) time.Duration {
 		return base
 	}
 	return base + time.Duration(rand.Int63n(int64(maxJitter)))
+}
+
+func cloneUsageStats(stats *llm.OAuthUsageStats) *llm.OAuthUsageStats {
+	if stats == nil {
+		return nil
+	}
+	cloned := *stats
+	if len(stats.HourlyBuckets) > 0 {
+		cloned.HourlyBuckets = append([]llm.OAuthUsageBucket(nil), stats.HourlyBuckets...)
+	}
+	return &cloned
+}
+
+func updateUsageStats(stats *llm.OAuthUsageStats, now time.Time, success bool) *llm.OAuthUsageStats {
+	if stats == nil {
+		stats = &llm.OAuthUsageStats{}
+	}
+
+	// Keep 24h rolling window using hourly buckets.
+	hour := now.Truncate(time.Hour)
+	found := false
+	for i := range stats.HourlyBuckets {
+		if stats.HourlyBuckets[i].HourStart.Equal(hour) {
+			stats.HourlyBuckets[i].Attempts++
+			if success {
+				stats.HourlyBuckets[i].Successes++
+			} else {
+				stats.HourlyBuckets[i].Failures++
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		b := llm.OAuthUsageBucket{
+			HourStart: hour,
+			Attempts:  1,
+		}
+		if success {
+			b.Successes = 1
+		} else {
+			b.Failures = 1
+		}
+		stats.HourlyBuckets = append(stats.HourlyBuckets, b)
+	}
+
+	stats.AttemptsTotal++
+	if success {
+		stats.SuccessesTotal++
+	} else {
+		stats.FailuresTotal++
+	}
+	stats.LastAttemptAt = now
+
+	cutoff := now.Add(-24 * time.Hour)
+	pruned := stats.HourlyBuckets[:0]
+	for _, b := range stats.HourlyBuckets {
+		if b.HourStart.After(cutoff) || b.HourStart.Equal(cutoff) {
+			pruned = append(pruned, b)
+		}
+	}
+	stats.HourlyBuckets = pruned
+	return stats
+}
+
+func summarizeUsage24h(stats *llm.OAuthUsageStats, now time.Time) (attempts, successes, failures int, windowStart time.Time) {
+	if stats == nil {
+		return 0, 0, 0, time.Time{}
+	}
+	cutoff := now.Add(-24 * time.Hour)
+	for _, b := range stats.HourlyBuckets {
+		if !(b.HourStart.After(cutoff) || b.HourStart.Equal(cutoff)) {
+			continue
+		}
+		attempts += b.Attempts
+		successes += b.Successes
+		failures += b.Failures
+		if windowStart.IsZero() || b.HourStart.Before(windowStart) {
+			windowStart = b.HourStart
+		}
+	}
+	return attempts, successes, failures, windowStart
+}
+
+func summarizeUsageTotals(stats *llm.OAuthUsageStats) (attempts, successes, failures int) {
+	if stats == nil {
+		return 0, 0, 0
+	}
+	return stats.AttemptsTotal, stats.SuccessesTotal, stats.FailuresTotal
+}
+
+func usageLastAttemptAt(stats *llm.OAuthUsageStats) *time.Time {
+	if stats == nil || stats.LastAttemptAt.IsZero() {
+		return nil
+	}
+	t := stats.LastAttemptAt
+	return &t
 }
 
 func truncateError(err error, maxLen int) string {

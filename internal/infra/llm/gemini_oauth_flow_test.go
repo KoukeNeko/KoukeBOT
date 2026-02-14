@@ -78,7 +78,15 @@ func TestUpdateOAuthPoolTokenByEmail(t *testing.T) {
 	poolPath := filepath.Join(t.TempDir(), "oauth_pool.json")
 	seed := []*OAuthTokenData{
 		{Email: "a@example.com", AccessToken: "token-a"},
-		{Email: "b@example.com", AccessToken: "token-b"},
+		{
+			Email:       "b@example.com",
+			AccessToken: "token-b",
+			UsageStats: &OAuthUsageStats{
+				AttemptsTotal:  7,
+				SuccessesTotal: 6,
+				FailuresTotal:  1,
+			},
+		},
 	}
 	if err := SaveOAuthPool(poolPath, seed); err != nil {
 		t.Fatalf("SaveOAuthPool() error = %v", err)
@@ -102,9 +110,51 @@ func TestUpdateOAuthPoolTokenByEmail(t *testing.T) {
 	if loaded[1].AccessToken != "token-b-new" {
 		t.Fatalf("entry[1] access token = %q, want token-b-new", loaded[1].AccessToken)
 	}
+	if loaded[1].UsageStats == nil || loaded[1].UsageStats.AttemptsTotal != 7 {
+		t.Fatalf("usage stats should be preserved on token update")
+	}
 
 	if err := UpdateOAuthPoolToken(poolPath, "missing@example.com", replacement); err == nil {
 		t.Fatalf("UpdateOAuthPoolToken() expected error for missing email")
+	}
+}
+
+func TestUpdateOAuthPoolUsageStatsByEmail(t *testing.T) {
+	poolPath := filepath.Join(t.TempDir(), "oauth_pool.json")
+	seed := []*OAuthTokenData{
+		{Email: "a@example.com", AccessToken: "token-a"},
+	}
+	if err := SaveOAuthPool(poolPath, seed); err != nil {
+		t.Fatalf("SaveOAuthPool() error = %v", err)
+	}
+
+	usage := &OAuthUsageStats{
+		AttemptsTotal:  11,
+		SuccessesTotal: 10,
+		FailuresTotal:  1,
+		HourlyBuckets: []OAuthUsageBucket{
+			{
+				HourStart: time.Now().Truncate(time.Hour),
+				Attempts:  3,
+				Successes: 2,
+				Failures:  1,
+			},
+		},
+	}
+
+	if err := UpdateOAuthPoolUsageStats(poolPath, "a@example.com", usage); err != nil {
+		t.Fatalf("UpdateOAuthPoolUsageStats() error = %v", err)
+	}
+
+	loaded, err := LoadOAuthPool(poolPath)
+	if err != nil {
+		t.Fatalf("LoadOAuthPool() error = %v", err)
+	}
+	if loaded[0].UsageStats == nil || loaded[0].UsageStats.AttemptsTotal != 11 {
+		t.Fatalf("usage stats update not persisted")
+	}
+	if err := UpdateOAuthPoolUsageStats(poolPath, "missing@example.com", usage); err == nil {
+		t.Fatalf("UpdateOAuthPoolUsageStats() expected error for missing email")
 	}
 }
 

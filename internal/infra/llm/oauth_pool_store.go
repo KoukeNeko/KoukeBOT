@@ -50,13 +50,17 @@ func AddToOAuthPool(path string, token *OAuthTokenData) error {
 	found := false
 	for i, t := range tokens {
 		if t.Email == token.Email {
-			tokens[i] = token
+			merged := cloneOAuthTokenData(token)
+			if merged.UsageStats == nil {
+				merged.UsageStats = cloneOAuthUsageStats(t.UsageStats)
+			}
+			tokens[i] = merged
 			found = true
 			break
 		}
 	}
 	if !found {
-		tokens = append(tokens, token)
+		tokens = append(tokens, cloneOAuthTokenData(token))
 	}
 
 	return SaveOAuthPool(path, tokens)
@@ -89,11 +93,32 @@ func UpdateOAuthPoolToken(path string, email string, token *OAuthTokenData) erro
 
 	for i, t := range tokens {
 		if t.Email == email {
-			tokens[i] = token
+			merged := cloneOAuthTokenData(token)
+			// Refresh writes should preserve existing usage stats.
+			if merged.UsageStats == nil {
+				merged.UsageStats = cloneOAuthUsageStats(t.UsageStats)
+			}
+			tokens[i] = merged
 			return SaveOAuthPool(path, tokens)
 		}
 	}
 
+	return fmt.Errorf("email not found in OAuth pool: %s", email)
+}
+
+// UpdateOAuthPoolUsageStats updates usage stats for one account entry.
+func UpdateOAuthPoolUsageStats(path string, email string, usage *OAuthUsageStats) error {
+	tokens, err := LoadOAuthPool(path)
+	if err != nil {
+		return err
+	}
+
+	for i, t := range tokens {
+		if t.Email == email {
+			tokens[i].UsageStats = cloneOAuthUsageStats(usage)
+			return SaveOAuthPool(path, tokens)
+		}
+	}
 	return fmt.Errorf("email not found in OAuth pool: %s", email)
 }
 
@@ -111,4 +136,24 @@ func MigrateSingleTokenToPool(singlePath, poolPath string) {
 	}
 
 	_ = SaveOAuthPool(poolPath, []*OAuthTokenData{token})
+}
+
+func cloneOAuthTokenData(src *OAuthTokenData) *OAuthTokenData {
+	if src == nil {
+		return nil
+	}
+	out := *src
+	out.UsageStats = cloneOAuthUsageStats(src.UsageStats)
+	return &out
+}
+
+func cloneOAuthUsageStats(src *OAuthUsageStats) *OAuthUsageStats {
+	if src == nil {
+		return nil
+	}
+	out := *src
+	if len(src.HourlyBuckets) > 0 {
+		out.HourlyBuckets = append([]OAuthUsageBucket(nil), src.HourlyBuckets...)
+	}
+	return &out
 }

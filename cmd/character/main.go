@@ -240,6 +240,7 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 	}
 
 	pool := app.NewProviderPool()
+	pool.SetPoolStorePath(oauthPoolPath)
 
 	// Configure auto retry count from settings
 	if settings.AutoRetryCount > 0 {
@@ -261,7 +262,7 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 			logLLM.Warnf("failed to init OAuth provider for %s: %v", tokenData.Email, err)
 			continue
 		}
-		pool.AddOrReplace(provider, tokenData.Email)
+		pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	}
 
 	if pool.Size() == 0 {

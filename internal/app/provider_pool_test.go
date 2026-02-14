@@ -187,3 +187,51 @@ func TestMarkTransientFailureUpdatesPoolStatus(t *testing.T) {
 		t.Fatalf("status = %s, want exhausted", entries[0].Status)
 	}
 }
+
+func TestProviderPoolUsageCountersRolling24h(t *testing.T) {
+	pool := NewProviderPool()
+	pool.AddOrReplace(&stubProvider{id: "provider"}, "a@example.com")
+
+	now := time.Now()
+	pool.recordAttempt("a@example.com", now.Add(-25*time.Hour), true)
+	pool.recordAttempt("a@example.com", now, true)
+	pool.recordAttempt("a@example.com", now, false)
+
+	entries := pool.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries length = %d, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.AttemptsTotal != 3 {
+		t.Fatalf("attempts total = %d, want 3", e.AttemptsTotal)
+	}
+	if e.Attempts24h != 2 {
+		t.Fatalf("attempts 24h = %d, want 2", e.Attempts24h)
+	}
+	if e.Successes24h != 1 || e.Failures24h != 1 {
+		t.Fatalf("24h success/failure = %d/%d, want 1/1", e.Successes24h, e.Failures24h)
+	}
+	if e.SuccessesTotal != 2 || e.FailuresTotal != 1 {
+		t.Fatalf("total success/failure = %d/%d, want 2/1", e.SuccessesTotal, e.FailuresTotal)
+	}
+}
+
+func TestAddOrReplaceKeepsExistingUsageWhenNewUsageMissing(t *testing.T) {
+	pool := NewProviderPool()
+	usage := &llm.OAuthUsageStats{
+		AttemptsTotal:  5,
+		SuccessesTotal: 4,
+		FailuresTotal:  1,
+	}
+
+	pool.AddOrReplaceWithUsage(&stubProvider{id: "first"}, "a@example.com", usage)
+	pool.AddOrReplace(&stubProvider{id: "second"}, "a@example.com")
+
+	entries := pool.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries length = %d, want 1", len(entries))
+	}
+	if entries[0].AttemptsTotal != 5 {
+		t.Fatalf("attempts total = %d, want 5", entries[0].AttemptsTotal)
+	}
+}
