@@ -54,6 +54,7 @@ func (t *FileReadTool) Execute(ctx context.Context, input map[string]interface{}
 			IsError: true,
 		}, nil
 	}
+	filename, pathNotice := normalizeManagedMemoryPath(filename)
 
 	// 驗證路徑安全性
 	if err := validatePath(t.personaDir, filename); err != nil {
@@ -74,6 +75,9 @@ func (t *FileReadTool) Execute(ctx context.Context, input map[string]interface{}
 	}
 
 	result := fmt.Sprintf("=== 檔案: %s ===\n\n%s\n\n=== 檔案結束 ===", filename, string(content))
+	if pathNotice != "" {
+		result = pathNotice + "\n" + result
+	}
 
 	return domain.ToolResult{
 		Content: result,
@@ -127,6 +131,7 @@ func (t *FileWriteTool) Execute(ctx context.Context, input map[string]interface{
 			IsError: true,
 		}, nil
 	}
+	filename, pathNotice := normalizeManagedMemoryPath(filename)
 
 	content, ok := input["content"].(string)
 	if !ok {
@@ -146,6 +151,12 @@ func (t *FileWriteTool) Execute(ctx context.Context, input map[string]interface{
 
 	// 寫入檔案
 	targetPath := filepath.Join(t.personaDir, filename)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return domain.ToolResult{
+			Content: fmt.Sprintf("建立目錄失敗：%v", err),
+			IsError: true,
+		}, nil
+	}
 	if err := os.WriteFile(targetPath, []byte(content), 0644); err != nil {
 		return domain.ToolResult{
 			Content: fmt.Sprintf("寫入檔案失敗：%v", err),
@@ -154,6 +165,9 @@ func (t *FileWriteTool) Execute(ctx context.Context, input map[string]interface{
 	}
 
 	result := fmt.Sprintf("✅ 成功寫入 %d 個字元到 %s", len(content), filename)
+	if pathNotice != "" {
+		result = result + "\n" + pathNotice
+	}
 
 	return domain.ToolResult{
 		Content: result,
@@ -207,6 +221,7 @@ func (t *FileAppendTool) Execute(ctx context.Context, input map[string]interface
 			IsError: true,
 		}, nil
 	}
+	filename, pathNotice := normalizeManagedMemoryPath(filename)
 
 	content, ok := input["content"].(string)
 	if !ok {
@@ -226,6 +241,12 @@ func (t *FileAppendTool) Execute(ctx context.Context, input map[string]interface
 
 	// 追加內容
 	targetPath := filepath.Join(t.personaDir, filename)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return domain.ToolResult{
+			Content: fmt.Sprintf("建立目錄失敗：%v", err),
+			IsError: true,
+		}, nil
+	}
 	f, err := os.OpenFile(targetPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return domain.ToolResult{
@@ -243,6 +264,9 @@ func (t *FileAppendTool) Execute(ctx context.Context, input map[string]interface
 	}
 
 	result := fmt.Sprintf("✅ 成功追加 %d 個字元到 %s", len(content), filename)
+	if pathNotice != "" {
+		result = result + "\n" + pathNotice
+	}
 
 	return domain.ToolResult{
 		Content: result,
@@ -298,4 +322,23 @@ func validatePath(personaDir, filename string) error {
 	}
 
 	return nil
+}
+
+func normalizeManagedMemoryPath(filename string) (string, string) {
+	trimmed := strings.TrimSpace(filename)
+	if trimmed == "" {
+		return filename, ""
+	}
+	cleaned := filepath.Clean(trimmed)
+	cleaned = strings.TrimPrefix(cleaned, "."+string(filepath.Separator))
+	cleaned = filepath.ToSlash(cleaned)
+
+	switch strings.ToLower(cleaned) {
+	case "memory.md":
+		return "memory/MEMORY.md", "ℹ️ 請改用 memory/MEMORY.md（不要使用根目錄 MEMORY.md）。"
+	case "memory/memory.md":
+		return "memory/MEMORY.md", "ℹ️ 請固定使用 memory/MEMORY.md。"
+	default:
+		return cleaned, ""
+	}
 }

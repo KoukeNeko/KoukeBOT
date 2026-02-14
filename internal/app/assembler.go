@@ -225,9 +225,9 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	buf.WriteString("### Memory System\n\n")
 	buf.WriteString("You maintain three tiers of memory:\n")
 	buf.WriteString("- **user.md**: User profile (name, preferences, personality, habits)\n")
-	buf.WriteString("- **MEMORY.md**: Long-term context (projects, relationship dynamics, shared history)\n")
+	buf.WriteString("- **memory/MEMORY.md**: Long-term context (projects, relationship dynamics, shared history)\n")
 	buf.WriteString("- **Daily logs**: Session notes (memory/YYYY-MM-DD.md)\n\n")
-	buf.WriteString("Proactively use `file_write` to update user.md or MEMORY.md when learning important information about the user.\n")
+	buf.WriteString("Proactively use `file_write` to update user.md or memory/MEMORY.md when learning important information about the user.\n")
 	buf.WriteString("Use `file_append` to add notes to today's daily log throughout the conversation.\n")
 	buf.WriteString("When context approaches limits, you'll be prompted to consolidate memories before compaction.\n")
 
