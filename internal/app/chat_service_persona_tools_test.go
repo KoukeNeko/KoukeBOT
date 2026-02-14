@@ -134,6 +134,44 @@ func TestExecuteToolsNonFileToolUsesRegistry(t *testing.T) {
 	}
 }
 
+func TestToolCallSignatureStableForMapInput(t *testing.T) {
+	callA := domain.ToolCall{
+		Name: "session_status",
+		Input: map[string]interface{}{
+			"timezone": "Asia/Taipei",
+			"format":   "24",
+		},
+	}
+	callB := domain.ToolCall{
+		Name: "session_status",
+		Input: map[string]interface{}{
+			"format":   "24",
+			"timezone": "Asia/Taipei",
+		},
+	}
+
+	sigA := toolCallSignature(callA)
+	sigB := toolCallSignature(callB)
+	if sigA != sigB {
+		t.Fatalf("expected stable signature, got %q != %q", sigA, sigB)
+	}
+}
+
+func TestBuildToolLoopFallbackResponse(t *testing.T) {
+	policy := DefaultPromptGuardPolicy()
+	policy.TripletOutputEnabled = true
+	triplet := buildToolLoopFallbackResponse(policy)
+	if !strings.Contains(triplet, "[Status]:") || !strings.Contains(triplet, "[Response]:") {
+		t.Fatalf("expected triplet fallback response, got: %s", triplet)
+	}
+
+	policy.TripletOutputEnabled = false
+	plain := buildToolLoopFallbackResponse(policy)
+	if strings.Contains(plain, "[Status]:") {
+		t.Fatalf("expected plain fallback response, got: %s", plain)
+	}
+}
+
 type fakeTool struct{}
 
 func (f *fakeTool) Name() string { return "fake_tool" }

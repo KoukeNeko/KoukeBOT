@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -505,6 +506,28 @@ func summarizeToolTarget(call domain.ToolCall, personaID string) string {
 	return ""
 }
 
+func toolCallSignature(call domain.ToolCall) string {
+	if call.Input == nil {
+		return call.Name + "|{}"
+	}
+	b, err := json.Marshal(call.Input)
+	if err != nil {
+		return fmt.Sprintf("%s|%v", call.Name, call.Input)
+	}
+	return call.Name + "|" + string(b)
+}
+
+func buildToolLoopFallbackResponse(policy PromptGuardPolicy) string {
+	if policy.TripletOutputEnabled {
+		return strings.TrimSpace(
+			"[Status]: Degraded / Tool Loop Stopped\n" +
+				"[Analysis]: Repeated tool calls were blocked to prevent infinite recursion.\n" +
+				"[Response]: 抱歉，我剛剛在工具呼叫流程卡住了，已自動停止重複呼叫。請再說一次你的需求，我會直接回覆重點，不再重複呼叫工具。",
+		)
+	}
+	return "抱歉，我剛剛在工具呼叫流程卡住了，已自動停止重複呼叫。請再說一次你的需求，我會直接回覆重點。"
+}
+
 // handleToolCallingStream handles the tool calling loop with streaming.
 // When the LLM requests tool calls, this executes them and continues the conversation.
 // Supports up to maxToolRounds of chained tool calls.
@@ -530,6 +553,7 @@ func (s *ChatService) handleToolCallingStream(
 		var allToolCalls []domain.ToolCall
 		var allToolResultsText string
 		var totalTokens int
+		toolCallAttempts := make(map[string]int)
 		policy := s.assembler.PromptGuardPolicy()
 		hideAnalysis := policy.TripletOutputEnabled && policy.AnalysisVisibility == AnalysisVisibilityHidden
 
@@ -599,8 +623,32 @@ func (s *ChatService) handleToolCallingStream(
 				}
 			}
 
-			// Execute tools
-			toolResults := s.executeTools(ctx, pendingToolCalls, personaID)
+			// Execute tools with duplicate-call guard to prevent endless loops.
+			executableCalls := make([]domain.ToolCall, 0, len(pendingToolCalls))
+			toolResults := make([]domain.ToolResult, 0, len(pendingToolCalls))
+			for _, call := range pendingToolCalls {
+				signature := toolCallSignature(call)
+				if toolCallAttempts[signature] >= 1 {
+					toolResults = append(toolResults, domain.ToolResult{
+						ToolCallID: call.ID,
+						Content: fmt.Sprintf(
+							"Duplicate tool call blocked: %q with identical input was already executed in this turn. "+
+								"Do NOT call it again; continue with available results and answer the user directly.",
+							call.Name,
+						),
+						IsError: true,
+					})
+					logChat.Warnf("tool loop guard blocked duplicate call (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
+					continue
+				}
+				toolCallAttempts[signature]++
+				executableCalls = append(executableCalls, call)
+			}
+
+			if len(executableCalls) > 0 {
+				executed := s.executeTools(ctx, executableCalls, personaID)
+				toolResults = append(toolResults, executed...)
+			}
 			toolCallMap := make(map[string]domain.ToolCall, len(pendingToolCalls))
 			for _, call := range pendingToolCalls {
 				toolCallMap[call.ID] = call
@@ -670,6 +718,11 @@ func (s *ChatService) handleToolCallingStream(
 				outputCh <- llm.StreamChunk{Error: fmt.Errorf("llm continuation: %w", err), Done: true}
 				return
 			}
+		}
+
+		if strings.TrimSpace(fullResponse) == "" && len(allToolCalls) > 0 {
+			fullResponse = buildToolLoopFallbackResponse(policy)
+			logChat.Warnf("tool loop fallback response generated after %d tool call(s)", len(allToolCalls))
 		}
 
 		finalView := s.prepareAssistantOutputForStorage(fullResponse)
