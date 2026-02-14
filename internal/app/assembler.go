@@ -382,6 +382,9 @@ func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budge
 		}
 
 		msg := messages[i]
+		if isInternalToolHistoryMessage(msg.Content) {
+			continue
+		}
 		compact := domain.Message{Role: msg.Role, Content: msg.Content}
 		if len(selected) >= 4 && len(compact.Content) > 4000 {
 			compact.Content = compact.Content[:4000] + "\n...[history truncated for token budget]"
@@ -405,6 +408,17 @@ func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budge
 		selected[i], selected[j] = selected[j], selected[i]
 	}
 	return selected
+}
+
+func isInternalToolHistoryMessage(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return false
+	}
+	if trimmed == "[Tool calls executed]" {
+		return true
+	}
+	return strings.HasPrefix(trimmed, "Tool execution results:")
 }
 
 func (a *ContextAssembler) selectRelevantDigests(digests []domain.ConversationDigest, currentMessage string) []domain.ConversationDigest {

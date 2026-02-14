@@ -535,10 +535,18 @@ func (s *ChatService) handleToolCallingStream(
 
 		currentStream := streamCh
 		var fullResponse string
+		baseMessageCount := len(conv.Messages)
+		conv.AppendUserMessage(contextForLLM)
+		defer func() {
+			if baseMessageCount <= len(conv.Messages) {
+				conv.Messages = conv.Messages[:baseMessageCount]
+			}
+		}()
 
 		for round := 0; round <= maxToolRounds; round++ {
 			var pendingToolCalls []domain.ToolCall
 			fullResponse = ""
+			var visibleRoundContent strings.Builder
 
 			// Consume stream
 			for chunk := range currentStream {
@@ -554,14 +562,17 @@ func (s *ChatService) handleToolCallingStream(
 					outputCh <- chunk
 					return
 				}
-				if !hideAnalysis {
-					outputCh <- chunk
-				}
 				fullResponse += chunk.Content
+				if !hideAnalysis && chunk.Content != "" {
+					visibleRoundContent.WriteString(chunk.Content)
+				}
 			}
 
 			// No tool calls → we have the final response
 			if len(pendingToolCalls) == 0 {
+				if !hideAnalysis && visibleRoundContent.Len() > 0 {
+					outputCh <- llm.StreamChunk{Content: visibleRoundContent.String()}
+				}
 				break
 			}
 
@@ -683,6 +694,9 @@ func (s *ChatService) handleToolCallingStream(
 			// Store final conversation with raw LLM data
 			rawLLMOutput := fmt.Sprintf("[Tool calls executed]\n%s\n\n[Final response]\n%s",
 				allToolResultsText, fullResponse)
+			if baseMessageCount <= len(conv.Messages) {
+				conv.Messages = conv.Messages[:baseMessageCount]
+			}
 			if len(imageRefs) > 0 {
 				conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
 			} else {
@@ -701,6 +715,9 @@ func (s *ChatService) handleToolCallingStream(
 		} else {
 			// No tool calls - store conversation normally with raw LLM data
 			if fullResponse != "" || messageToStore != "" {
+				if baseMessageCount <= len(conv.Messages) {
+					conv.Messages = conv.Messages[:baseMessageCount]
+				}
 				if len(imageRefs) > 0 {
 					conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
 				} else {
