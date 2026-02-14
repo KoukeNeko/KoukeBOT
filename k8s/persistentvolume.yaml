@@ -32,7 +32,7 @@ spec:
     storage: 1Gi
   volumeMode: Filesystem
   accessModes:
-    - ReadOnlyMany
+    - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
   storageClassName: local-storage
   # Update the path to match your config location

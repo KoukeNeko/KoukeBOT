@@ -28,7 +28,7 @@ metadata:
     app: kouke-bot
 spec:
   accessModes:
-    - ReadOnlyMany
+    - ReadWriteOnce
   storageClassName: local-storage
   resources:
     requests:
