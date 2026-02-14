@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useNavigate, useParams } from 'react-router-dom'
-import { listPersonas, listConversations, getConversation, getConversationByID, deleteConversationByID } from '../api'
+import { listPersonas, listConversations, createConversationSession, getConversation, getConversationByID, deleteConversationByID } from '../api'
 import type { PersonaSummary, ConversationSummary, Message } from '../types'
 import { SidebarList, SidebarItem } from '../components/SidebarList'
 import { useIsMobile } from '../hooks/useMediaQuery'
@@ -117,12 +117,35 @@ export default function Chat() {
     }
   }
 
+  const openNewConversationModal = () => {
+    if (selectedConv?.personaId) {
+      setNewConvPersonaId(selectedConv.personaId)
+    } else if (personas.length > 0) {
+      setNewConvPersonaId(personas[0].id)
+    }
+    setShowNewConvModal(true)
+  }
+
   const handleNewConv = async () => {
     if (!newConvPersonaId) return
-    await selectActiveConversation('web-test', newConvPersonaId)
-    setShowNewConvModal(false)
-    if (isMobile) {
-      navigate(`/chat/${newConvPersonaId}`)
+
+    try {
+      const conv = await createConversationSession(newConvPersonaId, 'web-test')
+      setSelectedConv({
+        conversationId: conv.id,
+        channelId: conv.channel_id,
+        personaId: conv.persona_id,
+      })
+      setMessages([])
+      setShowNewConvModal(false)
+      await loadConversations()
+      if (isMobile) {
+        navigate(`/chat/${conv.persona_id}`)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown error'
+      console.error('Failed to create conversation:', e)
+      window.alert(`建立新對話失敗：${msg}`)
     }
   }
 
@@ -449,7 +472,7 @@ export default function Chat() {
           <div style={{ padding: '0.75rem 1.25rem' }}>
             <button 
               style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
-              onClick={() => setShowNewConvModal(true)}
+              onClick={openNewConversationModal}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -520,7 +543,7 @@ export default function Chat() {
             {!selectedConv ? (
               <div className="empty-state" style={{ flexDirection: 'column', gap: '1rem' }}>
                 <p>選擇一個對話或建立新對話開始聊天</p>
-                <button onClick={() => setShowNewConvModal(true)}>
+                <button onClick={openNewConversationModal}>
                   建立新對話
                 </button>
               </div>

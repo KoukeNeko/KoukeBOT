@@ -1332,6 +1332,38 @@ type ConversationSummary struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
+type CreateConversationRequest struct {
+	ChannelID string `json:"channel_id,omitempty"`
+	PersonaID string `json:"persona_id"`
+}
+
+func (h *Handlers) CreateConversation(w http.ResponseWriter, r *http.Request) {
+	var req CreateConversationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	personaID := strings.TrimSpace(req.PersonaID)
+	if personaID == "" {
+		writeError(w, http.StatusBadRequest, "persona_id is required")
+		return
+	}
+
+	channelID := strings.TrimSpace(req.ChannelID)
+	if channelID == "" {
+		channelID = "web-test"
+	}
+
+	conv, err := h.convStore.CreateSession(h.ctx, channelID, personaID, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "create conversation: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, conv)
+}
+
 func (h *Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
 	conversations, err := h.convStore.List(h.ctx)
 	if err != nil {

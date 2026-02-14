@@ -127,6 +127,17 @@ export function listConversations(): Promise<ConversationSummary[]> {
   return fetchJSON(`${BASE}/conversations`)
 }
 
+export function createConversationSession(personaId: string, channelId = 'web-test'): Promise<Conversation> {
+  return fetchJSON(`${BASE}/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      persona_id: personaId,
+      channel_id: channelId,
+    }),
+  })
+}
+
 export function getConversation(channelId: string, personaId: string): Promise<Conversation> {
   return fetchJSON(`${BASE}/conversations/${encodeURIComponent(channelId)}/${encodeURIComponent(personaId)}`)
 }

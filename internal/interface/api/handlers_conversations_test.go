@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +13,75 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
+
+func TestCreateConversationCreatesNewSessionAndActivatesLatest(t *testing.T) {
+	convStore := store.NewMemoryStore()
+	h := &Handlers{
+		convStore: convStore,
+		ctx:       context.Background(),
+	}
+
+	makeReq := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/conversations", bytes.NewBufferString(`{"persona_id":"persona-a"}`))
+		rec := httptest.NewRecorder()
+		h.CreateConversation(rec, req)
+		return rec
+	}
+
+	rec1 := makeReq()
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d, want %d", rec1.Code, http.StatusCreated)
+	}
+	var conv1 domain.Conversation
+	if err := json.Unmarshal(rec1.Body.Bytes(), &conv1); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+	if conv1.ID == "" {
+		t.Fatal("expected non-empty conversation id")
+	}
+	if conv1.ChannelID != "web-test" {
+		t.Fatalf("first channel_id = %q, want web-test", conv1.ChannelID)
+	}
+
+	rec2 := makeReq()
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("second create status = %d, want %d", rec2.Code, http.StatusCreated)
+	}
+	var conv2 domain.Conversation
+	if err := json.Unmarshal(rec2.Body.Bytes(), &conv2); err != nil {
+		t.Fatalf("decode second response: %v", err)
+	}
+	if conv2.ID == "" {
+		t.Fatal("expected non-empty conversation id")
+	}
+	if conv1.ID == conv2.ID {
+		t.Fatalf("expected different conversation ids, both=%s", conv1.ID)
+	}
+
+	activeID, err := convStore.GetActiveID(context.Background(), "web-test", "persona-a")
+	if err != nil {
+		t.Fatalf("GetActiveID failed: %v", err)
+	}
+	if activeID != conv2.ID {
+		t.Fatalf("active id = %s, want latest %s", activeID, conv2.ID)
+	}
+}
+
+func TestCreateConversationMissingPersonaIDReturnsBadRequest(t *testing.T) {
+	convStore := store.NewMemoryStore()
+	h := &Handlers{
+		convStore: convStore,
+		ctx:       context.Background(),
+	}
+
+	req := httptest.NewRequest("POST", "/api/conversations", bytes.NewBufferString(`{"channel_id":"web-test"}`))
+	rec := httptest.NewRecorder()
+	h.CreateConversation(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
 
 func TestListConversationsIncludesResetConversation(t *testing.T) {
 	convStore := store.NewMemoryStore()

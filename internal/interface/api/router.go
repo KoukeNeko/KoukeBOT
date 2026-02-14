@@ -53,6 +53,7 @@ func (r *Router) registerRoutes() {
 
 	// Conversations
 	r.mux.HandleFunc("GET /api/conversations", r.handlers.ListConversations)
+	r.mux.HandleFunc("POST /api/conversations", r.handlers.CreateConversation)
 	r.mux.HandleFunc("GET /api/conversations/{channelID}/{personaID}", r.handlers.GetConversation)
 	r.mux.HandleFunc("DELETE /api/conversations/{channelID}/{personaID}", r.handlers.DeleteConversation)
 	r.mux.HandleFunc("GET /api/conversations/by-id/{conversationID}", r.handlers.GetConversationByID)
