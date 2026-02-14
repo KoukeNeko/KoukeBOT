@@ -18,17 +18,24 @@ type GenerationConfig struct {
 	PresencePenalty  float64 `yaml:"presence_penalty" json:"presence_penalty"`
 }
 
+// StyleGuardConfig controls persona-specific style stability constraints.
+type StyleGuardConfig struct {
+	NegativeConstraints string   `yaml:"negative_constraints,omitempty" json:"negative_constraints,omitempty"`
+	SignatureTerms      []string `yaml:"signature_terms,omitempty" json:"signature_terms,omitempty"`
+}
+
 // PersonaConfig maps to config.yaml — the "brain" of a persona.
 type PersonaConfig struct {
 	Meta           PersonaMeta      `yaml:"meta" json:"meta"`
 	SystemTemplate string           `yaml:"system_template" json:"system_template"`
 	Generation     GenerationConfig `yaml:"generation" json:"generation"`
 	Variables      map[string]any   `yaml:"variables" json:"variables"`
+	StyleGuard     StyleGuardConfig `yaml:"style_guard,omitempty" json:"style_guard,omitempty"`
 
 	// Time and location settings (optional, overrides global settings)
-	Timezone   string `yaml:"timezone,omitempty" json:"timezone,omitempty"`     // "Asia/Taipei", "America/New_York", "auto"
+	Timezone   string `yaml:"timezone,omitempty" json:"timezone,omitempty"`       // "Asia/Taipei", "America/New_York", "auto"
 	TimeFormat string `yaml:"time_format,omitempty" json:"time_format,omitempty"` // "auto", "12", "24"
-	Location   string `yaml:"location,omitempty" json:"location,omitempty"`     // Optional: explicit location "台北, 台灣"
+	Location   string `yaml:"location,omitempty" json:"location,omitempty"`       // Optional: explicit location "台北, 台灣"
 }
 
 // Anchor represents a single few-shot example for style anchoring.
@@ -47,11 +54,11 @@ type AnchorFile struct {
 // PersonaModule is the fully loaded, runtime-ready persona.
 // Assembled from config.yaml + lore.md + anchors.yaml + user.md + memory/.
 type PersonaModule struct {
-	DirName         string   // folder name under configs/personas/ (e.g., "hayasaka")
-	Config          PersonaConfig
-	Lore            string   // raw markdown from lore.md
-	UserProfile     string   // raw markdown from user.md
-	LongTermMemory  string   // raw markdown from memory/MEMORY.md
-	DailyMemory     string   // raw markdown from memory/YYYY-MM-DD.md (today's log)
-	Anchors         []Anchor // parsed from anchors.yaml
+	DirName        string // folder name under configs/personas/ (e.g., "hayasaka")
+	Config         PersonaConfig
+	Lore           string   // raw markdown from lore.md
+	UserProfile    string   // raw markdown from user.md
+	LongTermMemory string   // raw markdown from memory/MEMORY.md
+	DailyMemory    string   // raw markdown from memory/YYYY-MM-DD.md (today's log)
+	Anchors        []Anchor // parsed from anchors.yaml
 }

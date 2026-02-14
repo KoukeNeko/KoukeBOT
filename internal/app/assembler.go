@@ -5,15 +5,63 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"text/template"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/util"
 )
 
 const estimatedCharsPerToken = 4
+
+var logPrompt = logger.New("prompt", logger.Yellow)
+
+const (
+	AnalysisVisibilityVisible = "visible"
+	AnalysisVisibilityHidden  = "hidden"
+	AnalysisVisibilityDebug   = "debug"
+)
+
+// PromptGuardPolicy controls persona stability and output steering.
+// It is hot-updatable at runtime.
+type PromptGuardPolicy struct {
+	PersonaLockEveryTurns     int
+	TripletOutputEnabled      bool
+	AnalysisVisibility        string
+	NegativeConstraintEnabled bool
+	NegativeConstraintDefault string
+}
+
+func DefaultPromptGuardPolicy() PromptGuardPolicy {
+	return PromptGuardPolicy{
+		PersonaLockEveryTurns:     4,
+		TripletOutputEnabled:      true,
+		AnalysisVisibility:        AnalysisVisibilityVisible,
+		NegativeConstraintEnabled: true,
+		NegativeConstraintDefault: "You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude.",
+	}
+}
+
+func normalizePromptGuardPolicy(policy PromptGuardPolicy) PromptGuardPolicy {
+	defaults := DefaultPromptGuardPolicy()
+	if policy.PersonaLockEveryTurns <= 0 {
+		policy.PersonaLockEveryTurns = defaults.PersonaLockEveryTurns
+	}
+	switch policy.AnalysisVisibility {
+	case AnalysisVisibilityVisible, AnalysisVisibilityHidden, AnalysisVisibilityDebug:
+		// keep
+	default:
+		policy.AnalysisVisibility = defaults.AnalysisVisibility
+	}
+	if strings.TrimSpace(policy.NegativeConstraintDefault) == "" {
+		policy.NegativeConstraintDefault = defaults.NegativeConstraintDefault
+	}
+	return policy
+}
 
 // AssembledContext is the final prompt payload ready to send to a Provider.
 type AssembledContext struct {
@@ -28,7 +76,6 @@ type ContextBudgetManager struct {
 	MaxRecentMessages     int     // hard cap for recent raw turns
 	MaxDigests            int     // max digest blocks to include
 	DigestBudgetRatio     float64 // % of history budget reserved for digest blocks
-	PersonaLockEveryTurns int     // inject a short persona lock reminder every N user turns
 }
 
 func NewContextBudgetManager() *ContextBudgetManager {
@@ -37,7 +84,6 @@ func NewContextBudgetManager() *ContextBudgetManager {
 		MaxRecentMessages:     40,
 		MaxDigests:            4,
 		DigestBudgetRatio:     0.30,
-		PersonaLockEveryTurns: 8,
 	}
 }
 
@@ -63,11 +109,33 @@ func (bm *ContextBudgetManager) historyBudget(systemPrompt string, caps llm.Mode
 // ContextAssembler builds the final prompt from a PersonaModule + Conversation,
 // choosing the topology based on model capabilities.
 type ContextAssembler struct {
-	budget *ContextBudgetManager
+	budget            *ContextBudgetManager
+	guardMu           sync.RWMutex
+	guard             PromptGuardPolicy
+	lockInjectedCount uint64
 }
 
 func NewContextAssembler() *ContextAssembler {
-	return &ContextAssembler{budget: NewContextBudgetManager()}
+	return &ContextAssembler{
+		budget: NewContextBudgetManager(),
+		guard:  DefaultPromptGuardPolicy(),
+	}
+}
+
+func (a *ContextAssembler) UpdatePromptGuardPolicy(policy PromptGuardPolicy) {
+	a.guardMu.Lock()
+	defer a.guardMu.Unlock()
+	a.guard = normalizePromptGuardPolicy(policy)
+}
+
+func (a *ContextAssembler) PromptGuardPolicy() PromptGuardPolicy {
+	a.guardMu.RLock()
+	defer a.guardMu.RUnlock()
+	return a.guard
+}
+
+func (a *ContextAssembler) snapshotPromptGuardPolicy() PromptGuardPolicy {
+	return a.PromptGuardPolicy()
 }
 
 // Assemble builds the complete context for an LLM call.
@@ -78,14 +146,16 @@ func (a *ContextAssembler) Assemble(
 	conv *domain.Conversation,
 	caps llm.ModelCapabilities,
 ) (*AssembledContext, error) {
-	systemPrompt, err := a.renderSystemPrompt(persona)
+	policy := a.snapshotPromptGuardPolicy()
+
+	systemPrompt, err := a.renderSystemPrompt(persona, policy)
 	if err != nil {
 		return nil, fmt.Errorf("render system prompt: %w", err)
 	}
 
 	var messages []domain.Message
 	if caps.SupportsThinking {
-		messages = a.assembleThinkingModel(persona, conv, systemPrompt, caps, persona.Config.Generation)
+		messages = a.assembleThinkingModel(persona, conv, systemPrompt, caps, persona.Config.Generation, policy)
 	} else {
 		messages = a.assembleLegacyModel(persona, conv)
 	}
@@ -99,7 +169,7 @@ func (a *ContextAssembler) Assemble(
 
 // renderSystemPrompt executes the Go template in system_template,
 // injecting Lore, formatted Anchors, and timezone (static for prompt caching).
-func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule) (string, error) {
+func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, policy PromptGuardPolicy) (string, error) {
 	tmpl, err := template.New("system").Parse(persona.Config.SystemTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parse system template: %w", err)
@@ -161,6 +231,33 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule) (st
 	buf.WriteString("Use `file_append` to add notes to today's daily log throughout the conversation.\n")
 	buf.WriteString("When context approaches limits, you'll be prompted to consolidate memories before compaction.\n")
 
+	if policy.TripletOutputEnabled {
+		buf.WriteString("\n")
+		buf.WriteString("### Output Contract\n\n")
+		buf.WriteString("- Output must contain exactly these sections in order: `[Status]`, `[Analysis]`, `[Response]`.\n")
+		buf.WriteString("- `[Status]` and `[Analysis]` should be concise and in English.\n")
+		buf.WriteString("- `[Response]` contains the actual user-facing reply.\n")
+		switch policy.AnalysisVisibility {
+		case AnalysisVisibilityHidden:
+			buf.WriteString("- Keep `[Analysis]` terse and non-repetitive.\n")
+		case AnalysisVisibilityDebug:
+			buf.WriteString("- `[Analysis]` may include richer diagnostic reasoning for debugging.\n")
+		default:
+			buf.WriteString("- `[Analysis]` should be cold and tactical, not verbose.\n")
+		}
+	}
+
+	if policy.NegativeConstraintEnabled {
+		negative := a.resolveNegativeConstraint(persona, policy)
+		if negative != "" {
+			buf.WriteString("\n")
+			buf.WriteString("### Negative Constraint\n\n")
+			buf.WriteString("- ")
+			buf.WriteString(negative)
+			buf.WriteString("\n")
+		}
+	}
+
 	return buf.String(), nil
 }
 
@@ -170,6 +267,7 @@ func (a *ContextAssembler) assembleThinkingModel(
 	systemPrompt string,
 	caps llm.ModelCapabilities,
 	generation domain.GenerationConfig,
+	policy PromptGuardPolicy,
 ) []domain.Message {
 	budgetTokens := a.budget.historyBudget(systemPrompt, caps, generation)
 
@@ -192,10 +290,12 @@ func (a *ContextAssembler) assembleThinkingModel(
 			Content: digestMsg,
 		})
 	}
-	if a.shouldInjectPersonaLock(conv) {
+	if a.shouldInjectPersonaLock(conv, policy) {
+		count := atomic.AddUint64(&a.lockInjectedCount, 1)
+		logPrompt.Logf("metric prompt_guard.lock_injected=%d", count)
 		out = append(out, domain.Message{
 			Role:    domain.RoleUser,
-			Content: a.buildPersonaLockMessage(persona),
+			Content: a.buildPersonaLockMessage(persona, policy),
 		})
 	}
 
@@ -208,8 +308,8 @@ func (a *ContextAssembler) assembleThinkingModel(
 	return out
 }
 
-func (a *ContextAssembler) shouldInjectPersonaLock(conv *domain.Conversation) bool {
-	n := a.budget.PersonaLockEveryTurns
+func (a *ContextAssembler) shouldInjectPersonaLock(conv *domain.Conversation, policy PromptGuardPolicy) bool {
+	n := policy.PersonaLockEveryTurns
 	if n <= 0 {
 		return false
 	}
@@ -223,7 +323,7 @@ func (a *ContextAssembler) shouldInjectPersonaLock(conv *domain.Conversation) bo
 	return userTurns >= n && userTurns%n == 0
 }
 
-func (a *ContextAssembler) buildPersonaLockMessage(persona *domain.PersonaModule) string {
+func (a *ContextAssembler) buildPersonaLockMessage(persona *domain.PersonaModule, policy PromptGuardPolicy) string {
 	name := strings.TrimSpace(persona.Config.Meta.Name)
 	if name == "" {
 		name = strings.TrimSpace(persona.Config.Meta.ID)
@@ -247,7 +347,22 @@ func (a *ContextAssembler) buildPersonaLockMessage(persona *domain.PersonaModule
 		sb.WriteString("\nStyle reference: ")
 		sb.WriteString(styleRef)
 	}
+	if policy.NegativeConstraintEnabled {
+		negative := a.resolveNegativeConstraint(persona, policy)
+		if negative != "" {
+			sb.WriteString("\nHard constraints: ")
+			sb.WriteString(negative)
+		}
+	}
 	return sb.String()
+}
+
+func (a *ContextAssembler) resolveNegativeConstraint(persona *domain.PersonaModule, policy PromptGuardPolicy) string {
+	override := strings.TrimSpace(persona.Config.StyleGuard.NegativeConstraints)
+	if override != "" {
+		return override
+	}
+	return strings.TrimSpace(policy.NegativeConstraintDefault)
 }
 
 func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budgetTokens, maxMessages int) []domain.Message {
@@ -365,6 +480,28 @@ func (a *ContextAssembler) buildDigestMessage(digests []domain.ConversationDiges
 	sb.WriteString("[Relevant conversation digests]\n")
 	for i, d := range digests {
 		sb.WriteString(fmt.Sprintf("\nDigest %d (%s)\n", i+1, d.CreatedAt.Format(time.RFC3339)))
+		if d.Attitude != "" || d.EmotionalTone != "" || len(d.StyleMarkers) > 0 || len(d.SignatureTerms) > 0 || len(d.StyleQuotes) > 0 {
+			sb.WriteString("Style Contract:\n")
+			if d.Attitude != "" {
+				sb.WriteString("Attitude: " + d.Attitude + "\n")
+			}
+			if d.EmotionalTone != "" {
+				sb.WriteString("Emotional tone: " + d.EmotionalTone + "\n")
+			}
+			if len(d.StyleMarkers) > 0 {
+				sb.WriteString("Style markers: " + strings.Join(d.StyleMarkers, " | ") + "\n")
+			}
+			if len(d.SignatureTerms) > 0 {
+				sb.WriteString("Signature terms: " + strings.Join(d.SignatureTerms, " | ") + "\n")
+			}
+			if len(d.StyleQuotes) > 0 {
+				sb.WriteString("Style quotes:\n")
+				for _, q := range d.StyleQuotes {
+					sb.WriteString("- " + truncate(q, 180) + "\n")
+				}
+			}
+			sb.WriteString("Directive: Do NOT flatten persona tone into a generic assistant voice.\n")
+		}
 		sb.WriteString("Summary:\n")
 		sb.WriteString(truncate(d.Summary, 1200))
 		sb.WriteString("\n")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -13,6 +14,7 @@ import (
 )
 
 var logChat = logger.New("chat", logger.Cyan)
+var tripletParseFailedCount uint64
 
 // ChatService orchestrates the full chat pipeline:
 // receive message → load conversation → assemble context → call LLM → persist → return.
@@ -59,6 +61,14 @@ func NewChatService(
 	}
 }
 
+// UpdatePromptGuardPolicy hot-swaps assembler prompt guard settings without restart.
+func (s *ChatService) UpdatePromptGuardPolicy(policy PromptGuardPolicy) {
+	if s == nil || s.assembler == nil {
+		return
+	}
+	s.assembler.UpdatePromptGuardPolicy(policy)
+}
+
 // HandleMessage processes a user message and returns the assistant response.
 func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, userMessage string) (string, error) {
 	persona, err := s.resolvePersona(personaID)
@@ -96,13 +106,18 @@ func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, u
 
 	fmt.Printf("[ChatService] LLM response received - Length: %d chars\n", len(resp.Content))
 
-	conv.AppendAssistantMessage(resp.Content)
+	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	view := s.prepareAssistantOutputForStorage(resp.Content)
+	conv.AppendAssistantMessageWithDisplayAndRaw(view.Content, view.Display, rawLLMInput, view.RawOutput)
 
 	if err := s.store.Save(ctx, conv); err != nil {
 		return "", fmt.Errorf("save conversation: %w", err)
 	}
 
-	return resp.Content, nil
+	if view.Display != "" {
+		return view.Display, nil
+	}
+	return view.Content, nil
 }
 
 // HandleMessageStream processes a user message and returns a streaming channel.
@@ -324,7 +339,7 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 	}
 
 	// Compact history
-	s.contextManager.CompactHistory(conv)
+	s.contextManager.CompactHistory(conv, persona)
 
 	// Persist compacted conversation
 	if err := s.store.Save(ctx, conv); err != nil {
@@ -403,6 +418,8 @@ func (s *ChatService) handleToolCallingStream(
 		var allToolCalls []domain.ToolCall
 		var allToolResultsText string
 		var totalTokens int
+		policy := s.assembler.PromptGuardPolicy()
+		hideAnalysis := policy.TripletOutputEnabled && policy.AnalysisVisibility == AnalysisVisibilityHidden
 
 		currentStream := streamCh
 		var fullResponse string
@@ -421,9 +438,12 @@ func (s *ChatService) handleToolCallingStream(
 					outputCh <- chunk
 					continue
 				}
-				outputCh <- chunk
 				if chunk.Error != nil {
+					outputCh <- chunk
 					return
+				}
+				if !hideAnalysis {
+					outputCh <- chunk
 				}
 				fullResponse += chunk.Content
 			}
@@ -518,12 +538,21 @@ func (s *ChatService) handleToolCallingStream(
 			conv.UpdateTokenUsage(totalTokens)
 			logChat.Logf("tokens: +%d (cumulative: %d)", totalTokens, conv.CumulativeTokens)
 		}
+		finalView := s.prepareAssistantOutputForStorage(fullResponse)
+
+		if hideAnalysis && finalView.Display != "" {
+			outputCh <- llm.StreamChunk{Content: finalView.Display}
+		}
 
 		// Save conversation and emit final signals
 		if len(allToolCalls) > 0 {
 			// Tool calls were executed — append annotation and save
 			toolUsageAnnotation := formatToolUsageAnnotation(allToolCalls)
-			finalResponseWithAnnotation := fullResponse + "\n\n" + toolUsageAnnotation
+			display := finalView.Display
+			if display == "" {
+				display = finalView.Content
+			}
+			finalResponseWithAnnotation := display + "\n\n" + toolUsageAnnotation
 
 			// Stream the annotation as a separate chunk
 			outputCh <- llm.StreamChunk{Content: "\n\n" + toolUsageAnnotation}
@@ -536,7 +565,11 @@ func (s *ChatService) handleToolCallingStream(
 			} else {
 				conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 			}
-			conv.AppendAssistantMessageWithRaw(finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
+			content := finalView.Content
+			if content == "" {
+				content = strings.TrimSpace(fullResponse)
+			}
+			conv.AppendAssistantMessageWithDisplayAndRaw(content, finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
 			_ = s.store.Save(ctx, conv)
 
 		} else {
@@ -547,7 +580,7 @@ func (s *ChatService) handleToolCallingStream(
 				} else {
 					conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 				}
-				conv.AppendAssistantMessageWithRaw(fullResponse, rawLLMInput, fullResponse)
+				conv.AppendAssistantMessageWithDisplayAndRaw(finalView.Content, finalView.Display, rawLLMInput, finalView.RawOutput)
 				_ = s.store.Save(ctx, conv)
 			}
 		}
@@ -783,6 +816,25 @@ func formatLLMPrompt(systemPrompt string, messages []domain.Message) string {
 	}
 
 	return prompt.String()
+}
+
+func (s *ChatService) prepareAssistantOutputForStorage(raw string) assistantOutputView {
+	policy := s.assembler.PromptGuardPolicy()
+	view := prepareAssistantOutput(raw, policy)
+	if policy.TripletOutputEnabled && strings.TrimSpace(raw) != "" && !view.Parsed {
+		count := atomic.AddUint64(&tripletParseFailedCount, 1)
+		logChat.Warnf("metric prompt_guard.triplet_parse_failed=%d", count)
+	}
+	if view.Content == "" {
+		view.Content = strings.TrimSpace(raw)
+	}
+	if view.Display == "" {
+		view.Display = view.Content
+	}
+	if view.RawOutput == "" {
+		view.RawOutput = strings.TrimSpace(raw)
+	}
+	return view
 }
 
 // truncateLog truncates a string for log output

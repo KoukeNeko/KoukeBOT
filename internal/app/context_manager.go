@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -14,6 +15,10 @@ import (
 var logCtx = logger.New("context", logger.Yellow)
 
 var keywordPattern = regexp.MustCompile(`[A-Za-z0-9_]{3,}|[\p{Han}]{2,}`)
+var punctuationPattern = regexp.MustCompile(`[!?！？]{2,}`)
+
+var digestStyleFieldCount uint64
+var digestStyleQuoteCount uint64
 
 // ContextManager tracks token usage and triggers pre-compaction memory flush.
 // Implements OpenClaw's approach: when approaching context window limit,
@@ -48,7 +53,7 @@ func (cm *ContextManager) ShouldFlush(conv *domain.Conversation) bool {
 
 // CompactHistory removes old messages, keeping only the most recent ones.
 // Should be called AFTER memory flush so important information is already persisted.
-func (cm *ContextManager) CompactHistory(conv *domain.Conversation) {
+func (cm *ContextManager) CompactHistory(conv *domain.Conversation, persona *domain.PersonaModule) {
 	const keepRecent = 20
 	if len(conv.Messages) <= keepRecent {
 		return
@@ -57,7 +62,7 @@ func (cm *ContextManager) CompactHistory(conv *domain.Conversation) {
 	removedCount := len(conv.Messages) - keepRecent
 	removed := conv.Messages[:removedCount]
 
-	if digest, ok := cm.buildDigest(removed); ok {
+	if digest, ok := cm.buildDigest(removed, persona); ok {
 		conv.AddDigest(digest)
 	}
 
@@ -66,7 +71,7 @@ func (cm *ContextManager) CompactHistory(conv *domain.Conversation) {
 	logCtx.Logf("compacted: removed %d old messages, kept %d recent, digests=%d", removedCount, keepRecent, len(conv.ContextDigests))
 }
 
-func (cm *ContextManager) buildDigest(messages []domain.Message) (domain.ConversationDigest, bool) {
+func (cm *ContextManager) buildDigest(messages []domain.Message, persona *domain.PersonaModule) (domain.ConversationDigest, bool) {
 	if len(messages) == 0 {
 		return domain.ConversationDigest{}, false
 	}
@@ -74,6 +79,16 @@ func (cm *ContextManager) buildDigest(messages []domain.Message) (domain.Convers
 	var summaryLines []string
 	var facts, preferences, openItems, decisions []string
 	allText := make([]string, 0, len(messages))
+	styleLexicon := extractPersonaStyleLexicon(persona)
+	styleMarkersSet := map[string]bool{}
+	signatureSet := map[string]bool{}
+	type scoredQuote struct {
+		text  string
+		score int
+	}
+	var quotes []scoredQuote
+	var criticalScore, directiveScore, playfulScore, formalScore int
+	var coldScore, irritatedScore, composedScore int
 
 	// Focus on the tail segment of the removed block (most relevant before compaction).
 	start := 0
@@ -85,6 +100,7 @@ func (cm *ContextManager) buildDigest(messages []domain.Message) (domain.Convers
 		if text == "" {
 			continue
 		}
+		lower := strings.ToLower(text)
 		allText = append(allText, text)
 
 		if len(summaryLines) < 10 {
@@ -96,7 +112,6 @@ func (cm *ContextManager) buildDigest(messages []domain.Message) (domain.Convers
 		}
 
 		if msg.Role == domain.RoleUser {
-			lower := strings.ToLower(text)
 			switch {
 			case containsAny(lower, "我喜歡", "我偏好", "prefer", "like", "通常", "習慣"):
 				preferences = appendUnique(preferences, truncate(text, 180), 8)
@@ -110,6 +125,68 @@ func (cm *ContextManager) buildDigest(messages []domain.Message) (domain.Convers
 			if containsAny(lower, "決定", "改成", "選擇", "we will", "let's", "採用") {
 				decisions = appendUnique(decisions, truncate(text, 180), 10)
 			}
+			continue
+		}
+
+		// Assistant-side style extraction (stylized digest).
+		score := 0
+		if containsAny(lower, "請", "必須", "應該", "務必", "must", "should") {
+			directiveScore += 2
+			styleMarkersSet["directive"] = true
+			score += 2
+		}
+		if containsAny(lower, "愚", "蠢", "廢", "垃圾", "trash", "idiot", "stupid", "useless", "白痴", "笨") {
+			criticalScore += 3
+			irritatedScore += 2
+			styleMarkersSet["abrasive"] = true
+			score += 3
+		}
+		if containsAny(lower, "呵", "哈", "ma chérie", "呵呵", "哼") {
+			playfulScore += 2
+			styleMarkersSet["sarcastic"] = true
+			score += 2
+		}
+		if containsAny(lower, "因此", "所以", "故", "therefore", "hence", "請注意", "綜上") {
+			formalScore += 2
+			composedScore += 2
+			styleMarkersSet["formal-logic"] = true
+			score += 2
+		}
+		if punctuationPattern.MatchString(text) {
+			criticalScore++
+			irritatedScore++
+			styleMarkersSet["emphatic-punctuation"] = true
+			score++
+		}
+		for _, term := range styleLexicon {
+			if term == "" {
+				continue
+			}
+			if strings.Contains(lower, strings.ToLower(term)) {
+				signatureSet[term] = true
+				score += 3
+			}
+		}
+		if containsAny(lower, "冷靜", "計算", "理性", "analysis", "calculating", "logic") {
+			composedScore += 2
+			coldScore++
+		}
+		if containsAny(lower, "命令", "立刻", "現在", "馬上") {
+			directiveScore++
+			coldScore++
+		}
+		if containsAny(lower, "煩", "受不了", "氣死", "崩潰") {
+			irritatedScore += 2
+		}
+		if containsAny(lower, "冷淡", "無聊", "毫無意義", "浪費時間") {
+			coldScore += 2
+		}
+
+		if score > 0 {
+			quotes = append(quotes, scoredQuote{
+				text:  truncate(text, 220),
+				score: score,
+			})
 		}
 	}
 
@@ -118,15 +195,73 @@ func (cm *ContextManager) buildDigest(messages []domain.Message) (domain.Convers
 	}
 
 	keywords := extractTopKeywords(strings.Join(allText, "\n"), 16)
+	styleMarkers := make([]string, 0, len(styleMarkersSet))
+	for marker := range styleMarkersSet {
+		styleMarkers = append(styleMarkers, marker)
+	}
+	sort.Strings(styleMarkers)
+
+	signatureTerms := make([]string, 0, len(signatureSet))
+	for term := range signatureSet {
+		signatureTerms = append(signatureTerms, term)
+	}
+	sort.Slice(signatureTerms, func(i, j int) bool {
+		return len(signatureTerms[i]) > len(signatureTerms[j])
+	})
+	if len(signatureTerms) > 8 {
+		signatureTerms = signatureTerms[:8]
+	}
+
+	sort.Slice(quotes, func(i, j int) bool {
+		if quotes[i].score == quotes[j].score {
+			return len(quotes[i].text) > len(quotes[j].text)
+		}
+		return quotes[i].score > quotes[j].score
+	})
+	styleQuotes := make([]string, 0, 3)
+	for _, q := range quotes {
+		styleQuotes = appendUnique(styleQuotes, q.text, 3)
+		if len(styleQuotes) >= 3 {
+			break
+		}
+	}
+
+	attitude := classifyAttitude(criticalScore, directiveScore, playfulScore, formalScore)
+	emotionalTone := classifyEmotionalTone(coldScore, irritatedScore, composedScore)
+	if attitude != "" || emotionalTone != "" {
+		prefix := "Style continuity:"
+		if attitude != "" && emotionalTone != "" {
+			prefix = fmt.Sprintf("Style continuity: %s / %s.", attitude, emotionalTone)
+		} else if attitude != "" {
+			prefix = fmt.Sprintf("Style continuity: %s.", attitude)
+		} else if emotionalTone != "" {
+			prefix = fmt.Sprintf("Style continuity: %s.", emotionalTone)
+		}
+		summaryLines = append([]string{prefix + " Preserve tone and persona-specific stance."}, summaryLines...)
+	}
+
 	digest := domain.ConversationDigest{
-		ID:          fmt.Sprintf("digest-%d", time.Now().UnixNano()),
-		Summary:     strings.Join(summaryLines, "\n"),
-		Facts:       facts,
-		Preferences: preferences,
-		OpenItems:   openItems,
-		Decisions:   decisions,
-		Keywords:    keywords,
-		CreatedAt:   time.Now(),
+		ID:             fmt.Sprintf("digest-%d", time.Now().UnixNano()),
+		Summary:        strings.Join(summaryLines, "\n"),
+		Facts:          facts,
+		Preferences:    preferences,
+		OpenItems:      openItems,
+		Decisions:      decisions,
+		Keywords:       keywords,
+		Attitude:       attitude,
+		EmotionalTone:  emotionalTone,
+		StyleMarkers:   styleMarkers,
+		SignatureTerms: signatureTerms,
+		StyleQuotes:    styleQuotes,
+		CreatedAt:      time.Now(),
+	}
+	if attitude != "" || emotionalTone != "" || len(styleMarkers) > 0 || len(signatureTerms) > 0 || len(styleQuotes) > 0 {
+		count := atomic.AddUint64(&digestStyleFieldCount, 1)
+		logCtx.Logf("metric digest.style_fields_populated=%d", count)
+	}
+	if len(styleQuotes) > 0 {
+		count := atomic.AddUint64(&digestStyleQuoteCount, uint64(len(styleQuotes)))
+		logCtx.Logf("metric digest.style_quotes_count=%d", count)
 	}
 	return digest, true
 }
@@ -211,6 +346,88 @@ func extractTopKeywords(text string, max int) []string {
 		if len(out) >= max {
 			break
 		}
+	}
+	return out
+}
+
+func classifyAttitude(critical, directive, playful, formal int) string {
+	type candidate struct {
+		label string
+		score int
+	}
+	candidates := []candidate{
+		{label: "critical", score: critical},
+		{label: "directive", score: directive},
+		{label: "playful", score: playful},
+		{label: "formal", score: formal},
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+	if len(candidates) == 0 || candidates[0].score <= 0 {
+		return ""
+	}
+	return candidates[0].label
+}
+
+func classifyEmotionalTone(cold, irritated, composed int) string {
+	type candidate struct {
+		label string
+		score int
+	}
+	candidates := []candidate{
+		{label: "cold", score: cold},
+		{label: "irritated", score: irritated},
+		{label: "composed", score: composed},
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+	if len(candidates) == 0 || candidates[0].score <= 0 {
+		return ""
+	}
+	return candidates[0].label
+}
+
+func extractPersonaStyleLexicon(persona *domain.PersonaModule) []string {
+	if persona == nil {
+		return nil
+	}
+	set := map[string]bool{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			set[v] = true
+		}
+	}
+
+	for _, t := range persona.Config.StyleGuard.SignatureTerms {
+		add(t)
+	}
+	if raw, ok := persona.Config.Variables["insult_list"]; ok {
+		switch v := raw.(type) {
+		case []string:
+			for _, item := range v {
+				add(item)
+			}
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					add(s)
+				}
+			}
+		}
+	}
+
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return len(out[i]) > len(out[j])
+	})
+	if len(out) > 20 {
+		out = out[:20]
 	}
 	return out
 }

@@ -443,49 +443,59 @@ func truncate(s string, maxLen int) string {
 // --- Settings endpoints ---
 
 type SettingsResponse struct {
-	GeminiAPIKey            string `json:"gemini_api_key"`
-	GeminiModel             string `json:"gemini_model"`
-	DiscordToken            string `json:"discord_token"`
-	ProviderType            string `json:"provider_type"`
-	BraveAPIKey             string `json:"brave_api_key"`
-	WebSearchEnabled        bool   `json:"web_search_enabled"`
-	DiscordUseReply         bool   `json:"discord_use_reply"`
-	PerplexityAPIKey        string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider          string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled         bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone                string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat              string `json:"time_format"`        // OpenClaw 相容
-	Location                string `json:"location"`           // OpenClaw 相容
-	ContextFlushEnabled     bool   `json:"context_flush_enabled"`
-	ContextFlushThreshold   int    `json:"context_flush_threshold"`
-	ContextWindowSize       int    `json:"context_window_size"`
-	LogChannelID            string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID        string `json:"discord_persona_id"`
-	MemoryExtractionEnabled bool   `json:"memory_extraction_enabled"`
-	MemoryExtractionModel   string `json:"memory_extraction_model"`
+	GeminiAPIKey              string `json:"gemini_api_key"`
+	GeminiModel               string `json:"gemini_model"`
+	DiscordToken              string `json:"discord_token"`
+	ProviderType              string `json:"provider_type"`
+	BraveAPIKey               string `json:"brave_api_key"`
+	WebSearchEnabled          bool   `json:"web_search_enabled"`
+	DiscordUseReply           bool   `json:"discord_use_reply"`
+	PerplexityAPIKey          string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider            string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled           bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                  string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat                string `json:"time_format"`        // OpenClaw 相容
+	Location                  string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled       bool   `json:"context_flush_enabled"`
+	ContextFlushThreshold     int    `json:"context_flush_threshold"`
+	ContextWindowSize         int    `json:"context_window_size"`
+	LogChannelID              string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID          string `json:"discord_persona_id"`
+	MemoryExtractionEnabled   bool   `json:"memory_extraction_enabled"`
+	MemoryExtractionModel     string `json:"memory_extraction_model"`
+	PersonaLockEveryTurns     int    `json:"persona_lock_every_turns"`
+	TripletOutputEnabled      bool   `json:"triplet_output_enabled"`
+	AnalysisVisibility        string `json:"analysis_visibility"`
+	NegativeConstraintEnabled bool   `json:"negative_constraint_enabled"`
+	NegativeConstraintDefault string `json:"negative_constraint_default"`
 }
 
 type SettingsUpdateRequest struct {
-	GeminiAPIKey            string `json:"gemini_api_key"`
-	GeminiModel             string `json:"gemini_model"`
-	DiscordToken            string `json:"discord_token"`
-	ProviderType            string `json:"provider_type"`
-	BraveAPIKey             string `json:"brave_api_key"`
-	WebSearchEnabled        *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
-	DiscordUseReply         *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
-	PerplexityAPIKey        string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider          string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled         *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone                string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat              string `json:"time_format"`        // OpenClaw 相容
-	Location                string `json:"location"`           // OpenClaw 相容
-	ContextFlushEnabled     *bool  `json:"context_flush_enabled"`
-	ContextFlushThreshold   *int   `json:"context_flush_threshold"`
-	ContextWindowSize       *int   `json:"context_window_size"`
-	LogChannelID            string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID        string `json:"discord_persona_id"`
-	MemoryExtractionEnabled *bool  `json:"memory_extraction_enabled"`
-	MemoryExtractionModel   string `json:"memory_extraction_model"`
+	GeminiAPIKey              string `json:"gemini_api_key"`
+	GeminiModel               string `json:"gemini_model"`
+	DiscordToken              string `json:"discord_token"`
+	ProviderType              string `json:"provider_type"`
+	BraveAPIKey               string `json:"brave_api_key"`
+	WebSearchEnabled          *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
+	DiscordUseReply           *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
+	PerplexityAPIKey          string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider            string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled           *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                  string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat                string `json:"time_format"`        // OpenClaw 相容
+	Location                  string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled       *bool  `json:"context_flush_enabled"`
+	ContextFlushThreshold     *int   `json:"context_flush_threshold"`
+	ContextWindowSize         *int   `json:"context_window_size"`
+	LogChannelID              string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID          string `json:"discord_persona_id"`
+	MemoryExtractionEnabled   *bool  `json:"memory_extraction_enabled"`
+	MemoryExtractionModel     string `json:"memory_extraction_model"`
+	PersonaLockEveryTurns     *int   `json:"persona_lock_every_turns"`
+	TripletOutputEnabled      *bool  `json:"triplet_output_enabled"`
+	AnalysisVisibility        string `json:"analysis_visibility"`
+	NegativeConstraintEnabled *bool  `json:"negative_constraint_enabled"`
+	NegativeConstraintDefault string `json:"negative_constraint_default"`
 }
 
 type ProviderStatusResponse struct {
@@ -512,26 +522,31 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SettingsResponse{
-		GeminiAPIKey:            maskKey(settings.GeminiAPIKey),
-		GeminiModel:             settings.GeminiModel,
-		DiscordToken:            maskKey(settings.DiscordToken),
-		ProviderType:            settings.ProviderType,
-		BraveAPIKey:             maskKey(settings.BraveAPIKey),
-		WebSearchEnabled:        settings.WebSearchEnabled,
-		DiscordUseReply:         settings.DiscordUseReply,
-		PerplexityAPIKey:        maskKey(settings.PerplexityAPIKey),
-		SearchProvider:          searchProvider,
-		WebFetchEnabled:         settings.WebFetchEnabled,
-		Timezone:                settings.Timezone,
-		TimeFormat:              settings.TimeFormat,
-		Location:                settings.Location,
-		ContextFlushEnabled:     settings.ContextFlushEnabled,
-		ContextFlushThreshold:   settings.ContextFlushThreshold,
-		ContextWindowSize:       settings.ContextWindowSize,
-		LogChannelID:            settings.LogChannelID,
-		DiscordPersonaID:        discordPersonaID,
-		MemoryExtractionEnabled: settings.MemoryExtractionEnabled,
-		MemoryExtractionModel:   settings.MemoryExtractionModel,
+		GeminiAPIKey:              maskKey(settings.GeminiAPIKey),
+		GeminiModel:               settings.GeminiModel,
+		DiscordToken:              maskKey(settings.DiscordToken),
+		ProviderType:              settings.ProviderType,
+		BraveAPIKey:               maskKey(settings.BraveAPIKey),
+		WebSearchEnabled:          settings.WebSearchEnabled,
+		DiscordUseReply:           settings.DiscordUseReply,
+		PerplexityAPIKey:          maskKey(settings.PerplexityAPIKey),
+		SearchProvider:            searchProvider,
+		WebFetchEnabled:           settings.WebFetchEnabled,
+		Timezone:                  settings.Timezone,
+		TimeFormat:                settings.TimeFormat,
+		Location:                  settings.Location,
+		ContextFlushEnabled:       settings.ContextFlushEnabled,
+		ContextFlushThreshold:     settings.ContextFlushThreshold,
+		ContextWindowSize:         settings.ContextWindowSize,
+		LogChannelID:              settings.LogChannelID,
+		DiscordPersonaID:          discordPersonaID,
+		MemoryExtractionEnabled:   settings.MemoryExtractionEnabled,
+		MemoryExtractionModel:     settings.MemoryExtractionModel,
+		PersonaLockEveryTurns:     settings.PersonaLockEveryTurns,
+		TripletOutputEnabled:      settings.TripletOutputEnabled,
+		AnalysisVisibility:        settings.AnalysisVisibility,
+		NegativeConstraintEnabled: settings.NegativeConstraintEnabled,
+		NegativeConstraintDefault: settings.NegativeConstraintDefault,
 	})
 }
 
@@ -592,6 +607,21 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.ContextWindowSize != nil {
 		existing.ContextWindowSize = *req.ContextWindowSize
 	}
+	if req.PersonaLockEveryTurns != nil {
+		existing.PersonaLockEveryTurns = *req.PersonaLockEveryTurns
+	}
+	if req.TripletOutputEnabled != nil {
+		existing.TripletOutputEnabled = *req.TripletOutputEnabled
+	}
+	if req.NegativeConstraintEnabled != nil {
+		existing.NegativeConstraintEnabled = *req.NegativeConstraintEnabled
+	}
+	if req.AnalysisVisibility != "" {
+		existing.AnalysisVisibility = req.AnalysisVisibility
+	}
+	if req.NegativeConstraintDefault != "" {
+		existing.NegativeConstraintDefault = req.NegativeConstraintDefault
+	}
 	// Memory extraction settings
 	if req.MemoryExtractionEnabled != nil {
 		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
@@ -605,6 +635,15 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		existing.DiscordPersonaID = req.DiscordPersonaID
+	}
+	if err := validatePromptGuardSettings(
+		existing.PersonaLockEveryTurns,
+		existing.AnalysisVisibility,
+		existing.NegativeConstraintEnabled,
+		existing.NegativeConstraintDefault,
+	); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
@@ -621,6 +660,14 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		h.discordPersona.SetPersonaID(existing.DiscordPersonaID)
 		logAPI.Logf("settings: discord persona switched to %s", existing.DiscordPersonaID)
 	}
+
+	h.chatService.UpdatePromptGuardPolicy(app.PromptGuardPolicy{
+		PersonaLockEveryTurns:     existing.PersonaLockEveryTurns,
+		TripletOutputEnabled:      existing.TripletOutputEnabled,
+		AnalysisVisibility:        existing.AnalysisVisibility,
+		NegativeConstraintEnabled: existing.NegativeConstraintEnabled,
+		NegativeConstraintDefault: existing.NegativeConstraintDefault,
+	})
 
 	// Hot-swap the LLM provider based on selected provider_type.
 	// Provider activation failure should not block a successful save response,
@@ -754,6 +801,22 @@ func maskKey(key string) string {
 // isMasked checks if a value looks like a masked placeholder from GetSettings.
 func isMasked(val string) bool {
 	return len(val) > 3 && val[:3] == "***"
+}
+
+func validatePromptGuardSettings(lockEvery int, analysisVisibility string, negativeConstraintEnabled bool, negativeConstraintDefault string) error {
+	if lockEvery < 1 || lockEvery > 16 {
+		return fmt.Errorf("persona_lock_every_turns must be between 1 and 16")
+	}
+	switch analysisVisibility {
+	case app.AnalysisVisibilityVisible, app.AnalysisVisibilityHidden, app.AnalysisVisibilityDebug:
+		// valid
+	default:
+		return fmt.Errorf("analysis_visibility must be one of: visible, hidden, debug")
+	}
+	if negativeConstraintEnabled && strings.TrimSpace(negativeConstraintDefault) == "" {
+		return fmt.Errorf("negative_constraint_default cannot be empty when negative constraints are enabled")
+	}
+	return nil
 }
 
 // --- OAuth endpoints ---

@@ -32,14 +32,19 @@ type Message struct {
 // ConversationDigest is a compact structured summary of older history.
 // It allows token-efficient recall without replaying full raw turns.
 type ConversationDigest struct {
-	ID          string    `json:"id"`
-	Summary     string    `json:"summary"`
-	Facts       []string  `json:"facts,omitempty"`
-	Preferences []string  `json:"preferences,omitempty"`
-	OpenItems   []string  `json:"open_items,omitempty"`
-	Decisions   []string  `json:"decisions,omitempty"`
-	Keywords    []string  `json:"keywords,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	Summary        string    `json:"summary"`
+	Facts          []string  `json:"facts,omitempty"`
+	Preferences    []string  `json:"preferences,omitempty"`
+	OpenItems      []string  `json:"open_items,omitempty"`
+	Decisions      []string  `json:"decisions,omitempty"`
+	Keywords       []string  `json:"keywords,omitempty"`
+	Attitude       string    `json:"attitude,omitempty"`
+	EmotionalTone  string    `json:"emotional_tone,omitempty"`
+	StyleMarkers   []string  `json:"style_markers,omitempty"`
+	SignatureTerms []string  `json:"signature_terms,omitempty"`
+	StyleQuotes    []string  `json:"style_quotes,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Conversation tracks the full dialogue state for a channel-persona pair.
@@ -116,9 +121,15 @@ func (c *Conversation) AppendAssistantMessage(content string) {
 
 // AppendAssistantMessageWithRaw adds an assistant response with raw LLM input/output for debugging.
 func (c *Conversation) AppendAssistantMessageWithRaw(content, rawInput, rawOutput string) {
+	c.AppendAssistantMessageWithDisplayAndRaw(content, content, rawInput, rawOutput)
+}
+
+// AppendAssistantMessageWithDisplayAndRaw adds an assistant response with display text and raw I/O.
+func (c *Conversation) AppendAssistantMessageWithDisplayAndRaw(content, displayText, rawInput, rawOutput string) {
 	c.Messages = append(c.Messages, Message{
 		Role:         RoleAssistant,
 		Content:      content,
+		DisplayText:  displayText,
 		RawLLMInput:  rawInput,
 		RawLLMOutput: rawOutput,
 		Timestamp:    time.Now(),

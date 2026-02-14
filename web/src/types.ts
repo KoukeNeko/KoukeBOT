@@ -67,6 +67,13 @@ export interface SettingsData {
   // Discord logging settings
   log_channel_id?: string         // Discord channel ID for stdout logs
   discord_persona_id: string
+
+  // Prompt guard / persona stability settings
+  persona_lock_every_turns: number
+  triplet_output_enabled: boolean
+  analysis_visibility: 'visible' | 'hidden' | 'debug'
+  negative_constraint_enabled: boolean
+  negative_constraint_default: string
 }
 
 export interface ModelEntry {
@@ -173,6 +180,11 @@ export interface ConversationDigest {
   open_items?: string[]
   decisions?: string[]
   keywords?: string[]
+  attitude?: string
+  emotional_tone?: string
+  style_markers?: string[]
+  signature_terms?: string[]
+  style_quotes?: string[]
   created_at: string
 }
 

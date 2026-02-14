@@ -21,3 +21,35 @@ func TestCompressToolResultKeepsWebFetchMetadata(t *testing.T) {
 		t.Fatalf("compressed output should include truncation marker")
 	}
 }
+
+func TestPrepareAssistantOutputParsesTripletFormat(t *testing.T) {
+	policy := DefaultPromptGuardPolicy()
+	raw := `[Status]: Calm
+[Analysis]: User asks for a straightforward weather answer.
+[Response]:
+今天會下雨，出門記得帶傘。`
+
+	view := prepareAssistantOutput(raw, policy)
+	if !view.Parsed {
+		t.Fatalf("expected triplet output to parse")
+	}
+	if view.Content != "今天會下雨，出門記得帶傘。" {
+		t.Fatalf("parsed response = %q", view.Content)
+	}
+	if !strings.Contains(view.Display, "[Analysis]") {
+		t.Fatalf("visible mode should keep analysis in display")
+	}
+}
+
+func TestPrepareAssistantOutputFallsBackWhenNoResponseSection(t *testing.T) {
+	policy := DefaultPromptGuardPolicy()
+	raw := "好的，我明白了。"
+
+	view := prepareAssistantOutput(raw, policy)
+	if view.Parsed {
+		t.Fatalf("expected parse fallback for non-triplet output")
+	}
+	if view.Content != raw {
+		t.Fatalf("fallback content = %q, want %q", view.Content, raw)
+	}
+}

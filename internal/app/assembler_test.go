@@ -26,10 +26,14 @@ func TestAssembleThinkingModelIncludesRelevantDigestAndRecentMessage(t *testing.
 		},
 		ContextDigests: []domain.ConversationDigest{
 			{
-				ID:        "digest-1",
-				Summary:   "User previously decided to use Project Phoenix migration plan.",
-				Keywords:  []string{"phoenix", "migration", "project"},
-				CreatedAt: time.Now().Add(-1 * time.Hour),
+				ID:            "digest-1",
+				Summary:       "User previously decided to use Project Phoenix migration plan.",
+				Keywords:      []string{"phoenix", "migration", "project"},
+				Attitude:      "critical",
+				EmotionalTone: "cold",
+				StyleMarkers:  []string{"sarcastic", "directive"},
+				StyleQuotes:   []string{"Please fix your broken logic before asking again."},
+				CreatedAt:     time.Now().Add(-1 * time.Hour),
 			},
 		},
 	}
@@ -47,6 +51,12 @@ func TestAssembleThinkingModelIncludesRelevantDigestAndRecentMessage(t *testing.
 	if !strings.Contains(assembled.Messages[0].Content, "Relevant conversation digests") {
 		t.Fatalf("first message should include digest block")
 	}
+	if !strings.Contains(assembled.Messages[0].Content, "Style Contract") {
+		t.Fatalf("digest block should include style contract")
+	}
+	if !strings.Contains(assembled.Messages[0].Content, "Do NOT flatten persona tone") {
+		t.Fatalf("digest block should include anti-flattening directive")
+	}
 	last := assembled.Messages[len(assembled.Messages)-1]
 	if last.Role != domain.RoleUser || !strings.Contains(last.Content, "phoenix project status") {
 		t.Fatalf("latest recent message should be preserved, got role=%s content=%q", last.Role, last.Content)
@@ -55,7 +65,9 @@ func TestAssembleThinkingModelIncludesRelevantDigestAndRecentMessage(t *testing.
 
 func TestAssembleThinkingModelInjectsPersonaLockEveryNTurns(t *testing.T) {
 	assembler := NewContextAssembler()
-	assembler.budget.PersonaLockEveryTurns = 2
+	policy := DefaultPromptGuardPolicy()
+	policy.PersonaLockEveryTurns = 2
+	assembler.UpdatePromptGuardPolicy(policy)
 
 	persona := &domain.PersonaModule{
 		Config: domain.PersonaConfig{
@@ -90,5 +102,42 @@ func TestAssembleThinkingModelInjectsPersonaLockEveryNTurns(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected persona lock message to be injected")
+	}
+}
+
+func TestPersonaLockIncludesNegativeConstraintOverride(t *testing.T) {
+	assembler := NewContextAssembler()
+	policy := DefaultPromptGuardPolicy()
+	policy.PersonaLockEveryTurns = 1
+	policy.NegativeConstraintDefault = "default negative"
+	assembler.UpdatePromptGuardPolicy(policy)
+
+	persona := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			Meta:           domain.PersonaMeta{Name: "Satsuki"},
+			SystemTemplate: "{{.Lore}}\n{{.Anchors}}\n{{.Time}}",
+			StyleGuard: domain.StyleGuardConfig{
+				NegativeConstraints: "custom persona negative",
+			},
+		},
+		Lore: "persona",
+	}
+	conv := &domain.Conversation{
+		Messages: []domain.Message{{Role: domain.RoleUser, Content: "hi", Timestamp: time.Now()}},
+	}
+
+	assembled, err := assembler.Assemble(persona, conv, llm.ModelCapabilities{
+		SupportsThinking: true,
+		ContextWindow:    8000,
+	})
+	if err != nil {
+		t.Fatalf("Assemble() error = %v", err)
+	}
+	joined := ""
+	for _, msg := range assembled.Messages {
+		joined += msg.Content + "\n"
+	}
+	if !strings.Contains(joined, "custom persona negative") {
+		t.Fatalf("expected persona-level negative constraint in persona lock message")
 	}
 }

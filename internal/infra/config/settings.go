@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -12,6 +13,10 @@ import (
 const (
 	ProviderAPIKey = "api-key"
 	ProviderOAuth  = "oauth"
+
+	DefaultPersonaLockEveryTurns    = 4
+	DefaultAnalysisVisibility       = "visible"
+	DefaultNegativeConstraintPrompt = "You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude."
 )
 
 // Settings holds the runtime-configurable values.
@@ -48,6 +53,13 @@ type Settings struct {
 	LogChannelID string `json:"log_channel_id"` // Discord channel ID for stdout logs (optional)
 	// Preferred active persona for Discord bot runtime.
 	DiscordPersonaID string `json:"discord_persona_id"`
+
+	// Prompt guard / persona stability settings
+	PersonaLockEveryTurns     int    `json:"persona_lock_every_turns"`    // Inject persona lock every N user turns (default: 4)
+	TripletOutputEnabled      bool   `json:"triplet_output_enabled"`      // Enforce [Status]/[Analysis]/[Response] format
+	AnalysisVisibility        string `json:"analysis_visibility"`         // "visible" | "hidden" | "debug"
+	NegativeConstraintEnabled bool   `json:"negative_constraint_enabled"` // Enable anti-generic constraints
+	NegativeConstraintDefault string `json:"negative_constraint_default"` // Global fallback negative constraint
 }
 
 // SettingsStore reads and writes settings to a JSON file.
@@ -67,7 +79,7 @@ func (s *SettingsStore) Load() (Settings, error) {
 
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Settings{}, nil
+		return normalizeSettings(Settings{}, map[string]json.RawMessage{}), nil
 	}
 	if err != nil {
 		return Settings{}, err
@@ -77,7 +89,12 @@ func (s *SettingsStore) Load() (Settings, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return Settings{}, err
 	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Settings{}, err
+	}
 	settings.ProviderType = normalizeProviderType(settings.ProviderType)
+	settings = normalizeSettings(settings, raw)
 	return settings, nil
 }
 
@@ -87,6 +104,7 @@ func (s *SettingsStore) Save(settings Settings) error {
 	defer s.mu.Unlock()
 
 	settings.ProviderType = normalizeProviderType(settings.ProviderType)
+	settings = normalizeSettings(settings, nil)
 
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
@@ -110,4 +128,60 @@ func normalizeProviderType(providerType string) string {
 		// Backward compatibility: legacy non-empty values map to OAuth.
 		return ProviderOAuth
 	}
+}
+
+func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settings {
+	if settings.PersonaLockEveryTurns <= 0 {
+		settings.PersonaLockEveryTurns = DefaultPersonaLockEveryTurns
+	}
+
+	if raw == nil {
+		// Save path or programmatic assignment: preserve explicit false values.
+		if settings.AnalysisVisibility == "" {
+			settings.AnalysisVisibility = DefaultAnalysisVisibility
+		}
+		if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
+			settings.NegativeConstraintDefault = DefaultNegativeConstraintPrompt
+		}
+		return normalizeVisibilityAndBooleans(settings)
+	}
+
+	// Load path: if key missing in legacy settings.json, apply defaults.
+	if _, ok := raw["triplet_output_enabled"]; !ok {
+		settings.TripletOutputEnabled = true
+	}
+	if _, ok := raw["negative_constraint_enabled"]; !ok {
+		settings.NegativeConstraintEnabled = true
+	}
+	if _, ok := raw["analysis_visibility"]; !ok {
+		settings.AnalysisVisibility = DefaultAnalysisVisibility
+	}
+	if _, ok := raw["negative_constraint_default"]; !ok {
+		settings.NegativeConstraintDefault = DefaultNegativeConstraintPrompt
+	}
+	if _, ok := raw["persona_lock_every_turns"]; !ok && settings.PersonaLockEveryTurns <= 0 {
+		settings.PersonaLockEveryTurns = DefaultPersonaLockEveryTurns
+	}
+
+	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
+		settings.NegativeConstraintDefault = DefaultNegativeConstraintPrompt
+	}
+
+	return normalizeVisibilityAndBooleans(settings)
+}
+
+func normalizeVisibilityAndBooleans(settings Settings) Settings {
+	switch settings.AnalysisVisibility {
+	case "visible", "hidden", "debug":
+		// keep
+	default:
+		settings.AnalysisVisibility = DefaultAnalysisVisibility
+	}
+	if settings.PersonaLockEveryTurns <= 0 {
+		settings.PersonaLockEveryTurns = DefaultPersonaLockEveryTurns
+	}
+	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
+		settings.NegativeConstraintDefault = DefaultNegativeConstraintPrompt
+	}
+	return settings
 }

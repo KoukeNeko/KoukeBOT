@@ -119,6 +119,13 @@ func run() error {
 	}
 
 	assembler := app.NewContextAssembler()
+	assembler.UpdatePromptGuardPolicy(app.PromptGuardPolicy{
+		PersonaLockEveryTurns:     settings.PersonaLockEveryTurns,
+		TripletOutputEnabled:      settings.TripletOutputEnabled,
+		AnalysisVisibility:        settings.AnalysisVisibility,
+		NegativeConstraintEnabled: settings.NegativeConstraintEnabled,
+		NegativeConstraintDefault: settings.NegativeConstraintDefault,
+	})
 	chatService := app.NewChatService(providerManager, assembler, convStore, imageStore, 0, personaService.GetAll(), tools, contextManager)
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
