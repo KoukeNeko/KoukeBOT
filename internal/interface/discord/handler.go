@@ -142,6 +142,9 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	if !isDM(m) {
 		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, m.ID)
 	}
+	if replyEntry := h.buildReplyReferenceEntry(s, m); replyEntry != nil {
+		historyEntries = append(historyEntries, *replyEntry)
+	}
 
 	// Flat text context for persistence and text-only code path
 	contextForLLM := buildContextForLLM(historyEntries, currentMessage)
@@ -173,6 +176,74 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	h.streamToDiscord(m.ChannelID, m.ID, streamCh)
+}
+
+// buildReplyReferenceEntry extracts the replied-to message as high-priority context.
+// If Discord did not include ReferencedMessage payload, it falls back to an API fetch.
+func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.MessageCreate) *domain.ChannelHistoryEntry {
+	if m == nil || m.MessageReference == nil || m.MessageReference.MessageID == "" {
+		return nil
+	}
+
+	refMsg := m.ReferencedMessage
+	if refMsg == nil && s != nil {
+		refChannelID := m.ChannelID
+		if m.MessageReference.ChannelID != "" {
+			refChannelID = m.MessageReference.ChannelID
+		}
+		fetched, err := s.ChannelMessage(refChannelID, m.MessageReference.MessageID)
+		if err != nil {
+			logHandler.Warnf("reply-target fetch failed [%s/%s]: %v", refChannelID, m.MessageReference.MessageID, err)
+			return nil
+		}
+		refMsg = fetched
+	}
+	if refMsg == nil {
+		return nil
+	}
+
+	content := strings.TrimSpace(refMsg.Content)
+	if content == "" && len(refMsg.Attachments) > 0 {
+		content = buildAttachmentPlaceholder(refMsg.Attachments)
+	}
+	if content == "" {
+		return nil
+	}
+	if len(content) > 350 {
+		content = content[:350] + "..."
+	}
+
+	senderLabel := resolveSenderLabel(refMsg.Author)
+	userID := ""
+	if refMsg.Author != nil {
+		userID = refMsg.Author.ID
+	}
+	timestamp := refMsg.Timestamp.Format("2006-01-02 15:04 MST")
+	formatted := "[Replied message - high priority]\n" +
+		formatInboundEnvelope("Discord", senderLabel, userID, timestamp, content)
+
+	// Include at most 2 images from the replied message so multimodal models
+	// can resolve "this image" references without exploding context cost.
+	var images []domain.ImageInput
+	for _, att := range refMsg.Attachments {
+		if len(images) >= 2 {
+			break
+		}
+		if !isImageAttachment(att) {
+			continue
+		}
+		img, err := downloadImage(att.URL)
+		if err != nil {
+			logHandler.Warnf("reply-target image download failed: %s: %v", att.Filename, err)
+			continue
+		}
+		images = append(images, img)
+	}
+
+	return &domain.ChannelHistoryEntry{
+		FormattedText: formatted,
+		Images:        images,
+	}
 }
 
 // streamToDiscord collects streaming chunks and updates the Discord message in real-time.
