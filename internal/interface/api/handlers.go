@@ -1288,26 +1288,38 @@ func (h *Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
 
 	summaries := make([]ConversationSummary, 0, len(conversations))
 	for _, conv := range conversations {
-		// Show all conversations (Web UI and Discord)
-		// Skip empty conversations
-		if len(conv.Messages) == 0 {
-			continue
-		}
-
 		personaName := conv.PersonaID
-		if persona, ok := h.personaService.Get(conv.PersonaID); ok {
-			personaName = persona.Config.Meta.Name
+		if h.personaService != nil {
+			if persona, ok := h.personaService.Get(conv.PersonaID); ok {
+				personaName = persona.Config.Meta.Name
+			}
 		}
 
-		lastMsg := conv.Messages[len(conv.Messages)-1]
+		messageCount := len(conv.Messages)
+		lastMessage := ""
+		lastTimestamp := conv.UpdatedAt
+
+		if messageCount > 0 {
+			lastMsg := conv.Messages[messageCount-1]
+			lastMessage = truncate(lastMsg.Content, 100)
+			lastTimestamp = lastMsg.Timestamp
+		} else {
+			// Keep reset conversations visible in Web list.
+			if conv.HistoryCutoffAt == nil {
+				continue
+			}
+			lastMessage = "[對話已重置]"
+			lastTimestamp = conv.HistoryCutoffAt.UTC()
+		}
+
 		summary := ConversationSummary{
 			ID:            conv.ID,
 			ChannelID:     conv.ChannelID,
 			PersonaID:     conv.PersonaID,
 			PersonaName:   personaName,
-			MessageCount:  len(conv.Messages),
-			LastMessage:   truncate(lastMsg.Content, 100),
-			LastTimestamp: lastMsg.Timestamp.Format("2006-01-02 15:04:05"),
+			MessageCount:  messageCount,
+			LastMessage:   lastMessage,
+			LastTimestamp: lastTimestamp.Format("2006-01-02 15:04:05"),
 			UpdatedAt:     conv.UpdatedAt.Format("2006-01-02 15:04:05"),
 		}
 		summaries = append(summaries, summary)
