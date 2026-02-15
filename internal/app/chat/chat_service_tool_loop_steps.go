@@ -283,6 +283,7 @@ func (s *ChatService) persistToolLoopConversation(
 	messageToStore string,
 	contextForLLM string,
 	rawLLMInput string,
+	rawLLMInputHuman string,
 	imageRefs []domain.ImageRef,
 	finalView assistantOutputView,
 	outputCh chan<- llm.StreamChunk,
@@ -310,7 +311,7 @@ func (s *ChatService) persistToolLoopConversation(
 		if content == "" {
 			content = strings.TrimSpace(state.fullResponse)
 		}
-		conv.AppendAssistantMessageWithDisplayAndRaw(content, finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
+		conv.AppendAssistantMessageWithDisplayAndRawViews(content, finalResponseWithAnnotation, rawLLMInput, rawLLMInputHuman, rawLLMOutput)
 		s.applyTokenAccounting(conv, state.totalTokens)
 		if err := s.store.Save(ctx, conv); err != nil {
 			logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
@@ -329,7 +330,7 @@ func (s *ChatService) persistToolLoopConversation(
 	} else {
 		conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
 	}
-	conv.AppendAssistantMessageWithDisplayAndRaw(finalView.Content, finalView.Display, rawLLMInput, finalView.RawOutput)
+	conv.AppendAssistantMessageWithDisplayAndRawViews(finalView.Content, finalView.Display, rawLLMInput, rawLLMInputHuman, finalView.RawOutput)
 	s.applyTokenAccounting(conv, state.totalTokens)
 	if err := s.store.Save(ctx, conv); err != nil {
 		logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)

@@ -22,6 +22,7 @@ export default function Chat() {
   const [selectedImages, setSelectedImages] = useState<File[]>([])
   const [expandedRawData, setExpandedRawData] = useState<Set<number>>(new Set())
   const [expandedToolUsage, setExpandedToolUsage] = useState<Set<number>>(new Set())
+  const [showToonRawInput, setShowToonRawInput] = useState<Set<number>>(new Set())
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -79,6 +80,7 @@ export default function Chat() {
         content: m.content,
         display_text: m.display_text,
         raw_llm_input: m.raw_llm_input,
+        raw_llm_input_human: m.raw_llm_input_human,
         raw_llm_output: m.raw_llm_output,
         timestamp: m.timestamp,
       })))
@@ -101,6 +103,7 @@ export default function Chat() {
         content: m.content,
         display_text: m.display_text,
         raw_llm_input: m.raw_llm_input,
+        raw_llm_input_human: m.raw_llm_input_human,
         raw_llm_output: m.raw_llm_output,
         timestamp: m.timestamp,
       })))
@@ -573,6 +576,11 @@ export default function Chat() {
                     const displayContent = m.display_text || m.content
                     const hasRawData = m.role === 'assistant' && (m.raw_llm_input || m.raw_llm_output)
                     const isRawExpanded = expandedRawData.has(i)
+                    const hasRawInputDualView = Boolean(m.raw_llm_input && m.raw_llm_input_human)
+                    const isToonInputView = showToonRawInput.has(i)
+                    const rawInputPreview = hasRawInputDualView && !isToonInputView
+                      ? m.raw_llm_input_human
+                      : m.raw_llm_input
 
                     // Parse tool usage annotation
                     let mainContent = displayContent
@@ -669,8 +677,36 @@ export default function Chat() {
                                 {m.raw_llm_input && (
                                   <div style={{ marginBottom: '0.75rem' }}>
                                     <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>📥 LLM 輸入</div>
+                                    {hasRawInputDualView && (
+                                      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                                        <button
+                                          className="btn-secondary"
+                                          style={{ padding: '2px 8px', fontSize: '0.7rem', width: 'auto' }}
+                                          onClick={() => {
+                                            const next = new Set(showToonRawInput)
+                                            next.delete(i)
+                                            setShowToonRawInput(next)
+                                          }}
+                                          disabled={!isToonInputView}
+                                        >
+                                          Human
+                                        </button>
+                                        <button
+                                          className="btn-secondary"
+                                          style={{ padding: '2px 8px', fontSize: '0.7rem', width: 'auto' }}
+                                          onClick={() => {
+                                            const next = new Set(showToonRawInput)
+                                            next.add(i)
+                                            setShowToonRawInput(next)
+                                          }}
+                                          disabled={isToonInputView}
+                                        >
+                                          TOON
+                                        </button>
+                                      </div>
+                                    )}
                                     <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '0.5rem', borderRadius: '4px', overflow: 'auto', maxHeight: '200px', whiteSpace: 'pre-wrap' }}>
-                                      {m.raw_llm_input}
+                                      {rawInputPreview}
                                     </pre>
                                   </div>
                                 )}

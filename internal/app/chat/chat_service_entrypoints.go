@@ -29,7 +29,8 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
 
-	conv.AppendUserMessage(userMessage)
+	contextForLLM := s.encodeUserMessageForLLM(ctx, conv.ChannelID, resolvedPersonaID, userMessage)
+	conv.AppendUserMessage(contextForLLM)
 
 	modelInfo := s.provider.ModelInfo()
 	fmt.Printf("[ChatService] Assembling context - Provider: %s, SupportsThinking: %v\n",
@@ -57,8 +58,13 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	fmt.Printf("[ChatService] LLM response received - Length: %d chars\n", len(resp.Content))
 
 	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	rawLLMInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 	view := s.prepareAssistantOutputForStorage(resp.Content)
-	conv.AppendAssistantMessageWithDisplayAndRaw(view.Content, view.Display, rawLLMInput, view.RawOutput)
+	if len(conv.Messages) > 0 {
+		conv.Messages = conv.Messages[:len(conv.Messages)-1]
+	}
+	conv.AppendUserMessageWithDisplay(userMessage, contextForLLM)
+	conv.AppendAssistantMessageWithDisplayAndRawViews(view.Content, view.Display, rawLLMInput, rawLLMInputHuman, view.RawOutput)
 	s.applyTokenAccounting(conv, resp.TokensUsed)
 
 	if err := s.store.Save(ctx, conv); err != nil {
@@ -110,6 +116,8 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 		}
 	}
 
+	contextForLLM = s.ensureTOONContextForLLM(ctx, conv.ChannelID, resolvedPersonaID, contextForLLM, messageToStore)
+
 	// Temporarily append the LLM context version for assembly
 	conv.AppendUserMessage(contextForLLM)
 
@@ -124,6 +132,7 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 
 	// Build raw LLM input for transparency (before streaming)
 	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	rawLLMInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 
 	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
@@ -137,13 +146,14 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 
 	// Handle tool calling loop and wrap stream for persistence
 	return s.toolLoopRunner.Run(ctx, ToolLoopRunRequest{
-		StreamCh:       streamCh,
-		Conversation:   conv,
-		MessageToStore: messageToStore,
-		ContextForLLM:  contextForLLM,
-		Persona:        persona,
-		PersonaID:      resolvedPersonaID,
-		RawLLMInput:    rawLLMInput,
+		StreamCh:         streamCh,
+		Conversation:     conv,
+		MessageToStore:   messageToStore,
+		ContextForLLM:    contextForLLM,
+		Persona:          persona,
+		PersonaID:        resolvedPersonaID,
+		RawLLMInput:      rawLLMInput,
+		RawLLMInputHuman: rawLLMInputHuman,
 	}), nil
 }
 
@@ -176,6 +186,8 @@ func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx contex
 		return nil, err
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+
+	contextForLLM = s.ensureTOONContextForLLM(ctx, conv.ChannelID, resolvedPersonaID, contextForLLM, messageToStore)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {

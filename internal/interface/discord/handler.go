@@ -17,6 +17,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 	interfacecommon "github.com/KoukeNeko/KoukeBOT/internal/interface/shared"
 )
 
@@ -30,9 +31,6 @@ const (
 	// Channel history limit (same as openclaw's DEFAULT_GROUP_HISTORY_LIMIT)
 	defaultGroupHistoryLimit = 24
 	defaultHistoryTarget     = 12
-	// Context markers — re-exported from domain for local use
-	historyContextMarker = domain.HistoryContextMarker
-	currentMessageMarker = domain.CurrentMessageMarker
 )
 
 // Handler bridges Discord events to the ChatService.
@@ -121,8 +119,8 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	defer stopTyping()
 
 	images := h.prepareInboundImages(m.Attachments, m.ChannelID)
-	currentMessage, historyEntries, contextForLLM, hasHistoryImages := h.buildInboundContext(s, m, content, historyCutoff)
-	streamCh, err := h.startMessageStream(ctx, m.ChannelID, personaID, contextForLLM, currentMessage, images, historyEntries, hasHistoryImages)
+	messageToStore, historyEntries, contextForLLM, hasHistoryImages := h.buildInboundContext(s, m, personaID, content, historyCutoff)
+	streamCh, err := h.startMessageStream(ctx, m.ChannelID, personaID, contextForLLM, messageToStore, images, historyEntries, hasHistoryImages)
 	if err != nil {
 		logHandler.Errorf("chat error [%s]: %v", m.ChannelID, err)
 		_ = h.bot.SendMessage(m.ChannelID, formatDiscordError(err))
@@ -134,7 +132,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 // buildReplyReferenceEntry extracts the replied-to message as high-priority context.
 // If Discord did not include ReferencedMessage payload, it falls back to an API fetch.
-func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.MessageCreate, cutoff *time.Time) *domain.ChannelHistoryEntry {
+func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.MessageCreate, personaID string, cutoff *time.Time) *domain.ChannelHistoryEntry {
 	if m == nil || m.MessageReference == nil || m.MessageReference.MessageID == "" {
 		return nil
 	}
@@ -175,9 +173,22 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 	if refMsg.Author != nil {
 		userID = refMsg.Author.ID
 	}
-	timestamp := refMsg.Timestamp.Format("2006-01-02 15:04 MST")
-	formatted := "[Replied message - high priority]\n" +
-		formatInboundEnvelope("Discord", senderLabel, userID, timestamp, content)
+	formatted, err := formatInboundEnvelope(
+		"Discord",
+		senderLabel,
+		userID,
+		m.ChannelID,
+		personaID,
+		refMsg.Timestamp,
+		content,
+		tooncodec.PriorityReplyHigh,
+	)
+	if err != nil {
+		logHandler.Warnf("toon reply-target encode failed, fallback to legacy envelope: %v", err)
+		timestamp := refMsg.Timestamp.Format("2006-01-02 15:04 MST")
+		formatted = "[Replied message - high priority]\n" +
+			formatInboundEnvelopeLegacy("Discord", senderLabel, userID, timestamp, content)
+	}
 
 	// Include at most 2 images from the replied message so multimodal models
 	// can resolve "this image" references without exploding context cost.
@@ -455,11 +466,22 @@ func resolveSenderLabel(author *discordgo.User) string {
 	return displayName
 }
 
-// formatInboundEnvelope formats a message with openclaw-style envelope.
-// Format: [Discord sender (id: userID) timestamp] body
-//
-//	[from: sender (id: userID)]
-func formatInboundEnvelope(channel, sender, userID, timestamp, body string) string {
+// formatInboundEnvelope formats an inbound Discord message into a TOON msg event.
+func formatInboundEnvelope(channel, sender, userID, channelID, personaID string, timestamp time.Time, body, priority string) (string, error) {
+	return tooncodec.EncodeMessageEvent(tooncodec.MessageEventInput{
+		Source:    strings.ToLower(strings.TrimSpace(channel)),
+		UserID:    strings.TrimSpace(userID),
+		Name:      strings.TrimSpace(sender),
+		ChannelID: strings.TrimSpace(channelID),
+		PersonaID: strings.TrimSpace(personaID),
+		Timestamp: timestamp.UTC(),
+		Text:      body,
+		Priority:  priority,
+	})
+}
+
+// formatInboundEnvelopeLegacy preserves the previous human-readable envelope format.
+func formatInboundEnvelopeLegacy(channel, sender, userID, timestamp, body string) string {
 	envelope := fmt.Sprintf("[%s %s (id: %s) %s] %s", channel, sender, userID, timestamp, body)
 	if sender != "" {
 		envelope = envelope + fmt.Sprintf("\n[from: %s (id: %s)]", sender, userID)
@@ -579,7 +601,7 @@ func truncateError(msg string, maxLen int) string {
 // message. Images from the most recent maxHistoryImageScan messages are
 // downloaded and attached to their corresponding entry (up to maxHistoryImages
 // total).
-func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, currentMessageID string, cutoff *time.Time) []domain.ChannelHistoryEntry {
+func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, personaID, currentMessageID string, cutoff *time.Time) []domain.ChannelHistoryEntry {
 	const (
 		maxHistoryImageScan = 10 // only scan last N messages for images
 		maxHistoryImages    = 5  // collect at most this many images
@@ -656,14 +678,27 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, cu
 			content = content[:remaining] + "..."
 		}
 
-		// Format with envelope
+		// Format as TOON msg event.
 		senderLabel := resolveSenderLabel(msg.Author)
 		userID := ""
 		if msg.Author != nil {
 			userID = msg.Author.ID
 		}
-		timestamp := msg.Timestamp.Format("2006-01-02 15:04 MST")
-		formattedMsg := formatInboundEnvelope("Discord", senderLabel, userID, timestamp, content)
+		formattedMsg, formatErr := formatInboundEnvelope(
+			"Discord",
+			senderLabel,
+			userID,
+			channelID,
+			personaID,
+			msg.Timestamp,
+			content,
+			"",
+		)
+		if formatErr != nil {
+			logHandler.Warnf("toon history message encode failed, fallback to legacy envelope: %v", formatErr)
+			timestamp := msg.Timestamp.Format("2006-01-02 15:04 MST")
+			formattedMsg = formatInboundEnvelopeLegacy("Discord", senderLabel, userID, timestamp, content)
+		}
 
 		entries = append(entries, domain.ChannelHistoryEntry{
 			FormattedText: formattedMsg,
@@ -689,13 +724,32 @@ func shouldIncludeDiscordTimestamp(ts time.Time, cutoff *time.Time) bool {
 
 // buildContextForLLM rebuilds the flat context string from structured history
 // entries. Used for the text-only code path and for conversation persistence.
-func buildContextForLLM(entries []domain.ChannelHistoryEntry, currentMessage string) string {
+func buildContextForLLM(entries []domain.ChannelHistoryEntry, currentMessage, channelID, personaID string) string {
 	if len(entries) == 0 {
 		return currentMessage
 	}
 
+	historyEvents := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.FormattedText) == "" {
+			continue
+		}
+		historyEvents = append(historyEvents, entry.FormattedText)
+	}
+	encoded, err := tooncodec.EncodeContextEvent(tooncodec.ContextEventInput{
+		Source:    llm.RequestSourceDiscord,
+		ChannelID: channelID,
+		PersonaID: personaID,
+		History:   historyEvents,
+		Current:   currentMessage,
+	})
+	if err == nil {
+		return encoded
+	}
+
+	logHandler.Warnf("toon context encode failed, fallback to legacy context: %v", err)
 	var result strings.Builder
-	result.WriteString(historyContextMarker)
+	result.WriteString(domain.HistoryContextMarker)
 	result.WriteString("\n")
 	for i, entry := range entries {
 		if i > 0 {
@@ -704,7 +758,7 @@ func buildContextForLLM(entries []domain.ChannelHistoryEntry, currentMessage str
 		result.WriteString(entry.FormattedText)
 	}
 	result.WriteString("\n\n")
-	result.WriteString(currentMessageMarker)
+	result.WriteString(domain.CurrentMessageMarker)
 	result.WriteString("\n")
 	result.WriteString(currentMessage)
 

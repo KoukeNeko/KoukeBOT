@@ -20,13 +20,14 @@ type ImageRef struct {
 
 // Message is a single turn in a conversation.
 type Message struct {
-	Role         Role       `json:"role"`
-	Content      string     `json:"content"`
-	DisplayText  string     `json:"display_text,omitempty"`   // Full context for UI display (e.g., with channel history)
-	RawLLMInput  string     `json:"raw_llm_input,omitempty"`  // Raw prompt sent to LLM (for debugging/transparency)
-	RawLLMOutput string     `json:"raw_llm_output,omitempty"` // Raw response from LLM (for debugging/transparency)
-	Timestamp    time.Time  `json:"timestamp"`
-	ImageRefs    []ImageRef `json:"image_refs,omitempty"` // References to persisted images
+	Role             Role       `json:"role"`
+	Content          string     `json:"content"`
+	DisplayText      string     `json:"display_text,omitempty"`        // Full context for UI display (e.g., with channel history)
+	RawLLMInput      string     `json:"raw_llm_input,omitempty"`       // Raw prompt sent to LLM (for debugging/transparency)
+	RawLLMInputHuman string     `json:"raw_llm_input_human,omitempty"` // Humanized prompt view for debugging/transparency
+	RawLLMOutput     string     `json:"raw_llm_output,omitempty"`      // Raw response from LLM (for debugging/transparency)
+	Timestamp        time.Time  `json:"timestamp"`
+	ImageRefs        []ImageRef `json:"image_refs,omitempty"` // References to persisted images
 }
 
 // ConversationDigest is a compact structured summary of older history.
@@ -137,13 +138,20 @@ func (c *Conversation) AppendAssistantMessageWithRaw(content, rawInput, rawOutpu
 
 // AppendAssistantMessageWithDisplayAndRaw adds an assistant response with display text and raw I/O.
 func (c *Conversation) AppendAssistantMessageWithDisplayAndRaw(content, displayText, rawInput, rawOutput string) {
+	c.AppendAssistantMessageWithDisplayAndRawViews(content, displayText, rawInput, rawInput, rawOutput)
+}
+
+// AppendAssistantMessageWithDisplayAndRawViews adds an assistant response with display text and
+// both raw and humanized LLM input snapshots.
+func (c *Conversation) AppendAssistantMessageWithDisplayAndRawViews(content, displayText, rawInput, rawInputHuman, rawOutput string) {
 	c.Messages = append(c.Messages, Message{
-		Role:         RoleAssistant,
-		Content:      content,
-		DisplayText:  displayText,
-		RawLLMInput:  rawInput,
-		RawLLMOutput: rawOutput,
-		Timestamp:    time.Now(),
+		Role:             RoleAssistant,
+		Content:          content,
+		DisplayText:      displayText,
+		RawLLMInput:      rawInput,
+		RawLLMInputHuman: rawInputHuman,
+		RawLLMOutput:     rawOutput,
+		Timestamp:        time.Now(),
 	})
 	c.UpdatedAt = time.Now()
 }

@@ -31,6 +31,7 @@ type ToolLoopRunRequest struct {
 	Persona           *domain.PersonaModule
 	PersonaID         string
 	RawLLMInput       string
+	RawLLMInputHuman  string
 	ImageRefs         []domain.ImageRef
 	MultimodalHistory []domain.MultimodalMessage
 }
@@ -70,6 +71,7 @@ func (r defaultToolLoopRunner) Run(ctx context.Context, req ToolLoopRunRequest) 
 		req.Persona,
 		req.PersonaID,
 		req.RawLLMInput,
+		req.RawLLMInputHuman,
 		req.ImageRefs,
 		req.MultimodalHistory,
 	)

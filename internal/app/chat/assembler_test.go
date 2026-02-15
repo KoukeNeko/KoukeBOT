@@ -8,6 +8,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 func TestAssembleThinkingModelIncludesRelevantDigestAndRecentMessage(t *testing.T) {
@@ -149,6 +150,33 @@ func TestSelectRecentMessagesSkipsInternalToolHistory(t *testing.T) {
 		{Role: domain.RoleUser, Content: "hello"},
 		{Role: domain.RoleAssistant, Content: "[Tool calls executed]"},
 		{Role: domain.RoleUser, Content: "Tool execution results:\n\nTool: file_write\nStatus: SUCCESS"},
+		{Role: domain.RoleAssistant, Content: "actual assistant response"},
+	}
+
+	got := assembler.selectRecentMessages(messages, 10_000, 10)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 non-tool messages, got %d", len(got))
+	}
+	if got[0].Content != "hello" {
+		t.Fatalf("unexpected first message: %q", got[0].Content)
+	}
+	if got[1].Content != "actual assistant response" {
+		t.Fatalf("unexpected second message: %q", got[1].Content)
+	}
+}
+
+func TestSelectRecentMessagesSkipsTOONToolHistory(t *testing.T) {
+	assembler := NewContextAssembler()
+	toolr, err := tooncodec.EncodeToolResultsEvent([]tooncodec.ToolResultInput{
+		{ID: "1", Name: "file_write", OK: true, Out: "saved"},
+	})
+	if err != nil {
+		t.Fatalf("encode toolr: %v", err)
+	}
+
+	messages := []domain.Message{
+		{Role: domain.RoleUser, Content: "hello"},
+		{Role: domain.RoleUser, Content: toolr},
 		{Role: domain.RoleAssistant, Content: "actual assistant response"},
 	}
 

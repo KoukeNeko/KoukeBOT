@@ -13,6 +13,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 	"github.com/KoukeNeko/KoukeBOT/internal/util"
 )
 
@@ -259,7 +260,10 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	// Append system-level tool usage instructions (non-persona-specific)
 	buf.WriteString("\n\n---\n\n")
 	buf.WriteString("## System Instructions\n\n")
-	buf.WriteString("- Message envelopes contain timestamps. Use them for context about when messages were sent.\n")
+	buf.WriteString("- User-side conversation events are encoded in TOON (`t=msg`, `t=ctx`, `t=toolr`).\n")
+	buf.WriteString("- For identity resolution, trust `uid` over `name`. If they conflict, `uid` is authoritative.\n")
+	buf.WriteString("- `pri=reply_high` marks high-priority reply context and should be prioritized.\n")
+	buf.WriteString("- `ts` is a UTC Unix timestamp for temporal ordering.\n")
 	buf.WriteString("- If you need the current date, time, or day of week, call the `session_status` tool.\n")
 	buf.WriteString("- Only call `session_status` when you need the precise current time, not for every response.\n")
 	buf.WriteString("- For Discord reminders or timed background checks, call the `schedule_manager` tool.\n")
@@ -460,6 +464,9 @@ func isInternalToolHistoryMessage(content string) bool {
 		return false
 	}
 	if trimmed == "[Tool calls executed]" {
+		return true
+	}
+	if eventType, ok := tooncodec.DecodeEventType(trimmed); ok && eventType == tooncodec.EventTypeToolResults {
 		return true
 	}
 	return strings.HasPrefix(trimmed, "Tool execution results:")

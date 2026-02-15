@@ -3,6 +3,9 @@ package chat
 import (
 	"strings"
 	"testing"
+
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 func TestCompressToolResultKeepsWebFetchMetadata(t *testing.T) {
@@ -51,5 +54,23 @@ func TestPrepareAssistantOutputFallsBackWhenNoResponseSection(t *testing.T) {
 	}
 	if view.Content != raw {
 		t.Fatalf("fallback content = %q, want %q", view.Content, raw)
+	}
+}
+
+func TestFormatToolResultsEncodesTOONToolResultsEvent(t *testing.T) {
+	calls := []domain.ToolCall{
+		{ID: "a1", Name: "discord_observe"},
+	}
+	results := []domain.ToolResult{
+		{ToolCallID: "a1", Content: `{"ok":true}`, IsError: false},
+	}
+
+	encoded := formatToolResults(calls, results)
+	eventType, ok := tooncodec.DecodeEventType(encoded)
+	if !ok {
+		t.Fatalf("expected TOON payload, got: %s", encoded)
+	}
+	if eventType != tooncodec.EventTypeToolResults {
+		t.Fatalf("event type = %s, want %s", eventType, tooncodec.EventTypeToolResults)
 	}
 }

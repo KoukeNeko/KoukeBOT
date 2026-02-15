@@ -79,40 +79,45 @@ func (h *Handler) prepareInboundImages(attachments []*discordgo.MessageAttachmen
 func (h *Handler) buildInboundContext(
 	s *discordgo.Session,
 	m *discordgo.MessageCreate,
+	personaID string,
 	content string,
 	historyCutoff *time.Time,
-) (currentMessage string, historyEntries []domain.ChannelHistoryEntry, contextForLLM string, hasHistoryImages bool) {
+) (messageToStore string, historyEntries []domain.ChannelHistoryEntry, contextForLLM string, hasHistoryImages bool) {
 	senderLabel := resolveSenderLabel(m.Author)
-	timestamp := m.Timestamp.Format("2006-01-02 15:04 MST")
-	currentMessage = formatInboundEnvelope("Discord", senderLabel, m.Author.ID, timestamp, content)
+	currentMessage, currentErr := formatInboundEnvelope("Discord", senderLabel, m.Author.ID, m.ChannelID, personaID, m.Timestamp, content, "")
+	if currentErr != nil {
+		logHandler.Warnf("toon current message encode failed, fallback to legacy envelope: %v", currentErr)
+		currentMessage = formatInboundEnvelopeLegacy("Discord", senderLabel, m.Author.ID, m.Timestamp.Format("2006-01-02 15:04 MST"), content)
+	}
+	messageToStore = content
 
 	if !isDM(m) {
-		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, m.ID, historyCutoff)
+		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, personaID, m.ID, historyCutoff)
 	}
-	if replyEntry := h.buildReplyReferenceEntry(s, m, historyCutoff); replyEntry != nil {
+	if replyEntry := h.buildReplyReferenceEntry(s, m, personaID, historyCutoff); replyEntry != nil {
 		historyEntries = append(historyEntries, *replyEntry)
 	}
 
-	contextForLLM = buildContextForLLM(historyEntries, currentMessage)
+	contextForLLM = buildContextForLLM(historyEntries, currentMessage, m.ChannelID, personaID)
 	for _, entry := range historyEntries {
 		if len(entry.Images) > 0 {
 			hasHistoryImages = true
 			break
 		}
 	}
-	return currentMessage, historyEntries, contextForLLM, hasHistoryImages
+	return messageToStore, historyEntries, contextForLLM, hasHistoryImages
 }
 
 func (h *Handler) startMessageStream(
 	ctx context.Context,
-	channelID, personaID, contextForLLM, currentMessage string,
+	channelID, personaID, contextForLLM, messageToStore string,
 	images []domain.ImageInput,
 	historyEntries []domain.ChannelHistoryEntry,
 	hasHistoryImages bool,
 ) (<-chan llm.StreamChunk, error) {
 	if len(images) > 0 || hasHistoryImages {
 		return h.chatService.HandleMessageStreamWithImagesAndContext(
-			ctx, channelID, personaID, contextForLLM, currentMessage, images, historyEntries)
+			ctx, channelID, personaID, contextForLLM, messageToStore, images, historyEntries)
 	}
-	return h.chatService.HandleMessageStreamWithContext(ctx, channelID, personaID, contextForLLM, currentMessage)
+	return h.chatService.HandleMessageStreamWithContext(ctx, channelID, personaID, contextForLLM, messageToStore)
 }

@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 func (s *ChatService) logPromptSnapshot(path, channelID, personaID, conversationID string, assembled *AssembledContext) {
@@ -33,10 +34,41 @@ func hasPersonaLockMessage(messages []domain.Message) bool {
 
 // formatToolResults formats tool results for LLM consumption.
 func formatToolResults(toolCalls []domain.ToolCall, results []domain.ToolResult) string {
+	// Create a map for quick lookup of tool calls by ID
+	callMap := make(map[string]domain.ToolCall)
+	for _, call := range toolCalls {
+		callMap[call.ID] = call
+	}
+
+	items := make([]tooncodec.ToolResultInput, 0, len(results))
+	for _, result := range results {
+		call, exists := callMap[result.ToolCallID]
+		toolName := "unknown"
+		if exists {
+			toolName = call.Name
+		}
+
+		compressed := compressToolResult(toolName, result.Content)
+		items = append(items, tooncodec.ToolResultInput{
+			ID:   result.ToolCallID,
+			Name: toolName,
+			OK:   !result.IsError,
+			Out:  compressed,
+		})
+	}
+
+	encoded, err := tooncodec.EncodeToolResultsEvent(items)
+	if err != nil {
+		logChat.Warnf("toon tool result encode failed, fallback to legacy text: %v", err)
+		return formatToolResultsLegacy(toolCalls, results)
+	}
+	return encoded
+}
+
+func formatToolResultsLegacy(toolCalls []domain.ToolCall, results []domain.ToolResult) string {
 	var formatted string
 	formatted += "Tool execution results:\n\n"
 
-	// Create a map for quick lookup of tool calls by ID
 	callMap := make(map[string]domain.ToolCall)
 	for _, call := range toolCalls {
 		callMap[call.ID] = call
@@ -48,7 +80,6 @@ func formatToolResults(toolCalls []domain.ToolCall, results []domain.ToolResult)
 		if exists {
 			toolName = call.Name
 		}
-
 		compressed := compressToolResult(toolName, result.Content)
 		formatted += fmt.Sprintf("Tool: %s (ID: %s)\n", toolName, result.ToolCallID)
 		if result.IsError {
@@ -149,6 +180,23 @@ func formatLLMPrompt(systemPrompt string, messages []domain.Message) string {
 	for i, msg := range messages {
 		prompt.WriteString(fmt.Sprintf("\n[Message %d - %s]\n", i+1, msg.Role))
 		prompt.WriteString(msg.Content)
+		prompt.WriteString("\n")
+	}
+
+	return prompt.String()
+}
+
+// formatLLMPromptHuman builds a humanized prompt string for debugging/transparency.
+func formatLLMPromptHuman(systemPrompt string, messages []domain.Message) string {
+	var prompt strings.Builder
+
+	prompt.WriteString("=== SYSTEM PROMPT ===\n")
+	prompt.WriteString(systemPrompt)
+	prompt.WriteString("\n\n=== CONVERSATION HISTORY ===\n")
+
+	for i, msg := range messages {
+		prompt.WriteString(fmt.Sprintf("\n[Message %d - %s]\n", i+1, msg.Role))
+		prompt.WriteString(tooncodec.HumanizeTOON(msg.Content))
 		prompt.WriteString("\n")
 	}
 

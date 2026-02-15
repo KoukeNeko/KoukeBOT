@@ -191,6 +191,7 @@ export interface Message {
   content: string
   display_text?: string
   raw_llm_input?: string
+  raw_llm_input_human?: string
   raw_llm_output?: string
   timestamp?: string
   tool_calls?: ToolCall[]

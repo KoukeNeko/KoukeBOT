@@ -45,8 +45,8 @@ func (s *ChatService) streamWithMultimodalHistory(
 	// Build current user message parts with interleaved history images
 	var userParts []domain.MessagePart
 	if len(historyEntries) > 0 {
-		// History header
-		userParts = append(userParts, domain.MessagePart{Text: domain.HistoryContextMarker})
+		// Keep the canonical TOON ctx payload in-band for identity-safe reasoning.
+		userParts = append(userParts, domain.MessagePart{Text: contextForLLM})
 		// Each history entry: text part followed by its associated images
 		for _, entry := range historyEntries {
 			userParts = append(userParts, domain.MessagePart{Text: entry.FormattedText})
@@ -55,10 +55,11 @@ func (s *ChatService) streamWithMultimodalHistory(
 				userParts = append(userParts, domain.MessagePart{ImageData: &entry.Images[i]})
 			}
 		}
-		// Current message section
-		userParts = append(userParts, domain.MessagePart{Text: "\n" + domain.CurrentMessageMarker + "\n" + messageToStore})
+		// Current message as TOON msg event to keep source identity structured.
+		currentMessageEvent := s.encodeUserMessageForLLM(ctx, conv.ChannelID, personaID, messageToStore)
+		userParts = append(userParts, domain.MessagePart{Text: currentMessageEvent})
 	} else {
-		// No history entries (DM or text-only history) — use flat context
+		// No history entries — use the already-normalized TOON context payload.
 		userParts = append(userParts, domain.MessagePart{Text: contextForLLM})
 	}
 	// Direct attachment images (always after current message text)
@@ -101,13 +102,14 @@ func (s *ChatService) streamWithMultimodalHistory(
 		})
 	}
 	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, textOnlyMessages)
+	rawLLMInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, textOnlyMessages)
 
 	streamCh, err := s.provider.StreamChatMultimodal(ctx, assembled.SystemPrompt, multimodalHistory, assembled.Generation)
 	if err != nil {
 		return nil, fmt.Errorf("llm multimodal stream: %w", err)
 	}
 
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, currentImageRefs, multimodalHistory), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, rawLLMInputHuman, currentImageRefs, multimodalHistory), nil
 }
 
 func buildTextMultimodalHistory(messages []domain.Message) []domain.MultimodalMessage {
