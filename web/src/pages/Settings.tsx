@@ -13,6 +13,7 @@ import {
   removeOAuthPoolAccount,
   listModels,
   listPersonas,
+  listScheduledTasks,
 } from "../api";
 import ProviderSection, { type ProviderTab } from "./settings/ProviderSection";
 import DiscordSection from "./settings/DiscordSection";
@@ -22,6 +23,7 @@ import RuntimeMetricsCard from "./settings/RuntimeMetricsCard";
 import ToolsSection from "./settings/ToolsSection";
 import TimeLocationSection from "./settings/TimeLocationSection";
 import MemorySection from "./settings/MemorySection";
+import ScheduledTasksSection from "./settings/ScheduledTasksSection";
 import type {
   SettingsData,
   ProviderStatus,
@@ -30,6 +32,7 @@ import type {
   ModelEntry,
   PoolEntry,
   PersonaSummary,
+  ScheduledTask,
 } from "../types";
 
 import "./Settings.css"; // Import the new CSS file
@@ -77,6 +80,9 @@ export default function Settings() {
   const [personas, setPersonas] = useState<PersonaSummary[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null);
+  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
+  const [scheduledTasksLoading, setScheduledTasksLoading] = useState(false);
+  const [scheduledTasksError, setScheduledTasksError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{
@@ -144,6 +150,22 @@ export default function Settings() {
     }
   }, []);
 
+  const refreshScheduledTasks = useCallback(async () => {
+    setScheduledTasksLoading(true);
+    try {
+      const items = await listScheduledTasks({ includeInactive: true });
+      setScheduledTasks(items);
+      setScheduledTasksError(null);
+    } catch (e) {
+      setScheduledTasks([]);
+      setScheduledTasksError(
+        e instanceof Error ? e.message : "Failed to load scheduled tasks",
+      );
+    } finally {
+      setScheduledTasksLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     Promise.all([
       getSettings(),
@@ -178,6 +200,10 @@ export default function Settings() {
     }, 10_000);
     return () => window.clearInterval(id);
   }, [refreshRuntimeMetrics]);
+
+  useEffect(() => {
+    void refreshScheduledTasks();
+  }, [refreshScheduledTasks]);
 
   const handleSave = async (overrideProviderType?: string) => {
     setSaving(true);
@@ -399,6 +425,15 @@ export default function Settings() {
       )}
 
       <RuntimeMetricsCard runtimeMetrics={runtimeMetrics} />
+
+      <ScheduledTasksSection
+        tasks={scheduledTasks}
+        loading={scheduledTasksLoading}
+        error={scheduledTasksError}
+        onRefresh={() => {
+          void refreshScheduledTasks();
+        }}
+      />
 
       <ProviderSection
         form={form}

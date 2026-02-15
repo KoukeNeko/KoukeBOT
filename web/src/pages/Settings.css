@@ -319,6 +319,115 @@
   margin-top: 1.5rem;
 }
 
+.scheduled-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.scheduled-header-row .settings-section-title {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.btn-outline {
+  border: 1px solid rgba(160, 168, 255, 0.45);
+  color: #d9ddff;
+  background: rgba(160, 168, 255, 0.08);
+  border-radius: 8px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.82rem;
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: rgba(160, 168, 255, 0.16);
+}
+
+.btn-outline:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.scheduled-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.scheduled-card {
+  background: #0f1324;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.85rem;
+}
+
+.scheduled-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.scheduled-status {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.scheduled-status-active {
+  color: #8de7a1;
+  background: rgba(77, 191, 110, 0.15);
+  border-color: rgba(77, 191, 110, 0.4);
+}
+
+.scheduled-status-completed {
+  color: #9eb7ff;
+  background: rgba(109, 141, 255, 0.15);
+  border-color: rgba(109, 141, 255, 0.4);
+}
+
+.scheduled-status-canceled {
+  color: #d8dcf7;
+  background: rgba(121, 129, 173, 0.18);
+  border-color: rgba(121, 129, 173, 0.4);
+}
+
+.scheduled-status-failed {
+  color: #ffb0b0;
+  background: rgba(225, 86, 86, 0.16);
+  border-color: rgba(225, 86, 86, 0.42);
+}
+
+.scheduled-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 1rem;
+  font-size: 0.82rem;
+  color: #c7cce8;
+}
+
+.scheduled-reminder {
+  margin: 0.65rem 0 0;
+  font-size: 0.85rem;
+  color: #e4e8ff;
+  line-height: 1.45;
+}
+
+@media (max-width: 768px) {
+  .scheduled-header-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .scheduled-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .pool-add-account-button {
   display: flex;
   align-items: center;

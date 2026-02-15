@@ -61,6 +61,9 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/conversations/by-id/{conversationID}", r.handlers.GetConversationByID)
 	r.mux.HandleFunc("DELETE /api/conversations/by-id/{conversationID}", r.handlers.DeleteConversationByID)
 
+	// Schedules
+	r.mux.HandleFunc("GET /api/schedules", r.handlers.ListScheduledTasks)
+
 	// Settings
 	r.mux.HandleFunc("GET /api/settings", r.handlers.GetSettings)
 	r.mux.HandleFunc("PUT /api/settings", r.handlers.UpdateSettings)

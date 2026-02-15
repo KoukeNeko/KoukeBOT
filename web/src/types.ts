@@ -116,6 +116,24 @@ export interface RuntimeMetrics {
   pool_accounts_exhausted_current: number
 }
 
+export interface ScheduledTask {
+  id: string
+  type: 'reminder' | 'activity_monitor'
+  status: 'active' | 'completed' | 'canceled' | 'failed'
+  persona_id: string
+  channel_id: string
+  creator_user_id: string
+  target_user_id: string
+  reminder_text?: string
+  start_at: string
+  end_at?: string
+  run_at?: string
+  next_run_at?: string
+  last_checked_at?: string
+  created_at: string
+  updated_at: string
+}
+
 export interface OAuthDetectResult {
   found: boolean
   client_id?: string

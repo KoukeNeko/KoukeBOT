@@ -1,4 +1,4 @@
-import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, RuntimeMetrics, OAuthDetectResult, OAuthStartResult, OAuthCompleteResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation, PoolEntry } from './types'
+import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, RuntimeMetrics, OAuthDetectResult, OAuthStartResult, OAuthCompleteResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation, PoolEntry, ScheduledTask } from './types'
 
 const BASE = '/api'
 
@@ -171,4 +171,20 @@ export function removeOAuthPoolAccount(email: string): Promise<{ status: string;
   return fetchJSON(`${BASE}/oauth/pool/${encodeURIComponent(email)}`, {
     method: 'DELETE',
   })
+}
+
+export function listScheduledTasks(options?: {
+  channelId?: string
+  creatorUserId?: string
+  includeInactive?: boolean
+}): Promise<ScheduledTask[]> {
+  const params = new URLSearchParams()
+  if (options?.channelId) params.set('channel_id', options.channelId)
+  if (options?.creatorUserId) params.set('creator_user_id', options.creatorUserId)
+  if (typeof options?.includeInactive === 'boolean') {
+    params.set('include_inactive', String(options.includeInactive))
+  }
+  const query = params.toString()
+  const url = query ? `${BASE}/schedules?${query}` : `${BASE}/schedules`
+  return fetchJSON(url)
 }
