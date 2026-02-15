@@ -363,56 +363,18 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			}
 		}
 
-		provider, email, ok := pp.SelectNextProvider()
-		if !ok {
-			now := time.Now()
-			pp.mu.RLock()
-			waitDuration, canWait := pp.shortTransientWaitLocked(now)
-			earliest := pp.findEarliestResetLockedAt(now)
-			totalEntries := len(pp.entries)
-			pp.mu.RUnlock()
-
-			if canWait && !waitRetryUsed {
-				waitRetryUsed = true
-				atomic.AddUint64(&pp.metricTransientWaitRetry, 1)
-				logPool.Logf("metric pool.transient_wait_retry=1")
-				logPool.Warnf("all %d account(s) cooling down transiently — waiting %s before one retry", totalEntries, formatDuration(waitDuration))
-
-				timer := time.NewTimer(waitDuration)
-				if ctx != nil {
-					select {
-					case <-timer.C:
-					case <-ctx.Done():
-						if !timer.Stop() {
-							<-timer.C
-						}
-						return zero, ctx.Err()
-					}
-				} else {
-					<-timer.C
-				}
-				tried--
-				continue
-			}
-
-			if waitRetryUsed {
-				atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
-				logPool.Logf("metric pool.transient_wait_retry_failed=1")
-			}
-			if earliest != "" {
-				atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
-				logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
-				return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
-			}
-			atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
-			return zero, fmt.Errorf("all %d OAuth account(s) exhausted", totalEntries)
+		selection := pp.selectOrWaitProvider(ctx, waitRetryUsed)
+		waitRetryUsed = selection.waitRetryUsed
+		if selection.err != nil {
+			return zero, selection.err
+		}
+		if selection.retry {
+			tried--
+			continue
 		}
 
-		result, err := fn(provider)
-		pp.recordAttempt(email, time.Now(), err == nil)
-
+		result, err, errType := executeWithRetry(pp, selection.provider, selection.email, fn)
 		if err == nil {
-			pp.markSuccess(email, time.Now())
 			if waitRetryUsed {
 				atomic.AddUint64(&pp.metricTransientWaitRetrySucceeded, 1)
 				logPool.Logf("metric pool.transient_wait_retry_succeeded=1")
@@ -420,8 +382,6 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			return result, nil
 		}
 		if isContextTerminated(err) {
-			// Request-level timeout/cancel is not account-specific.
-			// Do not mark provider exhausted or fail over to another account.
 			if waitRetryUsed {
 				atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
 				logPool.Logf("metric pool.transient_wait_retry_failed=1")
@@ -429,48 +389,17 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			return result, err
 		}
 
-		errType := classifyError(err)
 		switch errType {
 		case errorQuota:
-			resetDuration := parseResetDelay(err.Error())
-
-			// Short-delay quota errors: retry same account with exponential backoff + jitter.
-			if resetDuration <= 30*time.Second {
-				retryCount := pp.getAutoRetryCount()
-				for retry := 0; retry < retryCount; retry++ {
-					wait := exponentialBackoff(resetDuration, retry)
-					logPool.Logf("account %s: short delay (%s), retry %d/%d...", email, formatDuration(wait), retry+1, retryCount)
-					time.Sleep(wait)
-
-					result, err = fn(provider)
-					pp.recordAttempt(email, time.Now(), err == nil)
-					if err == nil {
-						pp.markSuccess(email, time.Now())
-						return result, nil
-					}
-					if classifyError(err) != errorQuota {
-						break
-					}
-					resetDuration = parseResetDelay(err.Error())
-					if resetDuration > 30*time.Second {
-						break
-					}
-				}
-			}
-
-			pp.markExhausted(email, resetDuration, err)
-			logPool.Logf("account %s exhausted (reset in %s) — trying next...", email, formatDuration(resetDuration))
-			logPool.Logf("quota error detail: %s", truncateError(err, 300))
+			pp.handleQuotaError(selection.email, err)
 			continue
 
 		case errorTransient:
-			cooldown := transientCooldown(2*time.Second, pp.failureCount(email))
-			pp.MarkTransientFailure(email, err, cooldown)
-			logPool.Warnf("transient error with %s (cooldown %s): %s", email, formatDuration(cooldown), truncateError(err, 220))
+			pp.handleTransientError(selection.email, err)
 			continue
 
 		case errorValidation:
-			logPool.Warnf("validation error with %s: %v", email, err)
+			logPool.Warnf("validation error with %s: %v", selection.email, err)
 			if waitRetryUsed {
 				atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
 				logPool.Logf("metric pool.transient_wait_retry_failed=1")
@@ -486,22 +415,7 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		}
 	}
 
-	pp.mu.RLock()
-	earliest := pp.findEarliestResetLocked()
-	totalEntries := len(pp.entries)
-	pp.mu.RUnlock()
-
-	if waitRetryUsed {
-		atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
-		logPool.Logf("metric pool.transient_wait_retry_failed=1")
-	}
-	if earliest != "" {
-		atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
-		logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
-		return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
-	}
-	atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
-	return zero, fmt.Errorf("all %d OAuth account(s) exhausted", totalEntries)
+	return zero, pp.exhaustedError(waitRetryUsed)
 }
 
 // selectNextProviderLocked returns the best available provider index.

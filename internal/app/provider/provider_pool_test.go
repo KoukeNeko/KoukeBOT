@@ -345,3 +345,65 @@ func TestProviderPoolTransientWaitDisabledReturnsExhausted(t *testing.T) {
 		t.Fatalf("expected all accounts exhausted metric to increment")
 	}
 }
+
+func TestProviderPoolQuotaErrorFailsOverToNextAccount(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	first := &errProvider{err: errors.New(`429 RESOURCE_EXHAUSTED {"quotaResetDelay":"10s"}`)}
+	second := &stubProvider{id: "ok"}
+	pool.AddOrReplace(first, "first@example.com")
+	pool.AddOrReplace(second, "second@example.com")
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected failover success, got error: %v", err)
+	}
+	if resp == nil || resp.Content != "ok" {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+
+	entries := pool.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("entries length = %d, want 2", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.Email == "first@example.com" && entry.Status != "exhausted" {
+			t.Fatalf("first account status = %s, want exhausted", entry.Status)
+		}
+	}
+}
+
+func TestProviderPoolTransientErrorFailsOverToNextAccount(t *testing.T) {
+	pool := NewProviderPool()
+	first := &errProvider{err: errors.New("HTTP 503 Service Unavailable")}
+	second := &stubProvider{id: "ok"}
+	pool.AddOrReplace(first, "first@example.com")
+	pool.AddOrReplace(second, "second@example.com")
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected failover success, got error: %v", err)
+	}
+	if resp == nil || resp.Content != "ok" {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+
+	entries := pool.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("entries length = %d, want 2", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.Email != "first@example.com" {
+			continue
+		}
+		if entry.ConsecutiveFailures == 0 {
+			t.Fatalf("expected first account consecutive failures > 0")
+		}
+	}
+}

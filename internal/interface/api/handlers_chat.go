@@ -11,6 +11,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	interfacecommon "github.com/KoukeNeko/KoukeBOT/internal/interface/shared"
 )
 
 // --- Chat endpoint ---
@@ -266,40 +267,23 @@ func (h *Handlers) resolveConversationRouting(ctx context.Context, conversationI
 
 // formatUserFriendlyError converts technical errors to user-friendly messages.
 func formatUserFriendlyError(err error) string {
-	errMsg := err.Error()
-
-	// Check for quota exhausted (429) error
-	if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "QUOTA_EXHAUSTED") || strings.Contains(errMsg, "exhausted your capacity") {
-		// Extract reset time if available
-		if strings.Contains(errMsg, "quota will reset after") {
-			// Try to extract the time (e.g., "16m9s")
-			start := strings.Index(errMsg, "reset after ") + len("reset after ")
-			end := strings.Index(errMsg[start:], ".")
-			if end > 0 {
-				resetTime := errMsg[start : start+end]
-				return fmt.Sprintf("⏳ API 配額已用完，請等待 %s 後重試\n\n💡 提示：可以切換到 API Key 模式或等待配額重置", resetTime)
-			}
+	parsed := interfacecommon.ParseLLMError(err)
+	switch parsed.Kind {
+	case interfacecommon.ErrorKindQuota:
+		if parsed.ResetAfter != "" {
+			return fmt.Sprintf("⏳ API 配額已用完，請等待 %s 後重試\n\n💡 提示：可以切換到 API Key 模式或等待配額重置", parsed.ResetAfter)
 		}
 		return "⏳ API 配額已用完，請稍後再試\n\n💡 提示：請至 Settings 切換到 API Key 模式，或等待配額重置"
-	}
-
-	// Check for authentication errors
-	if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "Unauthorized") || strings.Contains(errMsg, "UNAUTHENTICATED") {
+	case interfacecommon.ErrorKindAuth:
 		return "🔐 認證失敗\n\n💡 提示：請至 Settings 重新設定 API Key 或 OAuth"
-	}
-
-	// Check for network errors
-	if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "network") {
+	case interfacecommon.ErrorKindNetwork:
 		return "🌐 網路連線失敗\n\n💡 提示：請檢查網路連線或稍後再試"
-	}
-
-	// Check for rate limit errors
-	if strings.Contains(errMsg, "rate limit") || strings.Contains(errMsg, "too many requests") {
+	case interfacecommon.ErrorKindRateLimit:
 		return "⚠️ 請求過於頻繁\n\n💡 提示：請稍等片刻後再試"
 	}
 
 	// Generic error fallback
-	return fmt.Sprintf("❌ 發生錯誤：%s\n\n💡 提示：請查看後端 log 或至 Settings 檢查設定", errMsg)
+	return fmt.Sprintf("❌ 發生錯誤：%s\n\n💡 提示：請查看後端 log 或至 Settings 檢查設定", parsed.RawMessage)
 }
 
 func truncate(s string, maxLen int) string {

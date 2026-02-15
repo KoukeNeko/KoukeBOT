@@ -211,297 +211,59 @@ func (s *ChatService) handleToolCallingStream(
 	go func() {
 		defer close(outputCh)
 
-		toolPolicy := s.toolExecutionPolicySnapshot()
-		var executedToolCalls []domain.ToolCall
-		var allToolResultsText string
-		var totalTokens int
-		toolCallAttempts := make(map[string]int)
-		toolCountsByName := make(map[string]int)
-		emittedToolErrors := make(map[string]struct{})
-		hadToolCallAttempt := false
-		guardSummary := toolGuardSummary{}
-		promptPolicy := s.assembler.PromptGuardPolicy()
-		hideAnalysis := promptPolicy.TripletOutputEnabled && promptPolicy.AnalysisVisibility == AnalysisVisibilityHidden
-
+		state := newToolLoopState(s.toolExecutionPolicySnapshot(), s.assembler.PromptGuardPolicy())
 		currentStream := streamCh
-		var fullResponse string
-		finalTextSent := false
-		baseMessageCount := len(conv.Messages)
+		state.baseMessageCount = len(conv.Messages)
 		conv.AppendUserMessage(contextForLLM)
 		defer func() {
-			if baseMessageCount <= len(conv.Messages) {
-				conv.Messages = conv.Messages[:baseMessageCount]
+			if state.baseMessageCount <= len(conv.Messages) {
+				conv.Messages = conv.Messages[:state.baseMessageCount]
 			}
 		}()
 
-		for round := 0; round <= toolPolicy.MaxToolRounds; round++ {
-			var pendingToolCalls []domain.ToolCall
-			fullResponse = ""
-			var visibleRoundContent strings.Builder
-
-			// Consume stream
-			for chunk := range currentStream {
-				if chunk.TokensUsed > 0 {
-					totalTokens += chunk.TokensUsed
-				}
-				if len(chunk.ToolCalls) > 0 {
-					pendingToolCalls = chunk.ToolCalls
-					outputCh <- chunk
-					continue
-				}
-				if chunk.Error != nil {
-					outputCh <- chunk
-					return
-				}
-				fullResponse += chunk.Content
-				if !hideAnalysis && chunk.Content != "" {
-					visibleRoundContent.WriteString(chunk.Content)
-				}
+		for round := 0; round <= state.toolPolicy.MaxToolRounds; round++ {
+			pendingToolCalls, visibleRoundContent, ok := s.consumeRoundStream(currentStream, outputCh, state)
+			if !ok {
+				return
 			}
 
-			// No tool calls → we have the final response
 			if len(pendingToolCalls) == 0 {
-				if !hideAnalysis && visibleRoundContent.Len() > 0 {
-					outputCh <- llm.StreamChunk{Content: visibleRoundContent.String()}
-					finalTextSent = true
+				if !state.hideAnalysis && visibleRoundContent != "" {
+					outputCh <- llm.StreamChunk{Content: visibleRoundContent}
+					state.finalTextSent = true
 				}
 				break
 			}
 
-			// Log tool call names
+			state.hadToolCallAttempt = true
 			names := make([]string, len(pendingToolCalls))
 			for i, c := range pendingToolCalls {
 				names[i] = c.Name
 			}
-			logChat.Logf("tool calls (round %d/%d): %s", round+1, toolPolicy.MaxToolRounds, strings.Join(names, ", "))
-			hadToolCallAttempt = true
+			logChat.Logf("tool calls (round %d/%d): %s", round+1, state.toolPolicy.MaxToolRounds, strings.Join(names, ", "))
 
-			// Max rounds reached → force finalize on next step.
-			if round == toolPolicy.MaxToolRounds {
-				guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached",
-					fmt.Sprintf("max_tool_rounds=%d", toolPolicy.MaxToolRounds))
+			if round == state.toolPolicy.MaxToolRounds {
+				state.guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached",
+					fmt.Sprintf("max_tool_rounds=%d", state.toolPolicy.MaxToolRounds))
 				s.incrementToolGuardMaxRounds()
-				logChat.Warnf("max tool rounds (%d) reached, stopping", toolPolicy.MaxToolRounds)
+				logChat.Warnf("max tool rounds (%d) reached, stopping", state.toolPolicy.MaxToolRounds)
 				break
 			}
 
-			// Send tool execution start status for each tool
-			for _, call := range pendingToolCalls {
-				outputCh <- llm.StreamChunk{
-					ToolStatus: "tool_start",
-					ToolName:   call.Name,
-					ToolInput:  call.Input,
-				}
-			}
-
-			// Execute tools with duplicate-call guard to prevent endless loops.
-			executableCalls := make([]domain.ToolCall, 0, len(pendingToolCalls))
-			toolResults := make([]domain.ToolResult, 0, len(pendingToolCalls))
-			for _, call := range pendingToolCalls {
-				if call.Name == "web_search" && toolCountsByName[call.Name] >= toolPolicy.MaxWebSearchCallsPerTurn {
-					guardSummary.Add(
-						toolGuardKindLimit,
-						call.Name,
-						"tool_call_limit_reached",
-						fmt.Sprintf("max_web_search_calls_per_turn=%d", toolPolicy.MaxWebSearchCallsPerTurn),
-					)
-					s.incrementToolGuardLimitBlocked()
-					toolResults = append(toolResults, buildToolLimitGuardResult(call, toolPolicy.MaxWebSearchCallsPerTurn))
-					logChat.Warnf("tool loop guard blocked limit (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
-					continue
-				}
-
-				signature := toolCallSignature(call)
-				if toolCallAttempts[signature] >= 1 {
-					guardSummary.Add(toolGuardKindDuplicate, call.Name, "duplicate_tool_call_blocked", "")
-					s.incrementToolGuardDuplicateBlocked()
-					toolResults = append(toolResults, buildDuplicateToolGuardResult(call))
-					logChat.Warnf("tool loop guard blocked duplicate call (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
-					continue
-				}
-				toolCallAttempts[signature]++
-				toolCountsByName[call.Name]++
-				executableCalls = append(executableCalls, call)
-			}
-
-			if len(executableCalls) > 0 {
-				executed := s.executeTools(ctx, executableCalls, personaID)
-				toolResults = append(toolResults, executed...)
-				executedToolCalls = append(executedToolCalls, executableCalls...)
-			}
-			toolCallMap := make(map[string]domain.ToolCall, len(pendingToolCalls))
-			for _, call := range pendingToolCalls {
-				toolCallMap[call.ID] = call
-			}
-			for _, result := range toolResults {
-				if !result.IsError {
-					continue
-				}
-				if isToolGuardResultMessage(result.Content) {
-					// Guard-triggered tool errors are internal control signals.
-					// Keep them in backend logs/context, but do not surface to Discord users.
-					continue
-				}
-				call := toolCallMap[result.ToolCallID]
-				if toolPolicy.DiscordShowInternalToolErrors {
-					errSummary := truncateLog(result.Content, 240)
-					dedupeKey := call.Name + "|" + toolCallSignature(call) + "|" + errSummary
-					if _, exists := emittedToolErrors[dedupeKey]; exists {
-						continue
-					}
-					emittedToolErrors[dedupeKey] = struct{}{}
-					outputCh <- llm.StreamChunk{
-						ToolStatus: "tool_error",
-						ToolName:   call.Name,
-						ToolInput:  call.Input,
-						ToolError:  errSummary,
-					}
-				}
-			}
-
-			// Send tool execution done status
-			outputCh <- llm.StreamChunk{ToolStatus: "tool_done"}
-
-			// Build tool results message for LLM
-			toolResultsText := formatToolResults(pendingToolCalls, toolResults)
-			allToolResultsText += toolResultsText
-
-			// Append assistant's tool call request to conversation
-			conv.AppendAssistantMessage("[Tool calls executed]")
-
-			// Append tool results as user message
-			conv.Messages = append(conv.Messages, domain.Message{
-				Role:    domain.RoleUser,
-				Content: toolResultsText,
-			})
-
-			// Also append to multimodal history if in multimodal mode
-			if multimodalHistory != nil {
-				multimodalHistory = append(multimodalHistory,
-					domain.MultimodalMessage{
-						Role:  domain.RoleAssistant,
-						Parts: []domain.MessagePart{{Text: "[Tool calls executed]"}},
-					},
-					domain.MultimodalMessage{
-						Role:  domain.RoleUser,
-						Parts: []domain.MessagePart{{Text: toolResultsText}},
-					},
-				)
-			}
-
-			// Continue conversation with tool results
-			logChat.Logf("continuing with tool results → LLM (round %d)", round+1)
-			assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
-			if err != nil {
-				outputCh <- llm.StreamChunk{Error: fmt.Errorf("assemble context after tools: %w", err), Done: true}
+			emitToolStatuses(outputCh, "tool_start", pendingToolCalls)
+			executableCalls, guardResults := s.filterExecutableToolCalls(pendingToolCalls, personaID, round, state)
+			nextStream, nextMultimodalHistory, ok := s.continueWithToolResults(
+				ctx, conv, persona, personaID, pendingToolCalls, executableCalls, guardResults, multimodalHistory, outputCh, state, round,
+			)
+			if !ok {
 				return
 			}
-			s.logPromptSnapshot("stream-continuation", conv.ChannelID, conv.PersonaID, conv.ID, assembled)
-
-			// Use multimodal continuation when images are present to preserve image context
-			if multimodalHistory != nil {
-				currentStream, err = s.provider.StreamChatMultimodal(ctx, assembled.SystemPrompt, multimodalHistory, assembled.Generation)
-			} else {
-				currentStream, err = s.provider.StreamChat(ctx, llm.ChatRequest{
-					SystemPrompt: assembled.SystemPrompt,
-					Messages:     assembled.Messages,
-					Generation:   assembled.Generation,
-					ToolMode:     llm.ToolModeNormal,
-				})
-			}
-			if err != nil {
-				outputCh <- llm.StreamChunk{Error: fmt.Errorf("llm continuation: %w", err), Done: true}
-				return
-			}
+			currentStream = nextStream
+			multimodalHistory = nextMultimodalHistory
 		}
 
-		if strings.TrimSpace(fullResponse) == "" && hadToolCallAttempt && guardSummary.shouldForceFinalAnswer(toolPolicy) {
-			guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
-			forcedResponse, forcedTokens, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, guardSummary)
-			totalTokens += forcedTokens
-			if err != nil {
-				s.incrementToolForcedFinalFailed()
-				logChat.Warnf("forced final answer failed: %v", err)
-			} else if strings.TrimSpace(forcedResponse) != "" {
-				s.incrementToolForcedFinalSuccess()
-				fullResponse = forcedResponse
-				if !hideAnalysis {
-					outputCh <- llm.StreamChunk{Content: forcedResponse}
-					finalTextSent = true
-				}
-				logChat.Logf("tool loop forced final answer generated after %d tool call(s)", len(executedToolCalls))
-			}
-		}
-
-		if strings.TrimSpace(fullResponse) == "" && hadToolCallAttempt {
-			s.incrementToolLoopFallback()
-			fullResponse = buildToolLoopFallbackResponse(promptPolicy)
-			logChat.Warnf("tool loop fallback response generated after %d tool call(s)", len(executedToolCalls))
-		}
-
-		finalView := s.prepareAssistantOutputForStorage(fullResponse)
-
-		if hideAnalysis && finalView.Display != "" {
-			outputCh <- llm.StreamChunk{Content: finalView.Display}
-			finalTextSent = true
-		}
-		if !hideAnalysis && !finalTextSent && finalView.Display != "" {
-			outputCh <- llm.StreamChunk{Content: finalView.Display}
-			finalTextSent = true
-		}
-
-		// Save conversation and emit final signals
-		if len(executedToolCalls) > 0 {
-			// Tool calls were executed — append annotation and save
-			toolUsageAnnotation := formatToolUsageAnnotation(executedToolCalls)
-			display := finalView.Display
-			if display == "" {
-				display = finalView.Content
-			}
-			finalResponseWithAnnotation := display + "\n\n" + toolUsageAnnotation
-
-			// Stream the annotation as a separate chunk
-			outputCh <- llm.StreamChunk{Content: "\n\n" + toolUsageAnnotation}
-
-			// Store final conversation with raw LLM data
-			rawLLMOutput := fmt.Sprintf("[Tool calls executed]\n%s\n\n[Final response]\n%s",
-				allToolResultsText, fullResponse)
-			if baseMessageCount <= len(conv.Messages) {
-				conv.Messages = conv.Messages[:baseMessageCount]
-			}
-			if len(imageRefs) > 0 {
-				conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
-			} else {
-				conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-			}
-			content := finalView.Content
-			if content == "" {
-				content = strings.TrimSpace(fullResponse)
-			}
-			conv.AppendAssistantMessageWithDisplayAndRaw(content, finalResponseWithAnnotation, rawLLMInput, rawLLMOutput)
-			s.applyTokenAccounting(conv, totalTokens)
-			if err := s.store.Save(ctx, conv); err != nil {
-				logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
-			}
-
-		} else {
-			// No tool calls - store conversation normally with raw LLM data
-			if fullResponse != "" || messageToStore != "" {
-				if baseMessageCount <= len(conv.Messages) {
-					conv.Messages = conv.Messages[:baseMessageCount]
-				}
-				if len(imageRefs) > 0 {
-					conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
-				} else {
-					conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
-				}
-				conv.AppendAssistantMessageWithDisplayAndRaw(finalView.Content, finalView.Display, rawLLMInput, finalView.RawOutput)
-				s.applyTokenAccounting(conv, totalTokens)
-				if err := s.store.Save(ctx, conv); err != nil {
-					logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
-				}
-			}
-		}
+		finalView := s.finalizeToolLoopResponse(ctx, conv, persona, outputCh, state)
+		s.persistToolLoopConversation(ctx, conv, messageToStore, contextForLLM, rawLLMInput, imageRefs, finalView, outputCh, state)
 
 		// Send final Done signal to indicate stream completion
 		outputCh <- llm.StreamChunk{Done: true}

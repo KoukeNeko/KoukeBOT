@@ -54,50 +54,96 @@ func run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	port := resolvePort()
+	settingsStore := config.NewSettingsStore(settingsPath)
+	settings := resolveSettings(settingsStore)
+
+	personaService, err := loadPersonaService(personasDir)
+	if err != nil {
+		return fmt.Errorf("init persona service: %w", err)
+	}
+	runtime, err := buildRuntimeServices(ctx, settings, port, personaService)
+	if err != nil {
+		return err
+	}
+
+	discordBot := maybeStartDiscordBot(settings, personaService, runtime)
+	oauthFlow := llm.NewGeminiOAuthFlow(
+		oauthTokenPath,
+		oauthPoolPath,
+		"http://127.0.0.1:"+port+"/api/oauth/gemini/callback",
+	)
+
+	serverErrCh := startAPIServer(ctx, port, personaService, runtime.chatService, settingsStore, runtime.providerManager, discordBot, oauthFlow, runtime.convStore, runtime.imageStore)
+
+	logSystem.Logf("ready — API on :%s", port)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case <-sigCh:
+		logSystem.Log("shutting down...")
+		cancel()
+		return nil
+	case err := <-serverErrCh:
+		cancel()
+		return err
+	}
+}
+
+type runtimeServices struct {
+	providerManager *app.ProviderManager
+	chatService     *app.ChatService
+	convStore       store.ConversationRepository
+	imageStore      *store.ImageStore
+	discordRuntime  *discordbot.Runtime
+}
+
+func resolvePort() string {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = defaultPort
 	}
+	return port
+}
 
-	// Load persisted settings, then overlay with env vars
-	settingsStore := config.NewSettingsStore(settingsPath)
-	settings := resolveSettings(settingsStore)
-
-	// Load personas
-	personaService, err := app.NewPersonaService(personasDir)
+func loadPersonaService(baseDir string) (*app.PersonaService, error) {
+	personaService, err := app.NewPersonaService(baseDir)
 	if err != nil {
-		return fmt.Errorf("init persona service: %w", err)
+		return nil, err
 	}
 	logPersona.Logf("loaded %d persona(s)", len(personaService.GetAll()))
 	for id, p := range personaService.GetAll() {
 		logPersona.Logf("  %s [%s]", p.Config.Meta.Name, id)
 	}
+	return personaService, nil
+}
 
-	// Init LLM provider (optional — can be configured later via Web UI)
+func buildRuntimeServices(
+	ctx context.Context,
+	settings config.Settings,
+	port string,
+	personaService *app.PersonaService,
+) (*runtimeServices, error) {
 	providerManager := app.NewProviderManager(nil)
 	model := settings.GeminiModel
 	if model == "" {
 		model = defaultModel
 	}
-
 	initProvider(ctx, settings, providerManager, model, port)
 
-	// Init core services
 	convStore, err := store.NewFileStore("data/conversations")
 	if err != nil {
-		return fmt.Errorf("init conversation store: %w", err)
+		return nil, fmt.Errorf("init conversation store: %w", err)
 	}
 	logStore.Log("data/conversations")
 
 	imageStore, err := store.NewImageStore("data/images")
 	if err != nil {
-		return fmt.Errorf("init image store: %w", err)
+		return nil, fmt.Errorf("init image store: %w", err)
 	}
 	logStore.Log("data/images")
 
-	// Initialize tools (OpenClaw-style web search).
-	// File tool declarations use a startup fallback persona, while runtime execution
-	// is persona-snapshotted per request inside ChatService.
 	discordRuntime := discordbot.NewRuntime(discordbot.RuntimeOptions{
 		MemberIntentEnabled:   settings.DiscordMemberIntentEnabled,
 		PresenceIntentEnabled: settings.DiscordPresenceIntentEnabled,
@@ -110,7 +156,6 @@ func run() error {
 		providerManager.RegisterTools(tools)
 	}
 
-	// Init context manager (OpenClaw-style pre-compaction memory flush)
 	var contextManager *app.ContextManager
 	if settings.ContextFlushEnabled {
 		contextManager = app.NewContextManager(settings.ContextFlushThreshold, settings.ContextWindowSize)
@@ -134,53 +179,44 @@ func run() error {
 		DiscordShowInternalToolErrors:  settings.DiscordShowInternalToolErrors,
 	})
 
-	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
-	var discordBot *discordbot.Bot
-	if settings.DiscordToken != "" {
-		bot, err := startDiscordBot(
-			settings.DiscordToken,
-			settings.DiscordUseReply,
-			settings.DiscordPersonaID,
-			settings.DiscordMemberIntentEnabled,
-			settings.DiscordPresenceIntentEnabled,
-			personaService,
-			chatService,
-			convStore,
-			imageStore,
-			providerManager,
-			discordRuntime,
-		)
-		if err != nil {
-			logDiscord.Warnf("failed to start: %v", err)
-			logDiscord.Log("continuing without Discord — HTTP API still available")
-		} else {
-			discordBot = bot
-			// Enable Discord logging if channel ID is configured
-			if settings.LogChannelID != "" {
-				logger.SetDiscordOutput(bot, settings.LogChannelID)
-				logSystem.Logf("stdout → Discord channel %s", settings.LogChannelID)
-			}
-		}
-	} else {
+	return &runtimeServices{
+		providerManager: providerManager,
+		chatService:     chatService,
+		convStore:       convStore,
+		imageStore:      imageStore,
+		discordRuntime:  discordRuntime,
+	}, nil
+}
+
+func maybeStartDiscordBot(settings config.Settings, personaService *app.PersonaService, runtime *runtimeServices) *discordbot.Bot {
+	if settings.DiscordToken == "" {
 		logDiscord.Warnf("DISCORD_TOKEN not set — skipped")
+		return nil
 	}
 
-	// Init OAuth flow for Gemini CLI auth
-	oauthRedirectURL := "http://127.0.0.1:" + port + "/api/oauth/gemini/callback"
-	oauthFlow := llm.NewGeminiOAuthFlow(oauthTokenPath, oauthPoolPath, oauthRedirectURL)
-
-	// Start HTTP API server
-	startAPIServer(ctx, port, personaService, chatService, settingsStore, providerManager, discordBot, oauthFlow, convStore, imageStore)
-
-	logSystem.Logf("ready — API on :%s", port)
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	logSystem.Log("shutting down...")
-	cancel()
-	return nil
+	bot, err := startDiscordBot(
+		settings.DiscordToken,
+		settings.DiscordUseReply,
+		settings.DiscordPersonaID,
+		settings.DiscordMemberIntentEnabled,
+		settings.DiscordPresenceIntentEnabled,
+		personaService,
+		runtime.chatService,
+		runtime.convStore,
+		runtime.imageStore,
+		runtime.providerManager,
+		runtime.discordRuntime,
+	)
+	if err != nil {
+		logDiscord.Warnf("failed to start: %v", err)
+		logDiscord.Log("continuing without Discord — HTTP API still available")
+		return nil
+	}
+	if settings.LogChannelID != "" {
+		logger.SetDiscordOutput(bot, settings.LogChannelID)
+		logSystem.Logf("stdout → Discord channel %s", settings.LogChannelID)
+	}
+	return bot
 }
 
 // resolveSettings loads persisted settings and overlays with environment variables.
@@ -376,7 +412,7 @@ func startAPIServer(
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
-) {
+) <-chan error {
 	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, discordBot, oauthFlow, convStore, imageStore, ctx)
 	handler := router.Handler()
 
@@ -387,13 +423,16 @@ func startAPIServer(
 		logHTTP.Logf("frontend: %s", webDir)
 	}
 
+	errCh := make(chan error, 1)
 	go func() {
 		logHTTP.Logf("listening on :%s", port)
 		if err := http.ListenAndServe(":"+port, handler); err != nil && err != http.ErrServerClosed {
 			logHTTP.Errorf("server error: %v", err)
-			os.Exit(1)
+			errCh <- err
 		}
+		close(errCh)
 	}()
+	return errCh
 }
 
 // withSPA wraps an API handler with SPA static file serving.

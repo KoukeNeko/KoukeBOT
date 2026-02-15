@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -156,191 +155,32 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
-	var req SettingsUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeSettingsUpdateRequest(r)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
-	// Load existing settings to preserve unchanged masked fields.
 	existing, err := h.settingsStore.Load()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "load settings: "+err.Error())
 		return
 	}
 
-	if req.GeminiAPIKey != "" && !isMasked(req.GeminiAPIKey) {
-		existing.GeminiAPIKey = req.GeminiAPIKey
-	}
-	if req.GeminiModel != "" {
-		existing.GeminiModel = req.GeminiModel
-	}
-	if req.DiscordToken != "" && !isMasked(req.DiscordToken) {
-		existing.DiscordToken = req.DiscordToken
-	}
-	if req.ProviderType != "" {
-		existing.ProviderType = req.ProviderType
-	}
-	if req.BraveAPIKey != "" && !isMasked(req.BraveAPIKey) {
-		existing.BraveAPIKey = req.BraveAPIKey
-	}
-	if req.WebSearchEnabled != nil {
-		existing.WebSearchEnabled = *req.WebSearchEnabled
-	}
-	if req.DiscordUseReply != nil {
-		existing.DiscordUseReply = *req.DiscordUseReply
-	}
-	if req.PerplexityAPIKey != "" && !isMasked(req.PerplexityAPIKey) {
-		existing.PerplexityAPIKey = req.PerplexityAPIKey
-	}
-	// SearchProvider 總是更新（包括空字串和預設值）
-	existing.SearchProvider = req.SearchProvider
-	if req.WebFetchEnabled != nil {
-		existing.WebFetchEnabled = *req.WebFetchEnabled
-	}
-	// Time/Location settings
-	existing.Timezone = req.Timezone
-	existing.TimeFormat = req.TimeFormat
-	existing.Location = req.Location
-	// Context flush settings
-	if req.ContextFlushEnabled != nil {
-		existing.ContextFlushEnabled = *req.ContextFlushEnabled
-	}
-	if req.ContextFlushThreshold != nil {
-		existing.ContextFlushThreshold = *req.ContextFlushThreshold
-	}
-	if req.ContextWindowSize != nil {
-		existing.ContextWindowSize = *req.ContextWindowSize
-	}
-	if req.PersonaLockEveryTurns != nil {
-		existing.PersonaLockEveryTurns = *req.PersonaLockEveryTurns
-	}
-	if req.TripletOutputEnabled != nil {
-		existing.TripletOutputEnabled = *req.TripletOutputEnabled
-	}
-	if req.NegativeConstraintEnabled != nil {
-		existing.NegativeConstraintEnabled = *req.NegativeConstraintEnabled
-	}
-	if req.AnalysisVisibility != "" {
-		existing.AnalysisVisibility = req.AnalysisVisibility
-	}
-	if req.NegativeConstraintDefault != "" {
-		existing.NegativeConstraintDefault = req.NegativeConstraintDefault
-	}
-	if req.DiscordObserveEnabled != nil {
-		existing.DiscordObserveEnabled = *req.DiscordObserveEnabled
-	}
-	if req.DiscordMemberIntentEnabled != nil {
-		existing.DiscordMemberIntentEnabled = *req.DiscordMemberIntentEnabled
-	}
-	if req.DiscordPresenceIntentEnabled != nil {
-		existing.DiscordPresenceIntentEnabled = *req.DiscordPresenceIntentEnabled
-	}
-	if req.DiscordObserveMaxResults != nil {
-		existing.DiscordObserveMaxResults = *req.DiscordObserveMaxResults
-	}
-	if req.DiscordObserveMessageScope != "" {
-		existing.DiscordObserveMessageScope = req.DiscordObserveMessageScope
-	}
-	if req.MaxToolRounds != nil {
-		existing.MaxToolRounds = *req.MaxToolRounds
-	}
-	if req.MaxWebSearchCallsPerTurn != nil {
-		existing.MaxWebSearchCallsPerTurn = *req.MaxWebSearchCallsPerTurn
-	}
-	if req.ForceFinalAnswerAfterToolLimit != nil {
-		existing.ForceFinalAnswerAfterToolLimit = *req.ForceFinalAnswerAfterToolLimit
-	}
-	if req.TransientRecoveryWaitEnabled != nil {
-		existing.TransientRecoveryWaitEnabled = *req.TransientRecoveryWaitEnabled
-	}
-	if req.TransientRecoveryWaitMaxSeconds != nil {
-		existing.TransientRecoveryWaitMaxSeconds = *req.TransientRecoveryWaitMaxSeconds
-	}
-	if req.DiscordShowInternalToolErrors != nil {
-		existing.DiscordShowInternalToolErrors = *req.DiscordShowInternalToolErrors
-	}
-	// Memory extraction settings
-	if req.MemoryExtractionEnabled != nil {
-		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
-	}
-	existing.MemoryExtractionModel = req.MemoryExtractionModel
-	// Discord logging settings
-	existing.LogChannelID = req.LogChannelID
-	if req.DiscordPersonaID != "" {
-		if _, ok := h.personaService.Get(req.DiscordPersonaID); !ok {
-			writeError(w, http.StatusBadRequest, "invalid discord persona id: "+req.DiscordPersonaID)
-			return
-		}
-		existing.DiscordPersonaID = req.DiscordPersonaID
-	}
-	if err := validatePromptGuardSettings(
-		existing.PersonaLockEveryTurns,
-		existing.AnalysisVisibility,
-		existing.NegativeConstraintEnabled,
-		existing.NegativeConstraintDefault,
-	); err != nil {
+	if err := h.applySettingsPatch(&existing, req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := validateDiscordObserveSettings(existing.DiscordObserveMaxResults, existing.DiscordObserveMessageScope); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validateToolLoopSettings(
-		existing.MaxToolRounds,
-		existing.MaxWebSearchCallsPerTurn,
-		existing.TransientRecoveryWaitMaxSeconds,
-	); err != nil {
+	if err := h.validateUpdatedSettings(existing); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
-		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)
-
-	if err := h.settingsStore.Save(existing); err != nil {
-		writeError(w, http.StatusInternalServerError, "save settings: "+err.Error())
+	response, err := h.saveAndHotSwapSettings(existing)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Hot-swap active Discord persona before provider activation,
-	// so persona switch succeeds even if provider activation fails.
-	if h.discordPersona != nil && existing.DiscordPersonaID != "" {
-		h.discordPersona.SetPersonaID(existing.DiscordPersonaID)
-		logAPI.Logf("settings: discord persona switched to %s", existing.DiscordPersonaID)
-	}
-
-	h.chatService.UpdatePromptGuardPolicy(app.PromptGuardPolicy{
-		PersonaLockEveryTurns:     existing.PersonaLockEveryTurns,
-		TripletOutputEnabled:      existing.TripletOutputEnabled,
-		AnalysisVisibility:        existing.AnalysisVisibility,
-		NegativeConstraintEnabled: existing.NegativeConstraintEnabled,
-		NegativeConstraintDefault: existing.NegativeConstraintDefault,
-	})
-	h.chatService.UpdateToolExecutionPolicy(app.ToolExecutionPolicy{
-		MaxToolRounds:                  existing.MaxToolRounds,
-		MaxWebSearchCallsPerTurn:       existing.MaxWebSearchCallsPerTurn,
-		ForceFinalAnswerAfterToolLimit: existing.ForceFinalAnswerAfterToolLimit,
-		DiscordShowInternalToolErrors:  existing.DiscordShowInternalToolErrors,
-	})
-	if pool := h.providerManager.GetPool(); pool != nil {
-		pool.SetTransientRecoveryWait(
-			existing.TransientRecoveryWaitEnabled,
-			time.Duration(existing.TransientRecoveryWaitMaxSeconds)*time.Second,
-		)
-	}
-
-	// Hot-swap the LLM provider based on selected provider_type.
-	// Provider activation failure should not block a successful save response,
-	// because settings and persona switch already succeeded above.
-	response := map[string]string{"status": "saved"}
-	if err := h.activateProvider(existing); err != nil {
-		logAPI.Warnf("settings: provider activation failed (settings saved): %v", err)
-		response["warning"] = err.Error()
-	}
-
-	logAPI.Logf("settings: saved (warning=%v)", response["warning"] != "")
 	writeJSON(w, http.StatusOK, response)
 }
 

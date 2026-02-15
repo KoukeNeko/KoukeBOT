@@ -16,6 +16,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	interfacecommon "github.com/KoukeNeko/KoukeBOT/internal/interface/shared"
 )
 
 var logHandler = logger.New("discord", logger.Magenta)
@@ -84,114 +85,28 @@ func (h *Handler) keepTyping(ctx context.Context, channelID string) func() {
 }
 
 func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	// Ignore own messages
-	if m.Author.ID == s.State.User.ID {
+	content, ok := h.filterIncomingMessage(s, m)
+	if !ok {
 		return
 	}
 
-	// Ignore bot messages
-	if m.Author.Bot {
-		return
-	}
-
-	// Only respond when mentioned or in DMs
-	if !isMentioned(s, m) && !isDM(m) {
-		return
-	}
-
-	content := cleanMention(s, m.Content)
-
-	// If no text content, use attachment placeholder (openclaw style)
-	if strings.TrimSpace(content) == "" && len(m.Attachments) > 0 {
-		content = buildAttachmentPlaceholder(m.Attachments)
-	}
-
-	// Skip if still empty after placeholder
-	if strings.TrimSpace(content) == "" {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
+	ctx, cancel := h.newDiscordRequestContext(m)
 	defer cancel()
-	ctx = llm.WithRequestContext(ctx, llm.RequestContext{
-		Source:    llm.RequestSourceDiscord,
-		GuildID:   m.GuildID,
-		ChannelID: m.ChannelID,
-		UserID:    m.Author.ID,
-	})
+
 	personaID := h.bot.PersonaID()
-	var historyCutoff *time.Time
-	if h.convStore != nil {
-		conv, err := h.convStore.Get(ctx, m.ChannelID, personaID)
-		if err != nil {
-			logHandler.Errorf("conversation state load failed [%s]: %v", m.ChannelID, err)
-			_ = h.bot.SendMessage(m.ChannelID, "❌ 讀取對話狀態失敗，請稍後再試。")
-			return
-		}
-		if conv != nil && conv.HistoryCutoffAt != nil {
-			cutoff := conv.HistoryCutoffAt.UTC()
-			historyCutoff = &cutoff
-		}
+	historyCutoff, err := h.loadHistoryCutoff(ctx, m.ChannelID, personaID)
+	if err != nil {
+		logHandler.Errorf("conversation state load failed [%s]: %v", m.ChannelID, err)
+		_ = h.bot.SendMessage(m.ChannelID, "❌ 讀取對話狀態失敗，請稍後再試。")
+		return
 	}
 
-	// Start typing indicator and keep it alive until response is sent
 	stopTyping := h.keepTyping(ctx, m.ChannelID)
 	defer stopTyping()
 
-	// Check for image attachments
-	var images []domain.ImageInput
-	for _, attachment := range m.Attachments {
-		if isImageAttachment(attachment) {
-			logHandler.Logf("downloading image: %s (%s, %d bytes)", attachment.Filename, attachment.ContentType, attachment.Size)
-			img, err := downloadImage(attachment.URL)
-			if err != nil {
-				logHandler.Warnf("failed to download image [%s]: %v", m.ChannelID, err)
-				continue
-			}
-			images = append(images, img)
-		}
-	}
-	if len(images) > 0 {
-		logHandler.Logf("images ready: %d file(s)", len(images))
-	}
-
-	// Format current message with envelope (openclaw style)
-	senderLabel := resolveSenderLabel(m.Author)
-	timestamp := m.Timestamp.Format("2006-01-02 15:04 MST")
-	currentMessage := formatInboundEnvelope("Discord", senderLabel, m.Author.ID, timestamp, content)
-
-	// Build structured channel history entries (each with per-message images)
-	var historyEntries []domain.ChannelHistoryEntry
-	if !isDM(m) {
-		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, m.ID, historyCutoff)
-	}
-	if replyEntry := h.buildReplyReferenceEntry(s, m, historyCutoff); replyEntry != nil {
-		historyEntries = append(historyEntries, *replyEntry)
-	}
-
-	// Flat text context for persistence and text-only code path
-	contextForLLM := buildContextForLLM(historyEntries, currentMessage)
-
-	// Check if any history entry has images
-	hasHistoryImages := false
-	for _, e := range historyEntries {
-		if len(e.Images) > 0 {
-			hasHistoryImages = true
-			break
-		}
-	}
-
-	// Direct attachments (images) are persisted; history entry images are ephemeral
-	var streamCh <-chan llm.StreamChunk
-	var err error
-	if len(images) > 0 || hasHistoryImages {
-		streamCh, err = h.chatService.HandleMessageStreamWithImagesAndContext(
-			ctx, m.ChannelID, personaID, contextForLLM, currentMessage, images, historyEntries)
-	} else {
-		streamCh, err = h.chatService.HandleMessageStreamWithContext(
-			ctx, m.ChannelID, personaID, contextForLLM, currentMessage)
-	}
-
+	images := h.prepareInboundImages(m.Attachments, m.ChannelID)
+	currentMessage, historyEntries, contextForLLM, hasHistoryImages := h.buildInboundContext(s, m, content, historyCutoff)
+	streamCh, err := h.startMessageStream(ctx, m.ChannelID, personaID, contextForLLM, currentMessage, images, historyEntries, hasHistoryImages)
 	if err != nil {
 		logHandler.Errorf("chat error [%s]: %v", m.ChannelID, err)
 		_ = h.bot.SendMessage(m.ChannelID, formatDiscordError(err))
@@ -274,244 +189,17 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 
 // streamToDiscord collects streaming chunks and updates the Discord message in real-time.
 func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <-chan llm.StreamChunk) {
-	var fullResponse strings.Builder
-	var lastUpdate time.Time
-	var messageID string
-
-	// Update interval: 1.5 seconds (避免 rate limit)
-	const updateInterval = 1500 * time.Millisecond
-
+	presenter := newDiscordStreamPresenter(h, channelID, replyToMessageID)
 	for chunk := range streamCh {
-		if chunk.Error != nil {
-			logHandler.Errorf("stream error [%s]: %v", channelID, chunk.Error)
-
-			// Format user-friendly error message
-			errorMsg := formatDiscordError(chunk.Error)
-
-			if messageID != "" {
-				// Update existing message with error
-				_ = h.bot.EditMessage(channelID, messageID, errorMsg)
-			} else {
-				_ = h.bot.SendMessage(channelID, errorMsg)
-			}
+		done, stop := presenter.processChunk(chunk)
+		if stop {
 			return
 		}
-
-		// Handle tool calls (display indicator) - legacy support
-		if len(chunk.ToolCalls) > 0 {
-			toolIndicator := formatToolCallIndicator(chunk.ToolCalls)
-			if messageID == "" {
-				// Create initial message with tool indicator (use reply if enabled)
-				var msg *discordgo.Message
-				var err error
-				if h.useReply {
-					msg, err = h.bot.SendMessageReply(channelID, toolIndicator, replyToMessageID)
-				} else {
-					msg, err = h.bot.SendMessageWithReturn(channelID, toolIndicator)
-				}
-				if err != nil {
-					logHandler.Errorf("send tool indicator [%s]: %v", channelID, err)
-				} else {
-					messageID = msg.ID
-				}
-			} else {
-				// Update existing message with tool indicator
-				currentContent := fullResponse.String()
-				if currentContent != "" {
-					_ = h.bot.EditMessage(channelID, messageID, currentContent+"\n\n"+toolIndicator)
-				} else {
-					_ = h.bot.EditMessage(channelID, messageID, toolIndicator)
-				}
-			}
-			continue
-		}
-
-		// Handle tool status updates (new approach)
-		if chunk.ToolStatus != "" {
-			if chunk.ToolStatus == "tool_start" {
-				// Format tool status message
-				var toolMsg string
-				switch chunk.ToolName {
-				case "web_search":
-					query := ""
-					if chunk.ToolInput != nil {
-						if q, ok := chunk.ToolInput["query"].(string); ok {
-							query = q
-						}
-					}
-					if query != "" {
-						toolMsg = fmt.Sprintf("🔍 正在搜尋：%s", query)
-					} else {
-						toolMsg = "🔍 正在搜尋..."
-					}
-				case "web_fetch":
-					url := ""
-					if chunk.ToolInput != nil {
-						if u, ok := chunk.ToolInput["url"].(string); ok {
-							url = u
-						}
-					}
-					if url != "" {
-						toolMsg = fmt.Sprintf("📄 正在擷取網頁：%s", url)
-					} else {
-						toolMsg = "📄 正在擷取網頁..."
-					}
-				case "file_read":
-					filename := ""
-					if chunk.ToolInput != nil {
-						if f, ok := chunk.ToolInput["filename"].(string); ok {
-							filename = f
-						}
-					}
-					if filename != "" {
-						toolMsg = fmt.Sprintf("📖 正在讀取檔案：%s", filename)
-					} else {
-						toolMsg = "📖 正在讀取檔案..."
-					}
-				case "file_write":
-					filename := ""
-					if chunk.ToolInput != nil {
-						if f, ok := chunk.ToolInput["filename"].(string); ok {
-							filename = f
-						}
-					}
-					if filename != "" {
-						toolMsg = fmt.Sprintf("💾 正在寫入檔案：%s", filename)
-					} else {
-						toolMsg = "💾 正在寫入檔案..."
-					}
-				case "file_append":
-					filename := ""
-					if chunk.ToolInput != nil {
-						if f, ok := chunk.ToolInput["filename"].(string); ok {
-							filename = f
-						}
-					}
-					if filename != "" {
-						toolMsg = fmt.Sprintf("📝 正在追加內容到：%s", filename)
-					} else {
-						toolMsg = "📝 正在追加內容..."
-					}
-				case "session_status":
-					toolMsg = "⏰ 正在取得時間資訊..."
-				case "discord_observe":
-					toolMsg = "🛰️ 正在讀取 Discord 狀態..."
-				default:
-					toolMsg = fmt.Sprintf("🔧 正在使用工具：%s", chunk.ToolName)
-				}
-
-				if messageID == "" {
-					// Create initial message with tool status (use reply if enabled)
-					var msg *discordgo.Message
-					var err error
-					if h.useReply {
-						msg, err = h.bot.SendMessageReply(channelID, toolMsg, replyToMessageID)
-					} else {
-						msg, err = h.bot.SendMessageWithReturn(channelID, toolMsg)
-					}
-					if err != nil {
-						logHandler.Errorf("send tool status [%s]: %v", channelID, err)
-					} else {
-						messageID = msg.ID
-					}
-				} else {
-					// Update existing message with tool status
-					_ = h.bot.EditMessage(channelID, messageID, toolMsg)
-				}
-			} else if chunk.ToolStatus == "tool_error" {
-				errMsg := formatToolStatusError(chunk.ToolName, chunk.ToolInput, chunk.ToolError)
-				if err := h.bot.SendMessage(channelID, errMsg); err != nil {
-					logHandler.Errorf("send tool error [%s]: %v", channelID, err)
-				}
-			} else if chunk.ToolStatus == "tool_done" {
-				// Tool execution done, ready for LLM response
-				// Clear the accumulated response to prepare for final output
-				fullResponse.Reset()
-			}
-			continue
-		}
-
-		// Accumulate content
-		fullResponse.WriteString(chunk.Content)
-
-		// If stream is done, break to final update
-		if chunk.Done {
+		if done {
 			break
 		}
-
-		// Throttle updates to avoid rate limiting
-		if time.Since(lastUpdate) < updateInterval {
-			continue
-		}
-		lastUpdate = time.Now()
-
-		currentContent := fullResponse.String()
-		if currentContent == "" {
-			continue
-		}
-
-		// Split if exceeds Discord limit
-		segments := splitMessage(currentContent, discordMaxLength)
-
-		if messageID == "" {
-			// First update: create message (use reply if enabled)
-			var msg *discordgo.Message
-			var err error
-			if h.useReply {
-				msg, err = h.bot.SendMessageReply(channelID, segments[0], replyToMessageID)
-			} else {
-				msg, err = h.bot.SendMessageWithReturn(channelID, segments[0])
-			}
-			if err != nil {
-				logHandler.Errorf("send [%s]: %v", channelID, err)
-				return
-			}
-			messageID = msg.ID
-		} else {
-			// Subsequent updates: edit message
-			if err := h.bot.EditMessage(channelID, messageID, segments[0]); err != nil {
-				logHandler.Errorf("edit [%s]: %v", channelID, err)
-				return
-			}
-		}
 	}
-
-	// Final update: ensure complete response is sent
-	finalContent := fullResponse.String()
-	if finalContent == "" {
-		if messageID == "" {
-			_ = h.bot.SendMessage(channelID, "(No response generated)")
-		}
-		return
-	}
-
-	segments := splitMessage(finalContent, discordMaxLength)
-
-	if messageID != "" {
-		// Update first message with final content
-		_ = h.bot.EditMessage(channelID, messageID, segments[0])
-
-		// Send additional segments if needed
-		for i := 1; i < len(segments); i++ {
-			_ = h.bot.SendMessage(channelID, segments[i])
-		}
-	} else {
-		// Fallback: send all segments (use reply for first segment if enabled)
-		if h.useReply && len(segments) > 0 {
-			msg, err := h.bot.SendMessageReply(channelID, segments[0], replyToMessageID)
-			if err == nil {
-				messageID = msg.ID
-			}
-			// Send remaining segments without reply
-			for i := 1; i < len(segments); i++ {
-				_ = h.bot.SendMessage(channelID, segments[i])
-			}
-		} else {
-			for _, segment := range segments {
-				_ = h.bot.SendMessage(channelID, segment)
-			}
-		}
-	}
+	presenter.sendFinal()
 }
 
 // isMentioned checks if the bot was @mentioned in the message.
@@ -744,6 +432,10 @@ func formatToolStatusError(toolName string, toolInput map[string]interface{}, ra
 	}
 }
 
+func formatToolStartStatusMessage(toolName string, toolInput map[string]interface{}) string {
+	return interfacecommon.FormatToolStartMessage(toolName, toolInput)
+}
+
 func safeToolName(toolName string) string {
 	if strings.TrimSpace(toolName) == "" {
 		return "unknown"
@@ -766,40 +458,23 @@ func extractToolFilename(toolInput map[string]interface{}) string {
 
 // formatDiscordError converts technical errors to user-friendly Discord messages
 func formatDiscordError(err error) string {
-	errMsg := err.Error()
-
-	// Check for quota exhausted (429) error
-	if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "QUOTA_EXHAUSTED") || strings.Contains(errMsg, "exhausted your capacity") {
-		// Extract reset time if available
-		if strings.Contains(errMsg, "quota will reset after") {
-			// Try to extract the time (e.g., "16m9s")
-			start := strings.Index(errMsg, "reset after ") + len("reset after ")
-			end := strings.Index(errMsg[start:], ".")
-			if end > 0 {
-				resetTime := errMsg[start : start+end]
-				return fmt.Sprintf("⏳ **API 配額已用完**\n請等待 **%s** 後重試\n\n💡 提示：可至 Web UI Settings 切換到 API Key 模式", resetTime)
-			}
+	parsed := interfacecommon.ParseLLMError(err)
+	switch parsed.Kind {
+	case interfacecommon.ErrorKindQuota:
+		if parsed.ResetAfter != "" {
+			return fmt.Sprintf("⏳ **API 配額已用完**\n請等待 **%s** 後重試\n\n💡 提示：可至 Web UI Settings 切換到 API Key 模式", parsed.ResetAfter)
 		}
 		return "⏳ **API 配額已用完**\n請稍後再試\n\n💡 提示：請至 Web UI Settings 切換到 API Key 模式，或等待配額重置"
-	}
-
-	// Check for authentication errors
-	if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "Unauthorized") || strings.Contains(errMsg, "UNAUTHENTICATED") {
+	case interfacecommon.ErrorKindAuth:
 		return "🔐 **認證失敗**\n請至 Web UI Settings 重新設定 API Key 或 OAuth"
-	}
-
-	// Check for network errors
-	if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "network") {
+	case interfacecommon.ErrorKindNetwork:
 		return "🌐 **網路連線失敗**\n請檢查網路連線或稍後再試"
-	}
-
-	// Check for rate limit errors
-	if strings.Contains(errMsg, "rate limit") || strings.Contains(errMsg, "too many requests") {
+	case interfacecommon.ErrorKindRateLimit:
 		return "⚠️ **請求過於頻繁**\n請稍等片刻後再試"
 	}
 
 	// Generic error fallback
-	return fmt.Sprintf("❌ **發生錯誤**\n%s\n\n💡 請查看後端 log 或至 Web UI 檢查設定", truncateError(errMsg, 200))
+	return fmt.Sprintf("❌ **發生錯誤**\n%s\n\n💡 請查看後端 log 或至 Web UI 檢查設定", truncateError(parsed.RawMessage, 200))
 }
 
 // truncateError truncates error message to avoid Discord message length limit
