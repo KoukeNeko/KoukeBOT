@@ -114,10 +114,10 @@ func TestWebSearchTool_ParseInput(t *testing.T) {
 			wantErr: false,
 			check: func(req search.SearchRequest) bool {
 				return req.Query == "台灣新聞" &&
-					   req.Count == 5 &&
-					   req.Country == "TW" &&
-					   req.SearchLang == "zh-TW" &&
-					   req.Freshness == "pd"
+					req.Count == 5 &&
+					req.Country == "TW" &&
+					req.SearchLang == "zh-TW" &&
+					req.Freshness == "pd"
 			},
 		},
 		{
