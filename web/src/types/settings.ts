@@ -39,6 +39,7 @@ export interface SettingsData {
 
 export interface MCPSettingsData {
   enabled: boolean
+  verbose_logging: boolean
   discovery_timeout_seconds: number
   tool_call_timeout_seconds: number
   servers: MCPServerData[]

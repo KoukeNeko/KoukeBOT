@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
-  discoverMCPServer,
-  getMCPStatus,
   getProviderStatus,
   getRuntimeMetrics,
   getSettings,
@@ -12,9 +10,6 @@ import {
   updateSettings,
 } from '../../../api'
 import type {
-  MCPServerData,
-  MCPStatusEntry,
-  MCPToolEntry,
   ModelEntry,
   PersonaSummary,
   ProviderStatus,
@@ -57,6 +52,7 @@ const defaultSettings: SettingsData = {
   scheduled_monitor_max_per_user: 3,
   mcp: {
     enabled: false,
+    verbose_logging: false,
     discovery_timeout_seconds: 10,
     tool_call_timeout_seconds: 20,
     servers: [],
@@ -75,7 +71,6 @@ export function useSettingsData() {
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
   const [status, setStatus] = useState<ProviderStatus | null>(null)
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null)
-  const [mcpStatus, setMCPStatus] = useState<MCPStatusEntry[]>([])
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
   const [scheduledTasksLoading, setScheduledTasksLoading] = useState(false)
   const [scheduledTasksError, setScheduledTasksError] = useState<string | null>(null)
@@ -94,15 +89,6 @@ export function useSettingsData() {
       setRuntimeMetrics(metrics)
     } catch {
       // Ignore metrics errors for settings UX.
-    }
-  }, [])
-
-  const refreshMCPStatus = useCallback(async () => {
-    try {
-      const statusEntries = await getMCPStatus()
-      setMCPStatus(statusEntries)
-    } catch {
-      setMCPStatus([])
     }
   }, [])
 
@@ -128,9 +114,8 @@ export function useSettingsData() {
       oauth.refreshOAuthSnapshot().catch(() => ({ oauth: null, poolEntries: [] })),
       listModels(),
       listPersonas(),
-      getMCPStatus().catch(() => [] as MCPStatusEntry[]),
     ])
-      .then(([settings, currentStatus, metrics, oauthSnapshot, modelList, personaList, mcpStatusEntries]) => {
+      .then(([settings, currentStatus, metrics, oauthSnapshot, modelList, personaList]) => {
         setForm(settings)
         setStatus(currentStatus)
         setRuntimeMetrics(metrics)
@@ -140,7 +125,6 @@ export function useSettingsData() {
         oauth.setPool(oauthSnapshot.poolEntries)
         setModels(modelList)
         setPersonas(personaList)
-        setMCPStatus(mcpStatusEntries)
 
         if (settings.provider_type === 'oauth') {
           oauth.setProviderTab('oauth')
@@ -150,16 +134,15 @@ export function useSettingsData() {
       })
       .catch((error) => setMessage({ type: 'err', text: error instanceof Error ? error.message : 'Failed to load settings' }))
       .finally(() => setLoading(false))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     const id = window.setInterval(() => {
       void refreshRuntimeMetrics()
-      void refreshMCPStatus()
     }, 10_000)
     return () => window.clearInterval(id)
-  }, [refreshMCPStatus, refreshRuntimeMetrics])
+  }, [refreshRuntimeMetrics])
 
   useEffect(() => {
     void refreshScheduledTasks()
@@ -183,7 +166,6 @@ export function useSettingsData() {
       setStatus(nextStatus)
       setForm(updated)
       setModels(modelList)
-      void refreshMCPStatus()
 
       if (result.warning) {
         setMessage({ type: 'ok', text: `設定已儲存。警告：${result.warning}` })
@@ -195,23 +177,7 @@ export function useSettingsData() {
     } finally {
       setSaving(false)
     }
-  }, [form, refreshMCPStatus])
-
-  const handleDiscoverMCPServer = useCallback(async (server: MCPServerData): Promise<MCPToolEntry[]> => {
-    try {
-      const result = await discoverMCPServer(server)
-      setMessage({
-        type: 'ok',
-        text: `MCP discover 成功：${server.id}（${result.tools.length} tools）`,
-      })
-      await refreshMCPStatus()
-      return result.tools
-    } catch (error) {
-      const text = error instanceof Error ? error.message : 'MCP discover failed'
-      setMessage({ type: 'err', text })
-      throw error
-    }
-  }, [refreshMCPStatus])
+  }, [form])
 
   const modelOptions = useMemo(
     () =>
@@ -233,7 +199,6 @@ export function useSettingsData() {
     personas,
     status,
     runtimeMetrics,
-    mcpStatus,
     scheduledTasks,
     scheduledTasksLoading,
     scheduledTasksError,
@@ -243,9 +208,7 @@ export function useSettingsData() {
     modelOptions,
     personaOptions,
     refreshScheduledTasks,
-    refreshMCPStatus,
     handleSave,
-    handleDiscoverMCPServer,
     oauth,
   }
 }

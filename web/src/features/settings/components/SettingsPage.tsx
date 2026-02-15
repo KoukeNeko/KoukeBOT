@@ -1,5 +1,4 @@
 import DiscordSection from '../../../pages/settings/DiscordSection'
-import MCPSection from '../../../pages/settings/MCPSection'
 import MemorySection from '../../../pages/settings/MemorySection'
 import PromptGuardSection from '../../../pages/settings/PromptGuardSection'
 import ProviderSection from '../../../pages/settings/ProviderSection'
@@ -107,17 +106,6 @@ export default function SettingsPage({ vm }: Props) {
         onSave={() => {
           void vm.handleSave()
         }}
-      />
-
-      <MCPSection
-        form={vm.form}
-        setForm={vm.setForm}
-        statuses={vm.mcpStatus}
-        saving={vm.saving}
-        onSave={() => {
-          void vm.handleSave()
-        }}
-        onDiscover={vm.handleDiscoverMCPServer}
       />
 
       <ToolsSection

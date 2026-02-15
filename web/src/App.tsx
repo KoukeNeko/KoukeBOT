@@ -3,6 +3,7 @@ import Personas from './pages/Personas'
 import PersonaDetail from './pages/PersonaDetail'
 import Chat from './pages/Chat'
 import Settings from './pages/Settings'
+import MCP from './pages/MCP'
 import Schedules from './pages/Schedules'
 import HowItWorks from './pages/HowItWorks'
 import Layout from './components/Layout'
@@ -23,6 +24,7 @@ export default function App() {
           </Route>
           <Route path="/schedules" element={<Schedules />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/mcp" element={<MCP />} />
           <Route path="/how-it-works" element={<HowItWorks />} />
         </Routes>
       </Layout>

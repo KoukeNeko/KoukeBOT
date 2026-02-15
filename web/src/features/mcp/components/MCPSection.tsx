@@ -1,42 +1,42 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import Select from "../../components/ui/Select";
-import Checkbox from "../../components/ui/Checkbox";
-import type { SettingsData, MCPServerData, MCPToolEntry, MCPStatusEntry } from "../../types";
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import Select from '../../../components/ui/Select'
+import Checkbox from '../../../components/ui/Checkbox'
+import type { SettingsData, MCPServerData, MCPToolEntry, MCPStatusEntry } from '../../../types'
 
 type Props = {
-  form: SettingsData;
-  setForm: Dispatch<SetStateAction<SettingsData>>;
-  statuses: MCPStatusEntry[];
-  saving: boolean;
-  onSave: () => void;
-  onDiscover: (server: MCPServerData) => Promise<MCPToolEntry[]>;
-};
+  form: SettingsData
+  setForm: Dispatch<SetStateAction<SettingsData>>
+  statuses: MCPStatusEntry[]
+  saving: boolean
+  onSave: () => void
+  onDiscover: (server: MCPServerData) => Promise<MCPToolEntry[]>
+}
 
 function mapToLines(values: Record<string, string>): string {
   return Object.entries(values)
     .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
+    .join('\n')
 }
 
 function linesToMap(raw: string): Record<string, string> {
-  const result: Record<string, string> = {};
+  const result: Record<string, string> = {}
   raw
     .split(/\r?\n/g)
     .map((line) => line.trim())
     .filter(Boolean)
     .forEach((line) => {
-      const index = line.indexOf("=");
+      const index = line.indexOf('=')
       if (index <= 0) return;
       const key = line.slice(0, index).trim();
       const value = line.slice(index + 1).trim();
       if (!key) return;
       result[key] = value;
     });
-  return result;
+  return result
 }
 
 function argsToText(args: string[]): string {
-  return args.join("\n");
+  return args.join('\n')
 }
 
 function textToArgs(raw: string): string[] {
@@ -47,29 +47,29 @@ function textToArgs(raw: string): string[] {
 }
 
 function nextServerID(existing: MCPServerData[]): string {
-  const base = "server";
-  let n = existing.length + 1;
+  const base = 'server'
+  let n = existing.length + 1
   while (existing.some((s) => s.id === `${base}_${n}`)) {
     n += 1;
   }
-  return `${base}_${n}`;
+  return `${base}_${n}`
 }
 
 export default function MCPSection({ form, setForm, statuses, saving, onSave, onDiscover }: Props) {
-  const [discoveringID, setDiscoveringID] = useState<string | null>(null);
-  const [discovered, setDiscovered] = useState<Record<string, MCPToolEntry[]>>({});
+  const [discoveringID, setDiscoveringID] = useState<string | null>(null)
+  const [discovered, setDiscovered] = useState<Record<string, MCPToolEntry[]>>({})
 
   const statusMap = useMemo(() => {
-    const map = new Map<string, MCPStatusEntry>();
-    statuses.forEach((item) => map.set(item.server_id, item));
-    return map;
-  }, [statuses]);
+    const map = new Map<string, MCPStatusEntry>()
+    statuses.forEach((item) => map.set(item.server_id, item))
+    return map
+  }, [statuses])
 
-  const servers = form.mcp.servers || [];
+  const servers = form.mcp.servers || []
 
   const updateMCP = (next: SettingsData["mcp"]) => {
-    setForm({ ...form, mcp: next });
-  };
+    setForm({ ...form, mcp: next })
+  }
 
   const updateServer = (index: number, nextServer: MCPServerData) => {
     const nextServers = [...servers];
@@ -87,17 +87,17 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
           id: serverID,
           name: serverID,
           enabled: true,
-          transport: "stdio",
-          command: "",
+          transport: 'stdio',
+          command: '',
           args: [],
           env: {},
-          url: "",
+          url: '',
           headers: {},
           tool_allowlist: [],
         },
       ],
-    });
-  };
+    })
+  }
 
   const handleRemoveServer = (index: number) => {
     const nextServers = servers.filter((_, i) => i !== index);
@@ -105,18 +105,18 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
   };
 
   const handleDiscover = async (server: MCPServerData) => {
-    setDiscoveringID(server.id);
+    setDiscoveringID(server.id)
     try {
-      const tools = await onDiscover(server);
-      setDiscovered((prev) => ({ ...prev, [server.id]: tools }));
+      const tools = await onDiscover(server)
+      setDiscovered((prev) => ({ ...prev, [server.id]: tools }))
     } finally {
-      setDiscoveringID(null);
+      setDiscoveringID(null)
     }
-  };
+  }
 
   const toggleAllowlist = (serverIndex: number, toolName: string, checked: boolean) => {
-    const server = servers[serverIndex];
-    const allowlist = new Set(server.tool_allowlist || []);
+    const server = servers[serverIndex]
+    const allowlist = new Set(server.tool_allowlist || [])
     if (checked) {
       allowlist.add(toolName);
     } else {
@@ -125,8 +125,8 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
     updateServer(serverIndex, {
       ...server,
       tool_allowlist: Array.from(allowlist),
-    });
-  };
+    })
+  }
 
   return (
     <section className="settings-section">
@@ -137,6 +137,13 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
           checked={form.mcp.enabled}
           onChange={(checked) => updateMCP({ ...form.mcp, enabled: checked })}
           label="啟用 MCP（Model Context Protocol）"
+        />
+      </div>
+      <div className="form-field-checkbox-row">
+        <Checkbox
+          checked={form.mcp.verbose_logging}
+          onChange={(checked) => updateMCP({ ...form.mcp, verbose_logging: checked })}
+          label="啟用 MCP 詳細 Log（MCP prefix）"
         />
       </div>
 
@@ -231,15 +238,15 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                 <span>Transport</span>
                 <Select
                   value={server.transport}
-                  onChange={(value) => updateServer(idx, { ...server, transport: value as "stdio" | "http" })}
+                  onChange={(value) => updateServer(idx, { ...server, transport: value as 'stdio' | 'http' })}
                   options={[
-                    { value: "stdio", label: "stdio" },
-                    { value: "http", label: "http (streamable)" },
+                    { value: 'stdio', label: 'stdio' },
+                    { value: 'http', label: 'http (streamable)' },
                   ]}
                 />
               </label>
 
-              {server.transport === "stdio" ? (
+              {server.transport === 'stdio' ? (
                 <>
                   <label className="form-field">
                     <span>Command</span>
@@ -300,7 +307,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                     void handleDiscover(server);
                   }}
                 >
-                  {discoveringID === server.id ? "Discovering..." : "Discover tools"}
+                  {discoveringID === server.id ? 'Discovering...' : 'Discover tools'}
                 </button>
                 {status?.last_error && <span className="hint">{status.last_error}</span>}
               </div>
@@ -318,18 +325,18 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                         />
                         {tool.description && <span className="hint">{tool.description}</span>}
                       </div>
-                    );
+                    )
                   })}
                 </div>
               )}
             </article>
-          );
+          )
         })}
       </div>
 
       <button onClick={onSave} disabled={saving} className="btn-save-bottom">
-        {saving ? "Saving..." : "Save"}
+        {saving ? 'Saving...' : 'Save'}
       </button>
     </section>
-  );
+  )
 }
