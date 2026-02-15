@@ -21,18 +21,19 @@ var logAPI = logger.New("api", logger.Cyan)
 
 // Handlers implements the REST API endpoints.
 type Handlers struct {
-	personaService   *app.PersonaService
-	chatService      *app.ChatService
-	schedulerService *schedulerpkg.Service
-	settingsStore    *config.SettingsStore
-	providerManager  *app.ProviderManager
-	mcpManager       *mcp.Manager
-	discordRuntime   *discordruntime.Runtime
-	discordPersona   DiscordPersonaController
-	oauthFlow        *llm.GeminiOAuthFlow
-	convStore        store.ConversationRepository
-	imageStore       *store.ImageStore
-	ctx              context.Context
+	personaService         *app.PersonaService
+	chatService            *app.ChatService
+	schedulerService       *schedulerpkg.Service
+	settingsStore          *config.SettingsStore
+	providerManager        *app.ProviderManager
+	mcpManager             *mcp.Manager
+	discordRuntime         *discordruntime.Runtime
+	discordPersona         DiscordPersonaController
+	oauthFlow              *llm.GeminiOAuthFlow
+	convStore              store.ConversationRepository
+	imageStore             *store.ImageStore
+	ctx                    context.Context
+	settingsRuntimeApplier *SettingsRuntimeApplier
 }
 
 type DiscordPersonaController interface {
@@ -54,7 +55,7 @@ func NewHandlers(
 	imageStore *store.ImageStore,
 	ctx context.Context,
 ) *Handlers {
-	return &Handlers{
+	h := &Handlers{
 		personaService:   personaService,
 		chatService:      chatService,
 		schedulerService: schedulerService,
@@ -68,6 +69,8 @@ func NewHandlers(
 		imageStore:       imageStore,
 		ctx:              ctx,
 	}
+	h.settingsRuntimeApplier = NewSettingsRuntimeApplier(h)
+	return h
 }
 
 // --- Persona endpoints ---
