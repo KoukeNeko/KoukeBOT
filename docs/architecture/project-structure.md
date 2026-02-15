@@ -23,9 +23,16 @@ This document defines the clean-code structure for KoukeBOT after the refactor, 
 ## Frontend Boundaries
 - `web/src/features/chat/*`: chat page controller, SSE service, and feature components.
 - `web/src/features/settings/*`: settings data hook, OAuth actions hook, and page composition component.
+- `web/src/features/mcp/*`: MCP page hook/components for server configuration and discover-based connection testing.
 - `web/src/api/*`: transport and domain API modules with `web/src/api.ts` compatibility barrel.
 - `web/src/types/*`: domain type modules with `web/src/types.ts` compatibility barrel.
 - `web/src/pages/*`: thin route-level composition pages.
+
+## MCP Runtime Notes
+- MCP settings persist in `settings.json` under `mcp`.
+- `mcp.verbose_logging` toggles detailed MCP transport diagnostics.
+- Detailed MCP logs use module prefix `MCP` and redact sensitive keys (`authorization`, `api-key`, `token`, `secret`, `password`, `cookie`, `set-cookie`).
+- Web MCP operations are managed from route `/mcp`; Settings page no longer embeds MCP forms.
 
 ## Compatibility Rules
 - External HTTP routes, methods, and JSON keys stay unchanged.

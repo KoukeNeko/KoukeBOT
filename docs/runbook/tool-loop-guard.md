@@ -31,3 +31,9 @@ Explain when the system blocks tool calls and how final user responses are produ
   - `tool_forced_final_success`
   - `tool_forced_final_failed`
   - `tool_loop_fallback`
+
+## MCP Duplicate Diagnosis
+- `tool loop guard blocked duplicate call` means the same tool signature was requested again in the same turn.
+- This is different from MCP transport failure.
+- If the call before duplicate succeeded, the MCP server is usually healthy.
+- To verify MCP transport independently, use discover test in `/mcp` or follow `docs/runbook/mcp-http-debug.md`.
