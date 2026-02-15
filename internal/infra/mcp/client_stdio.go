@@ -21,9 +21,11 @@ type stdioSession struct {
 	stdout    *bufio.Reader
 	stderrBuf bytes.Buffer
 	nextID    int64
+	serverID  string
+	verbose   bool
 }
 
-func newStdioSession(ctx context.Context, server config.MCPServerSetting) (*stdioSession, error) {
+func newStdioSession(ctx context.Context, server config.MCPServerSetting, verbose bool) (*stdioSession, error) {
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
 	cmd.Env = append(os.Environ(), buildEnvList(server.Env)...)
 
@@ -41,9 +43,11 @@ func newStdioSession(ctx context.Context, server config.MCPServerSetting) (*stdi
 	}
 
 	s := &stdioSession{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewReader(stdoutPipe),
+		cmd:      cmd,
+		stdin:    stdin,
+		stdout:   bufio.NewReader(stdoutPipe),
+		serverID: server.ID,
+		verbose:  verbose,
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -85,6 +89,7 @@ func (s *stdioSession) call(ctx context.Context, method string, params interface
 		Method:  method,
 		Params:  params,
 	}
+
 	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -92,6 +97,8 @@ func (s *stdioSession) call(ctx context.Context, method string, params interface
 	if err := writeFramedJSON(s.stdin, body); err != nil {
 		return nil, fmt.Errorf("write request: %w", err)
 	}
+	s.logRequest("stdio.req", method, request.ID, body)
+
 	if !expectResponse {
 		return nil, nil
 	}
@@ -110,10 +117,12 @@ func (s *stdioSession) call(ctx context.Context, method string, params interface
 
 		var response rpcResponse
 		if err := json.Unmarshal(frame, &response); err != nil {
+			s.logFrame(method, request.ID, frame, false)
 			continue
 		}
-
-		if fmt.Sprint(response.ID) != fmt.Sprint(id) {
+		matched := fmt.Sprint(response.ID) == fmt.Sprint(id)
+		s.logFrame(method, request.ID, frame, matched)
+		if !matched {
 			continue
 		}
 		if response.Error != nil {
@@ -136,11 +145,40 @@ func (s *stdioSession) notify(method string, params interface{}) error {
 	if err := writeFramedJSON(s.stdin, body); err != nil {
 		return fmt.Errorf("write notification: %w", err)
 	}
+	s.logRequest("stdio.notify", method, nil, body)
 	return nil
 }
 
-func runStdioListTools(ctx context.Context, server config.MCPServerSetting) ([]ToolDescriptor, error) {
-	session, err := newStdioSession(ctx, server)
+func (s *stdioSession) logRequest(tag, rpcMethod string, requestID interface{}, payload []byte) {
+	if !s.verbose {
+		return
+	}
+	logMCP.Logf(
+		"%s server=%s transport=stdio rpc_method=%s rpc_id=%v payload=%s",
+		tag,
+		s.serverID,
+		rpcMethod,
+		requestID,
+		string(sanitizeJSONBytes(payload)),
+	)
+}
+
+func (s *stdioSession) logFrame(rpcMethod string, requestID interface{}, frame []byte, matched bool) {
+	if !s.verbose {
+		return
+	}
+	logMCP.Logf(
+		"stdio.res server=%s transport=stdio rpc_method=%s rpc_id=%v matched=%t payload=%s",
+		s.serverID,
+		rpcMethod,
+		requestID,
+		matched,
+		string(sanitizeJSONBytes(frame)),
+	)
+}
+
+func runStdioListTools(ctx context.Context, server config.MCPServerSetting, verbose bool) ([]ToolDescriptor, error) {
+	session, err := newStdioSession(ctx, server, verbose)
 	if err != nil {
 		return nil, err
 	}
@@ -163,8 +201,8 @@ func runStdioListTools(ctx context.Context, server config.MCPServerSetting) ([]T
 	return tools, nil
 }
 
-func runStdioCallTool(ctx context.Context, server config.MCPServerSetting, toolName string, input map[string]interface{}) (string, bool, error) {
-	session, err := newStdioSession(ctx, server)
+func runStdioCallTool(ctx context.Context, server config.MCPServerSetting, toolName string, input map[string]interface{}, verbose bool) (string, bool, error) {
+	session, err := newStdioSession(ctx, server, verbose)
 	if err != nil {
 		return "", false, err
 	}

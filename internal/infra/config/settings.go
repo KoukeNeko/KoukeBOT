@@ -105,6 +105,7 @@ type Settings struct {
 
 type MCPSettings struct {
 	Enabled                 bool               `json:"enabled"`
+	VerboseLogging          bool               `json:"verbose_logging"`
 	DiscoveryTimeoutSeconds int                `json:"discovery_timeout_seconds"`
 	ToolCallTimeoutSeconds  int                `json:"tool_call_timeout_seconds"`
 	Servers                 []MCPServerSetting `json:"servers"`

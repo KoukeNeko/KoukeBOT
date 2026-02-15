@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -53,24 +54,98 @@ func readFramedJSON(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func parseSSEDataPayload(body []byte) []byte {
-	lines := bytes.Split(body, []byte("\n"))
-	var chunks [][]byte
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		if bytes.HasPrefix(line, []byte("data:")) {
-			chunk := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-			if len(chunk) == 0 || bytes.Equal(chunk, []byte("[DONE]")) {
-				continue
-			}
-			chunks = append(chunks, chunk)
-		}
-	}
-	if len(chunks) == 0 {
+type sseEvent struct {
+	Event string
+	Data  []byte
+}
+
+func parseSSEEvents(body []byte) []sseEvent {
+	if len(body) == 0 {
 		return nil
 	}
-	return chunks[len(chunks)-1]
+
+	var events []sseEvent
+	var currentType string
+	var currentData bytes.Buffer
+
+	flush := func() {
+		if currentData.Len() == 0 {
+			currentType = ""
+			return
+		}
+		payload := bytes.TrimSpace(currentData.Bytes())
+		if len(payload) == 0 {
+			currentType = ""
+			currentData.Reset()
+			return
+		}
+		event := sseEvent{
+			Event: strings.TrimSpace(currentType),
+			Data:  append([]byte(nil), payload...),
+		}
+		events = append(events, event)
+		currentType = ""
+		currentData.Reset()
+	}
+
+	lines := bytes.Split(body, []byte("\n"))
+	for _, raw := range lines {
+		line := bytes.TrimRight(raw, "\r")
+		if len(line) == 0 {
+			flush()
+			continue
+		}
+		if bytes.HasPrefix(line, []byte(":")) {
+			continue
+		}
+		switch {
+		case bytes.HasPrefix(line, []byte("event:")):
+			currentType = string(bytes.TrimSpace(bytes.TrimPrefix(line, []byte("event:"))))
+		case bytes.HasPrefix(line, []byte("data:")):
+			chunk := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+			if currentData.Len() > 0 {
+				currentData.WriteByte('\n')
+			}
+			currentData.Write(chunk)
+		}
+	}
+	flush()
+
+	return events
+}
+
+func selectSSEDataPayloadForRequest(body []byte, requestID interface{}) ([]byte, error) {
+	events := parseSSEEvents(body)
+	if len(events) == 0 {
+		return nil, fmt.Errorf("empty SSE payload")
+	}
+
+	var lastData []byte
+	for _, event := range events {
+		data := bytes.TrimSpace(event.Data)
+		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+			continue
+		}
+		lastData = data
+		if requestID == nil {
+			continue
+		}
+
+		var response rpcResponse
+		if err := json.Unmarshal(data, &response); err != nil {
+			continue
+		}
+		if fmt.Sprint(response.ID) != fmt.Sprint(requestID) {
+			continue
+		}
+		return data, nil
+	}
+
+	if requestID == nil && len(lastData) > 0 {
+		return lastData, nil
+	}
+	if len(lastData) == 0 {
+		return nil, fmt.Errorf("no data events in SSE payload")
+	}
+	return nil, fmt.Errorf("no matching RPC response for id %v", requestID)
 }

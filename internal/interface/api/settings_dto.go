@@ -90,6 +90,7 @@ type SettingsUpdateRequest struct {
 
 type MCPSettingsResponse struct {
 	Enabled                 bool                `json:"enabled"`
+	VerboseLogging          bool                `json:"verbose_logging"`
 	DiscoveryTimeoutSeconds int                 `json:"discovery_timeout_seconds"`
 	ToolCallTimeoutSeconds  int                 `json:"tool_call_timeout_seconds"`
 	Servers                 []MCPServerResponse `json:"servers"`
@@ -110,6 +111,7 @@ type MCPServerResponse struct {
 
 type MCPSettingsUpdateRequest struct {
 	Enabled                 bool                     `json:"enabled"`
+	VerboseLogging          bool                     `json:"verbose_logging"`
 	DiscoveryTimeoutSeconds int                      `json:"discovery_timeout_seconds"`
 	ToolCallTimeoutSeconds  int                      `json:"tool_call_timeout_seconds"`
 	Servers                 []MCPServerUpdateRequest `json:"servers"`
@@ -163,6 +165,7 @@ func toMCPSettingsResponse(settings config.MCPSettings) MCPSettingsResponse {
 	}
 	return MCPSettingsResponse{
 		Enabled:                 settings.Enabled,
+		VerboseLogging:          settings.VerboseLogging,
 		DiscoveryTimeoutSeconds: settings.DiscoveryTimeoutSeconds,
 		ToolCallTimeoutSeconds:  settings.ToolCallTimeoutSeconds,
 		Servers:                 servers,

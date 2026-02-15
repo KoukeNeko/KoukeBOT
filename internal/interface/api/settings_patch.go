@@ -3,8 +3,9 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"net/http"
+
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 )
 
 func decodeSettingsUpdateRequest(r *http.Request) (SettingsUpdateRequest, error) {
@@ -189,6 +190,7 @@ func convertMCPSettingsUpdate(req MCPSettingsUpdateRequest) config.MCPSettings {
 	}
 	return config.MCPSettings{
 		Enabled:                 req.Enabled,
+		VerboseLogging:          req.VerboseLogging,
 		DiscoveryTimeoutSeconds: req.DiscoveryTimeoutSeconds,
 		ToolCallTimeoutSeconds:  req.ToolCallTimeoutSeconds,
 		Servers:                 servers,

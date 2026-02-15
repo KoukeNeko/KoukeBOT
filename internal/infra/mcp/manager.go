@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -14,7 +15,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 )
 
-var logMCP = logger.New("mcp", logger.Cyan)
+var logMCP = logger.New("MCP", logger.Cyan)
 
 type Manager struct {
 	mu         sync.RWMutex
@@ -80,9 +81,12 @@ func (m *Manager) BuildTools(ctx context.Context, settings config.MCPSettings) (
 
 		timeout := time.Duration(settings.DiscoveryTimeoutSeconds) * time.Second
 		discoverCtx, cancel := context.WithTimeout(ctx, timeout)
-		discovered, err := m.discoverWithServer(discoverCtx, server)
+		discovered, err := m.discoverWithServer(discoverCtx, server, settings.VerboseLogging)
 		cancel()
 		if err != nil {
+			if settings.VerboseLogging {
+				logMCP.Warnf("discover.failed server=%s transport=%s err=%v", server.ID, server.Transport, err)
+			}
 			warnings = append(warnings, fmt.Sprintf("mcp server %s discovery failed: %v", server.ID, err))
 			m.updateStatus(server.ID, func(status *ServerStatus) {
 				status.Enabled = true
@@ -94,6 +98,9 @@ func (m *Manager) BuildTools(ctx context.Context, settings config.MCPSettings) (
 				status.UpdatedAt = time.Now().UTC()
 			})
 			continue
+		}
+		if settings.VerboseLogging {
+			logMCP.Logf("discover.done server=%s discovered=%d", server.ID, len(discovered))
 		}
 
 		allowlist := make(map[string]struct{}, len(server.ToolAllowlist))
@@ -135,7 +142,14 @@ func (m *Manager) DiscoverServer(ctx context.Context, server config.MCPServerSet
 	timedCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	tools, err := m.discoverWithServer(timedCtx, server)
+	tools, err := m.discoverWithServer(timedCtx, server, m.verboseLoggingEnabled())
+	if m.verboseLoggingEnabled() {
+		if err != nil {
+			logMCP.Warnf("discover.manual.failed server=%s transport=%s err=%v", server.ID, server.Transport, err)
+		} else {
+			logMCP.Logf("discover.manual.done server=%s discovered=%d", server.ID, len(tools))
+		}
+	}
 	if server.ID != "" {
 		if err != nil {
 			m.updateStatus(server.ID, func(status *ServerStatus) {
@@ -166,7 +180,7 @@ func (m *Manager) DiscoverServer(ctx context.Context, server config.MCPServerSet
 }
 
 func (m *Manager) CallTool(ctx context.Context, serverID, toolName string, input map[string]interface{}) (string, bool, error) {
-	server, timeout, err := m.lookupServer(serverID)
+	server, timeout, verbose, err := m.lookupServer(serverID)
 	if err != nil {
 		return "", false, err
 	}
@@ -174,13 +188,24 @@ func (m *Manager) CallTool(ctx context.Context, serverID, toolName string, input
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if verbose {
+		logMCP.Logf(
+			"tool.call.start server=%s transport=%s tool=%s timeout=%s input=%s",
+			serverID,
+			server.Transport,
+			toolName,
+			timeout,
+			string(sanitizeJSONBytes(mustMarshalJSON(input))),
+		)
+	}
+
 	var content string
 	var isError bool
 	switch strings.TrimSpace(server.Transport) {
 	case TransportStdio:
-		content, isError, err = runStdioCallTool(callCtx, server, toolName, input)
+		content, isError, err = runStdioCallTool(callCtx, server, toolName, input, verbose)
 	case TransportHTTP:
-		content, isError, err = runHTTPCallTool(callCtx, m.httpClient, server, toolName, input)
+		content, isError, err = runHTTPCallTool(callCtx, m.httpClient, server, toolName, input, verbose)
 	default:
 		err = fmt.Errorf("unsupported MCP transport: %s", server.Transport)
 	}
@@ -192,6 +217,15 @@ func (m *Manager) CallTool(ctx context.Context, serverID, toolName string, input
 			status.UpdatedAt = time.Now().UTC()
 		})
 		return "", false, err
+	}
+	if verbose {
+		logMCP.Logf(
+			"tool.call.done server=%s tool=%s is_error=%t output=%s",
+			serverID,
+			toolName,
+			isError,
+			sanitizePayloadText(content),
+		)
 	}
 
 	m.updateStatus(serverID, func(status *ServerStatus) {
@@ -216,30 +250,33 @@ func (m *Manager) StatusSnapshot() []ServerStatus {
 	return statuses
 }
 
-func (m *Manager) lookupServer(serverID string) (config.MCPServerSetting, time.Duration, error) {
+func (m *Manager) lookupServer(serverID string) (config.MCPServerSetting, time.Duration, bool, error) {
 	m.mu.RLock()
 	server, ok := m.servers[serverID]
 	settings := m.settings
 	m.mu.RUnlock()
 	if !ok {
-		return config.MCPServerSetting{}, 0, fmt.Errorf("MCP server %q not found", serverID)
+		return config.MCPServerSetting{}, 0, false, fmt.Errorf("MCP server %q not found", serverID)
 	}
 	if !server.Enabled {
-		return config.MCPServerSetting{}, 0, fmt.Errorf("MCP server %q is disabled", serverID)
+		return config.MCPServerSetting{}, 0, false, fmt.Errorf("MCP server %q is disabled", serverID)
 	}
 	timeout := time.Duration(settings.ToolCallTimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = time.Duration(config.DefaultMCPToolCallTimeoutSeconds) * time.Second
 	}
-	return server, timeout, nil
+	return server, timeout, settings.VerboseLogging, nil
 }
 
-func (m *Manager) discoverWithServer(ctx context.Context, server config.MCPServerSetting) ([]ToolDescriptor, error) {
+func (m *Manager) discoverWithServer(ctx context.Context, server config.MCPServerSetting, verbose bool) ([]ToolDescriptor, error) {
+	if verbose {
+		logMCP.Logf("discover.start server=%s transport=%s", server.ID, server.Transport)
+	}
 	switch strings.TrimSpace(server.Transport) {
 	case TransportStdio:
-		return runStdioListTools(ctx, server)
+		return runStdioListTools(ctx, server, verbose)
 	case TransportHTTP:
-		return runHTTPListTools(ctx, m.httpClient, server)
+		return runHTTPListTools(ctx, m.httpClient, server, verbose)
 	default:
 		return nil, fmt.Errorf("unsupported MCP transport: %s", server.Transport)
 	}
@@ -276,4 +313,22 @@ func truncateMCPError(text string, maxLen int) string {
 		return text
 	}
 	return text[:maxLen-3] + "..."
+}
+
+func (m *Manager) verboseLoggingEnabled() bool {
+	m.mu.RLock()
+	enabled := m.settings.VerboseLogging
+	m.mu.RUnlock()
+	return enabled
+}
+
+func mustMarshalJSON(value any) []byte {
+	if value == nil {
+		return []byte("null")
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return []byte(fmt.Sprintf("%v", value))
+	}
+	return data
 }
