@@ -44,6 +44,12 @@ func TestNormalizeSettingsAppliesPromptGuardDefaultsForLegacyFile(t *testing.T) 
 	if got.NegativeConstraintDefault != DefaultNegativeConstraintPrompt {
 		t.Fatalf("NegativeConstraintDefault = %q, want default", got.NegativeConstraintDefault)
 	}
+	if got.DiscordObserveMaxResults != DefaultDiscordObserveMaxResults {
+		t.Fatalf("DiscordObserveMaxResults = %d, want %d", got.DiscordObserveMaxResults, DefaultDiscordObserveMaxResults)
+	}
+	if got.DiscordObserveMessageScope != DefaultDiscordObserveMessageScope {
+		t.Fatalf("DiscordObserveMessageScope = %q, want %q", got.DiscordObserveMessageScope, DefaultDiscordObserveMessageScope)
+	}
 }
 
 func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
@@ -76,5 +82,15 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 	}
 	if got.NegativeConstraintDefault != "keep this" {
 		t.Fatalf("NegativeConstraintDefault changed unexpectedly: %q", got.NegativeConstraintDefault)
+	}
+}
+
+func TestNormalizeSettingsDiscordObserveDefaultsOnSavePath(t *testing.T) {
+	got := normalizeSettings(Settings{}, nil)
+	if got.DiscordObserveMaxResults != DefaultDiscordObserveMaxResults {
+		t.Fatalf("DiscordObserveMaxResults = %d, want %d", got.DiscordObserveMaxResults, DefaultDiscordObserveMaxResults)
+	}
+	if got.DiscordObserveMessageScope != DefaultDiscordObserveMessageScope {
+		t.Fatalf("DiscordObserveMessageScope = %q, want %q", got.DiscordObserveMessageScope, DefaultDiscordObserveMessageScope)
 	}
 }

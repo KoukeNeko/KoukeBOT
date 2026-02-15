@@ -67,6 +67,11 @@ export interface SettingsData {
   // Discord logging settings
   log_channel_id?: string         // Discord channel ID for stdout logs
   discord_persona_id: string
+  discord_observe_enabled: boolean
+  discord_member_intent_enabled: boolean
+  discord_presence_intent_enabled: boolean
+  discord_observe_max_results: number
+  discord_observe_message_scope: 'current_channel' | 'current_guild'
 
   // Prompt guard / persona stability settings
   persona_lock_every_turns: number

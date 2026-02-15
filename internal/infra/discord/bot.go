@@ -11,26 +11,42 @@ var logBot = logger.New("discord", logger.Magenta)
 
 // Bot wraps a discordgo.Session with lifecycle management.
 type Bot struct {
-	session    *discordgo.Session
-	personaID  string   // active persona for this bot instance
-	commandIDs []string // registered slash command IDs (for cleanup)
+	session             *discordgo.Session
+	personaID           string   // active persona for this bot instance
+	commandIDs          []string // registered slash command IDs (for cleanup)
+	memberIntentEnabled bool
+	presenceIntent      bool
+}
+
+type NewBotOptions struct {
+	EnableMemberIntent   bool
+	EnablePresenceIntent bool
 }
 
 // NewBot creates a Discord bot session (does not open the connection yet).
-func NewBot(token, personaID string) (*Bot, error) {
+func NewBot(token, personaID string, options NewBotOptions) (*Bot, error) {
 	session, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, fmt.Errorf("create discord session: %w", err)
 	}
 
 	// We only need message events
-	session.Identify.Intents = discordgo.IntentsGuildMessages |
+	intents := discordgo.IntentsGuildMessages |
 		discordgo.IntentsDirectMessages |
 		discordgo.IntentsMessageContent
+	if options.EnableMemberIntent {
+		intents |= discordgo.IntentsGuildMembers
+	}
+	if options.EnablePresenceIntent {
+		intents |= discordgo.IntentsGuildPresences
+	}
+	session.Identify.Intents = intents
 
 	return &Bot{
-		session:   session,
-		personaID: personaID,
+		session:             session,
+		personaID:           personaID,
+		memberIntentEnabled: options.EnableMemberIntent,
+		presenceIntent:      options.EnablePresenceIntent,
 	}, nil
 }
 
@@ -47,6 +63,14 @@ func (b *Bot) PersonaID() string {
 // SetPersonaID switches the active persona.
 func (b *Bot) SetPersonaID(id string) {
 	b.personaID = id
+}
+
+func (b *Bot) MemberIntentEnabled() bool {
+	return b.memberIntentEnabled
+}
+
+func (b *Bot) PresenceIntentEnabled() bool {
+	return b.presenceIntent
 }
 
 // RegisterCommands registers slash commands globally.

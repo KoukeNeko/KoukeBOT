@@ -97,8 +97,14 @@ func run() error {
 	// Initialize tools (OpenClaw-style web search).
 	// File tool declarations use a startup fallback persona, while runtime execution
 	// is persona-snapshotted per request inside ChatService.
+	discordRuntime := discordbot.NewRuntime(discordbot.RuntimeOptions{
+		MemberIntentEnabled:   settings.DiscordMemberIntentEnabled,
+		PresenceIntentEnabled: settings.DiscordPresenceIntentEnabled,
+		MessageScope:          settings.DiscordObserveMessageScope,
+		MaxResults:            settings.DiscordObserveMaxResults,
+	})
 	fileToolPersonaID := selectFileToolPersonaID(personasDir, settings.DiscordPersonaID)
-	tools := initializeTools(settings, fileToolPersonaID)
+	tools := initializeTools(settings, fileToolPersonaID, discordRuntime)
 	if len(tools) > 0 {
 		providerManager.RegisterTools(tools)
 	}
@@ -124,7 +130,19 @@ func run() error {
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	var discordBot *discordbot.Bot
 	if settings.DiscordToken != "" {
-		bot, err := startDiscordBot(settings.DiscordToken, settings.DiscordUseReply, settings.DiscordPersonaID, personaService, chatService, convStore, imageStore, providerManager)
+		bot, err := startDiscordBot(
+			settings.DiscordToken,
+			settings.DiscordUseReply,
+			settings.DiscordPersonaID,
+			settings.DiscordMemberIntentEnabled,
+			settings.DiscordPresenceIntentEnabled,
+			personaService,
+			chatService,
+			convStore,
+			imageStore,
+			providerManager,
+			discordRuntime,
+		)
 		if err != nil {
 			logDiscord.Warnf("failed to start: %v", err)
 			logDiscord.Log("continuing without Discord — HTTP API still available")
@@ -274,7 +292,19 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 	return true
 }
 
-func startDiscordBot(token string, useReply bool, preferredPersonaID string, personaService *app.PersonaService, chatService *app.ChatService, convStore store.ConversationRepository, imageStore *store.ImageStore, providerManager *app.ProviderManager) (*discordbot.Bot, error) {
+func startDiscordBot(
+	token string,
+	useReply bool,
+	preferredPersonaID string,
+	enableMemberIntent bool,
+	enablePresenceIntent bool,
+	personaService *app.PersonaService,
+	chatService *app.ChatService,
+	convStore store.ConversationRepository,
+	imageStore *store.ImageStore,
+	providerManager *app.ProviderManager,
+	discordRuntime *discordbot.Runtime,
+) (*discordbot.Bot, error) {
 	// Use the first loaded persona as the default
 	var personaID string
 	if preferredPersonaID != "" {
@@ -293,7 +323,10 @@ func startDiscordBot(token string, useReply bool, preferredPersonaID string, per
 		return nil, fmt.Errorf("no personas loaded for Discord bot")
 	}
 
-	bot, err := discordbot.NewBot(token, personaID)
+	bot, err := discordbot.NewBot(token, personaID, discordbot.NewBotOptions{
+		EnableMemberIntent:   enableMemberIntent,
+		EnablePresenceIntent: enablePresenceIntent,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -306,6 +339,9 @@ func startDiscordBot(token string, useReply bool, preferredPersonaID string, per
 	// (RegisterCommands needs session.State.User.ID)
 	if err := bot.Start(); err != nil {
 		return nil, err
+	}
+	if discordRuntime != nil {
+		discordRuntime.BindSession(bot.Session())
 	}
 
 	// Register slash commands: /persona, /reset, /status, /reload
@@ -373,7 +409,7 @@ func withSPA(webDir string, apiHandler http.Handler) http.Handler {
 }
 
 // initializeTools creates and returns enabled tools based on settings
-func initializeTools(settings config.Settings, personaID string) []domain.Tool {
+func initializeTools(settings config.Settings, personaID string, discordRuntime *discordbot.Runtime) []domain.Tool {
 	var tools []domain.Tool
 	var toolNames []string
 
@@ -407,6 +443,18 @@ func initializeTools(settings config.Settings, personaID string) []domain.Tool {
 	}
 	tools = append(tools, llm.NewSessionStatusTool(timezone, timeFormat))
 	toolNames = append(toolNames, fmt.Sprintf("session_status (tz: %s)", timezone))
+
+	// Discord observe tool (read-only; Discord-source only).
+	if settings.DiscordObserveEnabled && discordRuntime != nil {
+		discordRuntime.SetOptions(discordbot.RuntimeOptions{
+			MemberIntentEnabled:   settings.DiscordMemberIntentEnabled,
+			PresenceIntentEnabled: settings.DiscordPresenceIntentEnabled,
+			MessageScope:          settings.DiscordObserveMessageScope,
+			MaxResults:            settings.DiscordObserveMaxResults,
+		})
+		tools = append(tools, llm.NewDiscordObserveTool(discordRuntime))
+		toolNames = append(toolNames, "discord_observe (read-only; current guild scope)")
+	}
 
 	// File Operations Tools (declarations only).
 	// Actual file tool execution is resolved dynamically by request persona at runtime.

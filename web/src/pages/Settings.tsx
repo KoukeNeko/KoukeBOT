@@ -47,6 +47,11 @@ export default function Settings() {
     memory_extraction_model: "",
     log_channel_id: "",
     discord_persona_id: "",
+    discord_observe_enabled: false,
+    discord_member_intent_enabled: false,
+    discord_presence_intent_enabled: false,
+    discord_observe_max_results: 25,
+    discord_observe_message_scope: "current_guild",
     persona_lock_every_turns: 4,
     triplet_output_enabled: true,
     analysis_visibility: "visible",
@@ -771,6 +776,75 @@ export default function Settings() {
             啟用後，BOT 會以 Discord 的「回覆」功能回應使用者訊息（顯示引用關係）
           </p>
         </div>
+
+        <div className="form-field-checkbox-row">
+          <Checkbox
+            checked={form.discord_observe_enabled}
+            onChange={(checked) => setForm({ ...form, discord_observe_enabled: checked })}
+            label="啟用 Discord Observe 工具（唯讀）"
+          />
+          <p className="hint-block">
+            讓 LLM 可讀取目前 guild 內的狀態/頻道/訊息（不含任何寫入操作）。預設關閉。
+            變更工具開關後需重啟 bot 套用。
+          </p>
+        </div>
+
+        {form.discord_observe_enabled && (
+          <>
+            <label className="form-field">
+              <span>訊息讀取範圍</span>
+              <Select
+                value={form.discord_observe_message_scope}
+                onChange={(val) =>
+                  setForm({
+                    ...form,
+                    discord_observe_message_scope: val as SettingsData["discord_observe_message_scope"],
+                  })
+                }
+                options={[
+                  { value: "current_guild", label: "current_guild（可讀同 guild 任一頻道）" },
+                  { value: "current_channel", label: "current_channel（僅當前頻道）" },
+                ]}
+              />
+            </label>
+
+            <label className="form-field">
+              <span>單次最大結果數</span>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={form.discord_observe_max_results}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    discord_observe_max_results: Number.parseInt(e.target.value || "25", 10),
+                  })
+                }
+              />
+            </label>
+
+            <div className="form-field-checkbox-row">
+              <Checkbox
+                checked={form.discord_member_intent_enabled}
+                onChange={(checked) => setForm({ ...form, discord_member_intent_enabled: checked })}
+                label="啟用 Member Intent（list_members）"
+              />
+            </div>
+
+            <div className="form-field-checkbox-row">
+              <Checkbox
+                checked={form.discord_presence_intent_enabled}
+                onChange={(checked) => setForm({ ...form, discord_presence_intent_enabled: checked })}
+                label="啟用 Presence Intent（list_presences）"
+              />
+            </div>
+
+            <p className="hint-block">
+              Intents 變更需要同時在 Discord Developer Portal 開啟對應 Privileged Gateway Intents，且重啟 bot 才會生效。
+            </p>
+          </>
+        )}
 
         <div className="discord-guide-block">
           <h4 className="discord-guide-title">Discord Bot 設定指引</h4>

@@ -113,6 +113,12 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
 	defer cancel()
+	ctx = llm.WithRequestContext(ctx, llm.RequestContext{
+		Source:    llm.RequestSourceDiscord,
+		GuildID:   m.GuildID,
+		ChannelID: m.ChannelID,
+		UserID:    m.Author.ID,
+	})
 	personaID := h.bot.PersonaID()
 	var historyCutoff *time.Time
 	if h.convStore != nil {
@@ -388,6 +394,8 @@ func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <
 					}
 				case "session_status":
 					toolMsg = "⏰ 正在取得時間資訊..."
+				case "discord_observe":
+					toolMsg = "🛰️ 正在讀取 Discord 狀態..."
 				default:
 					toolMsg = fmt.Sprintf("🔧 正在使用工具：%s", chunk.ToolName)
 				}

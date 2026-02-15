@@ -1017,6 +1017,8 @@ func compressToolResult(toolName, content string) string {
 		}
 	case "web_search":
 		maxChars = 3000
+	case "discord_observe":
+		maxChars = 3000
 	case "file_read":
 		maxChars = 2500
 	}

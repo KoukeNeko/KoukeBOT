@@ -14,9 +14,13 @@ const (
 	ProviderAPIKey = "api-key"
 	ProviderOAuth  = "oauth"
 
-	DefaultPersonaLockEveryTurns    = 4
-	DefaultAnalysisVisibility       = "visible"
-	DefaultNegativeConstraintPrompt = "You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude."
+	DefaultPersonaLockEveryTurns      = 4
+	DefaultAnalysisVisibility         = "visible"
+	DefaultNegativeConstraintPrompt   = "You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude."
+	DefaultDiscordObserveMaxResults   = 25
+	DiscordObserveScopeCurrentChannel = "current_channel"
+	DiscordObserveScopeCurrentGuild   = "current_guild"
+	DefaultDiscordObserveMessageScope = DiscordObserveScopeCurrentGuild
 )
 
 // Settings holds the runtime-configurable values.
@@ -53,6 +57,13 @@ type Settings struct {
 	LogChannelID string `json:"log_channel_id"` // Discord channel ID for stdout logs (optional)
 	// Preferred active persona for Discord bot runtime.
 	DiscordPersonaID string `json:"discord_persona_id"`
+
+	// Discord observe tool settings (read-only Discord inspection)
+	DiscordObserveEnabled        bool   `json:"discord_observe_enabled"`
+	DiscordMemberIntentEnabled   bool   `json:"discord_member_intent_enabled"`
+	DiscordPresenceIntentEnabled bool   `json:"discord_presence_intent_enabled"`
+	DiscordObserveMaxResults     int    `json:"discord_observe_max_results"`
+	DiscordObserveMessageScope   string `json:"discord_observe_message_scope"` // "current_channel" | "current_guild"
 
 	// Prompt guard / persona stability settings
 	PersonaLockEveryTurns     int    `json:"persona_lock_every_turns"`    // Inject persona lock every N user turns (default: 4)
@@ -143,6 +154,12 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 		if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
 			settings.NegativeConstraintDefault = DefaultNegativeConstraintPrompt
 		}
+		if settings.DiscordObserveMaxResults <= 0 {
+			settings.DiscordObserveMaxResults = DefaultDiscordObserveMaxResults
+		}
+		if settings.DiscordObserveMessageScope == "" {
+			settings.DiscordObserveMessageScope = DefaultDiscordObserveMessageScope
+		}
 		return normalizeVisibilityAndBooleans(settings)
 	}
 
@@ -161,6 +178,12 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	}
 	if _, ok := raw["persona_lock_every_turns"]; !ok && settings.PersonaLockEveryTurns <= 0 {
 		settings.PersonaLockEveryTurns = DefaultPersonaLockEveryTurns
+	}
+	if _, ok := raw["discord_observe_max_results"]; !ok && settings.DiscordObserveMaxResults <= 0 {
+		settings.DiscordObserveMaxResults = DefaultDiscordObserveMaxResults
+	}
+	if _, ok := raw["discord_observe_message_scope"]; !ok && settings.DiscordObserveMessageScope == "" {
+		settings.DiscordObserveMessageScope = DefaultDiscordObserveMessageScope
 	}
 
 	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
@@ -182,6 +205,18 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 	}
 	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
 		settings.NegativeConstraintDefault = DefaultNegativeConstraintPrompt
+	}
+	if settings.DiscordObserveMaxResults <= 0 {
+		settings.DiscordObserveMaxResults = DefaultDiscordObserveMaxResults
+	}
+	if settings.DiscordObserveMaxResults > 100 {
+		settings.DiscordObserveMaxResults = 100
+	}
+	switch settings.DiscordObserveMessageScope {
+	case DiscordObserveScopeCurrentChannel, DiscordObserveScopeCurrentGuild:
+		// valid
+	default:
+		settings.DiscordObserveMessageScope = DefaultDiscordObserveMessageScope
 	}
 	return settings
 }
