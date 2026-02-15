@@ -315,6 +315,13 @@ func TestProviderPoolTransientWaitRetrySucceeds(t *testing.T) {
 	if elapsed := time.Since(start); elapsed < 70*time.Millisecond {
 		t.Fatalf("expected wait before retry, elapsed=%v", elapsed)
 	}
+	metrics := pool.MetricsSnapshot()
+	if metrics.TransientWaitRetry == 0 {
+		t.Fatalf("expected transient wait retry metric to increment")
+	}
+	if metrics.TransientWaitRetrySucceeded == 0 {
+		t.Fatalf("expected transient wait retry success metric to increment")
+	}
 }
 
 func TestProviderPoolTransientWaitDisabledReturnsExhausted(t *testing.T) {
@@ -332,5 +339,9 @@ func TestProviderPoolTransientWaitDisabledReturnsExhausted(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exhausted") {
 		t.Fatalf("expected exhausted error, got: %v", err)
+	}
+	metrics := pool.MetricsSnapshot()
+	if metrics.AllAccountsExhausted == 0 {
+		t.Fatalf("expected all accounts exhausted metric to increment")
 	}
 }

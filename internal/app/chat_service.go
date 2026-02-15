@@ -58,6 +58,13 @@ type ChatService struct {
 
 	toolPolicyMu sync.RWMutex
 	toolPolicy   ToolExecutionPolicy
+
+	metricToolGuardDuplicateBlocked uint64
+	metricToolGuardLimitBlocked     uint64
+	metricToolGuardMaxRounds        uint64
+	metricToolForcedFinalSuccess    uint64
+	metricToolForcedFinalFailed     uint64
+	metricToolLoopFallback          uint64
 }
 
 func NewChatService(
@@ -136,6 +143,29 @@ func normalizeToolExecutionPolicy(policy ToolExecutionPolicy) ToolExecutionPolic
 		policy.MaxWebSearchCallsPerTurn = 4
 	}
 	return policy
+}
+
+type ToolLoopMetrics struct {
+	ToolGuardDuplicateBlocked uint64 `json:"tool_guard_duplicate_blocked"`
+	ToolGuardLimitBlocked     uint64 `json:"tool_guard_limit_blocked"`
+	ToolGuardMaxRounds        uint64 `json:"tool_guard_max_rounds"`
+	ToolForcedFinalSuccess    uint64 `json:"tool_forced_final_success"`
+	ToolForcedFinalFailed     uint64 `json:"tool_forced_final_failed"`
+	ToolLoopFallback          uint64 `json:"tool_loop_fallback"`
+}
+
+func (s *ChatService) ToolLoopMetricsSnapshot() ToolLoopMetrics {
+	if s == nil {
+		return ToolLoopMetrics{}
+	}
+	return ToolLoopMetrics{
+		ToolGuardDuplicateBlocked: atomic.LoadUint64(&s.metricToolGuardDuplicateBlocked),
+		ToolGuardLimitBlocked:     atomic.LoadUint64(&s.metricToolGuardLimitBlocked),
+		ToolGuardMaxRounds:        atomic.LoadUint64(&s.metricToolGuardMaxRounds),
+		ToolForcedFinalSuccess:    atomic.LoadUint64(&s.metricToolForcedFinalSuccess),
+		ToolForcedFinalFailed:     atomic.LoadUint64(&s.metricToolForcedFinalFailed),
+		ToolLoopFallback:          atomic.LoadUint64(&s.metricToolLoopFallback),
+	}
 }
 
 // HandleMessage processes a user message and returns the assistant response.
@@ -892,6 +922,7 @@ func (s *ChatService) handleToolCallingStream(
 			if round == toolPolicy.MaxToolRounds {
 				guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached",
 					fmt.Sprintf("max_tool_rounds=%d", toolPolicy.MaxToolRounds))
+				atomic.AddUint64(&s.metricToolGuardMaxRounds, 1)
 				logChat.Warnf("max tool rounds (%d) reached, stopping", toolPolicy.MaxToolRounds)
 				break
 			}
@@ -916,6 +947,7 @@ func (s *ChatService) handleToolCallingStream(
 						"tool_call_limit_reached",
 						fmt.Sprintf("max_web_search_calls_per_turn=%d", toolPolicy.MaxWebSearchCallsPerTurn),
 					)
+					atomic.AddUint64(&s.metricToolGuardLimitBlocked, 1)
 					toolResults = append(toolResults, buildToolLimitGuardResult(call, toolPolicy.MaxWebSearchCallsPerTurn))
 					logChat.Warnf("tool loop guard blocked limit (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
 					continue
@@ -924,6 +956,7 @@ func (s *ChatService) handleToolCallingStream(
 				signature := toolCallSignature(call)
 				if toolCallAttempts[signature] >= 1 {
 					guardSummary.Add(toolGuardKindDuplicate, call.Name, "duplicate_tool_call_blocked", "")
+					atomic.AddUint64(&s.metricToolGuardDuplicateBlocked, 1)
 					toolResults = append(toolResults, buildDuplicateToolGuardResult(call))
 					logChat.Warnf("tool loop guard blocked duplicate call (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
 					continue
@@ -1017,8 +1050,10 @@ func (s *ChatService) handleToolCallingStream(
 			forcedResponse, forcedTokens, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, guardSummary)
 			totalTokens += forcedTokens
 			if err != nil {
+				atomic.AddUint64(&s.metricToolForcedFinalFailed, 1)
 				logChat.Warnf("forced final answer failed: %v", err)
 			} else if strings.TrimSpace(forcedResponse) != "" {
+				atomic.AddUint64(&s.metricToolForcedFinalSuccess, 1)
 				fullResponse = forcedResponse
 				if !hideAnalysis {
 					outputCh <- llm.StreamChunk{Content: forcedResponse}
@@ -1029,6 +1064,7 @@ func (s *ChatService) handleToolCallingStream(
 		}
 
 		if strings.TrimSpace(fullResponse) == "" && len(allToolCalls) > 0 {
+			atomic.AddUint64(&s.metricToolLoopFallback, 1)
 			fullResponse = buildToolLoopFallbackResponse(promptPolicy)
 			logChat.Warnf("tool loop fallback response generated after %d tool call(s)", len(allToolCalls))
 		}

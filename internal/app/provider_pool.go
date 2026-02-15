@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -73,6 +74,11 @@ type ProviderPool struct {
 
 	transientRecoveryWaitEnabled bool
 	transientRecoveryWaitMax     time.Duration
+
+	metricTransientWaitRetry          uint64
+	metricTransientWaitRetrySucceeded uint64
+	metricTransientWaitRetryFailed    uint64
+	metricAllAccountsExhausted        uint64
 }
 
 // NewProviderPool creates an empty provider pool.
@@ -111,6 +117,25 @@ func (pp *ProviderPool) SetTransientRecoveryWait(enabled bool, maxWait time.Dura
 	}
 	pp.transientRecoveryWaitEnabled = enabled
 	pp.transientRecoveryWaitMax = maxWait
+}
+
+type ProviderPoolMetrics struct {
+	TransientWaitRetry          uint64 `json:"transient_wait_retry"`
+	TransientWaitRetrySucceeded uint64 `json:"transient_wait_retry_succeeded"`
+	TransientWaitRetryFailed    uint64 `json:"transient_wait_retry_failed"`
+	AllAccountsExhausted        uint64 `json:"all_accounts_exhausted"`
+}
+
+func (pp *ProviderPool) MetricsSnapshot() ProviderPoolMetrics {
+	if pp == nil {
+		return ProviderPoolMetrics{}
+	}
+	return ProviderPoolMetrics{
+		TransientWaitRetry:          atomic.LoadUint64(&pp.metricTransientWaitRetry),
+		TransientWaitRetrySucceeded: atomic.LoadUint64(&pp.metricTransientWaitRetrySucceeded),
+		TransientWaitRetryFailed:    atomic.LoadUint64(&pp.metricTransientWaitRetryFailed),
+		AllAccountsExhausted:        atomic.LoadUint64(&pp.metricAllAccountsExhausted),
+	}
 }
 
 // Add appends or replaces a provider in the pool.
@@ -349,6 +374,7 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 
 			if canWait && !waitRetryUsed {
 				waitRetryUsed = true
+				atomic.AddUint64(&pp.metricTransientWaitRetry, 1)
 				logPool.Logf("metric pool.transient_wait_retry=1")
 				logPool.Warnf("all %d account(s) cooling down transiently — waiting %s before one retry", totalEntries, formatDuration(waitDuration))
 
@@ -370,12 +396,15 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			}
 
 			if waitRetryUsed {
+				atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
 				logPool.Logf("metric pool.transient_wait_retry_failed=1")
 			}
 			if earliest != "" {
+				atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
 				logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
 				return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
 			}
+			atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
 			return zero, fmt.Errorf("all %d OAuth account(s) exhausted", totalEntries)
 		}
 
@@ -385,6 +414,7 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		if err == nil {
 			pp.markSuccess(email, time.Now())
 			if waitRetryUsed {
+				atomic.AddUint64(&pp.metricTransientWaitRetrySucceeded, 1)
 				logPool.Logf("metric pool.transient_wait_retry_succeeded=1")
 			}
 			return result, nil
@@ -393,6 +423,7 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			// Request-level timeout/cancel is not account-specific.
 			// Do not mark provider exhausted or fail over to another account.
 			if waitRetryUsed {
+				atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
 				logPool.Logf("metric pool.transient_wait_retry_failed=1")
 			}
 			return result, err
@@ -441,12 +472,14 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		case errorValidation:
 			logPool.Warnf("validation error with %s: %v", email, err)
 			if waitRetryUsed {
+				atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
 				logPool.Logf("metric pool.transient_wait_retry_failed=1")
 			}
 			return result, err
 
 		default:
 			if waitRetryUsed {
+				atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
 				logPool.Logf("metric pool.transient_wait_retry_failed=1")
 			}
 			return result, err
@@ -459,12 +492,15 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 	pp.mu.RUnlock()
 
 	if waitRetryUsed {
+		atomic.AddUint64(&pp.metricTransientWaitRetryFailed, 1)
 		logPool.Logf("metric pool.transient_wait_retry_failed=1")
 	}
 	if earliest != "" {
+		atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
 		logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
 		return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
 	}
+	atomic.AddUint64(&pp.metricAllAccountsExhausted, 1)
 	return zero, fmt.Errorf("all %d OAuth account(s) exhausted", totalEntries)
 }
 

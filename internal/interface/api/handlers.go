@@ -584,6 +584,24 @@ type ProviderStatusResponse struct {
 	Model        string `json:"model"`
 }
 
+type RuntimeMetricsResponse struct {
+	Timestamp string `json:"timestamp"`
+
+	ToolGuardDuplicateBlocked uint64 `json:"tool_guard_duplicate_blocked"`
+	ToolGuardLimitBlocked     uint64 `json:"tool_guard_limit_blocked"`
+	ToolGuardMaxRounds        uint64 `json:"tool_guard_max_rounds"`
+	ToolForcedFinalSuccess    uint64 `json:"tool_forced_final_success"`
+	ToolForcedFinalFailed     uint64 `json:"tool_forced_final_failed"`
+	ToolLoopFallback          uint64 `json:"tool_loop_fallback"`
+
+	PoolTransientWaitRetry          uint64 `json:"pool_transient_wait_retry"`
+	PoolTransientWaitRetrySucceeded uint64 `json:"pool_transient_wait_retry_succeeded"`
+	PoolTransientWaitRetryFailed    uint64 `json:"pool_transient_wait_retry_failed"`
+	PoolAllAccountsExhausted        uint64 `json:"pool_all_accounts_exhausted"`
+	PoolAccountsTotal               int    `json:"pool_accounts_total"`
+	PoolAccountsExhaustedCurrent    int    `json:"pool_accounts_exhausted_current"`
+}
+
 func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.settingsStore.Load()
 	if err != nil {
@@ -916,6 +934,45 @@ func (h *Handlers) GetProviderStatus(w http.ResponseWriter, r *http.Request) {
 		Configured:   h.providerManager.IsConfigured(),
 		ProviderName: info.ProviderName,
 		Model:        info.ProviderName, // ModelInfo doesn't expose model name separately
+	})
+}
+
+func (h *Handlers) GetRuntimeMetrics(w http.ResponseWriter, r *http.Request) {
+	tool := h.chatService.ToolLoopMetricsSnapshot()
+
+	var (
+		poolMetrics           app.ProviderPoolMetrics
+		poolEntries           []app.PoolStatus
+		poolAccountsTotal     int
+		poolAccountsExhausted int
+	)
+	if pool := h.providerManager.GetPool(); pool != nil {
+		poolMetrics = pool.MetricsSnapshot()
+		poolEntries = pool.Entries()
+		poolAccountsTotal = len(poolEntries)
+		for _, entry := range poolEntries {
+			if entry.Status == "exhausted" {
+				poolAccountsExhausted++
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, RuntimeMetricsResponse{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+
+		ToolGuardDuplicateBlocked: tool.ToolGuardDuplicateBlocked,
+		ToolGuardLimitBlocked:     tool.ToolGuardLimitBlocked,
+		ToolGuardMaxRounds:        tool.ToolGuardMaxRounds,
+		ToolForcedFinalSuccess:    tool.ToolForcedFinalSuccess,
+		ToolForcedFinalFailed:     tool.ToolForcedFinalFailed,
+		ToolLoopFallback:          tool.ToolLoopFallback,
+
+		PoolTransientWaitRetry:          poolMetrics.TransientWaitRetry,
+		PoolTransientWaitRetrySucceeded: poolMetrics.TransientWaitRetrySucceeded,
+		PoolTransientWaitRetryFailed:    poolMetrics.TransientWaitRetryFailed,
+		PoolAllAccountsExhausted:        poolMetrics.AllAccountsExhausted,
+		PoolAccountsTotal:               poolAccountsTotal,
+		PoolAccountsExhaustedCurrent:    poolAccountsExhausted,
 	})
 }
 

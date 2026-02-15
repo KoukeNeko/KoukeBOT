@@ -98,6 +98,22 @@ export interface ProviderStatus {
   model: string
 }
 
+export interface RuntimeMetrics {
+  timestamp: string
+  tool_guard_duplicate_blocked: number
+  tool_guard_limit_blocked: number
+  tool_guard_max_rounds: number
+  tool_forced_final_success: number
+  tool_forced_final_failed: number
+  tool_loop_fallback: number
+  pool_transient_wait_retry: number
+  pool_transient_wait_retry_succeeded: number
+  pool_transient_wait_retry_failed: number
+  pool_all_accounts_exhausted: number
+  pool_accounts_total: number
+  pool_accounts_exhausted_current: number
+}
+
 export interface OAuthDetectResult {
   found: boolean
   client_id?: string

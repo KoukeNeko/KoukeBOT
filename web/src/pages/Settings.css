@@ -241,6 +241,44 @@
   margin-top: 1rem;
 }
 
+.runtime-metrics-section {
+  margin-top: 0.5rem;
+}
+
+.runtime-metrics-updated {
+  margin-top: -0.6rem;
+  margin-bottom: 1rem;
+  color: #8f93b1;
+  font-size: 0.8rem;
+}
+
+.runtime-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.7rem;
+}
+
+.runtime-metric-card {
+  background: #101426;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.runtime-metric-label {
+  color: #9da3c8;
+  font-size: 0.78rem;
+}
+
+.runtime-metric-value {
+  color: #e9ecff;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
 .settings-page .form-field {
   margin-bottom: 1.25rem;
 }
