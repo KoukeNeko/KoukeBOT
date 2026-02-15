@@ -766,6 +766,10 @@ func buildToolLimitGuardResult(call domain.ToolCall, limit int) domain.ToolResul
 	}
 }
 
+func isToolGuardResultMessage(content string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(content)), "tool guard:")
+}
+
 func buildForcedFinalAnswerPrompt(summary toolGuardSummary) string {
 	var b strings.Builder
 	b.WriteString("[Tool guard continuation]\n")
@@ -979,6 +983,11 @@ func (s *ChatService) handleToolCallingStream(
 			}
 			for _, result := range toolResults {
 				if !result.IsError {
+					continue
+				}
+				if isToolGuardResultMessage(result.Content) {
+					// Guard-triggered tool errors are internal control signals.
+					// Keep them in backend logs/context, but do not surface to Discord users.
 					continue
 				}
 				call := toolCallMap[result.ToolCallID]
