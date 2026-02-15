@@ -33,6 +33,16 @@ flowchart TD
 - `chat_service_formatting.go`: prompt snapshots, tool result formatting/compression, display/raw mapping.
 - `chat_service_metrics.go`: tool-loop metrics snapshot and token accounting.
 
+## Entry Composition
+- `cmd/character/main.go`: entrypoint and high-level orchestration only.
+- `internal/bootstrap/runtime.go`: runtime dependency graph construction.
+- `internal/bootstrap/provider_init.go`: provider mode init and guarded fallback path.
+- `internal/bootstrap/discord.go`: Discord handler assembly.
+- `internal/bootstrap/http.go`: HTTP server and API handler assembly.
+- `internal/bootstrap/settings.go`: settings loading/defaults and startup validation.
+- `internal/interface/api/handlers_settings.go`: settings endpoints only; patch/apply/validation are split to dedicated files.
+- `internal/interface/discord/handler*.go`: Discord runtime split by message, stream, context, formatting, and attachments responsibilities.
+
 ## Inputs and Outputs
 - Input (entrypoint): `channel_id/persona_id` or `conversation_id`, user message, optional images/history entries.
 - Internal output: assembled prompt, provider stream chunks, tool results, guard events.
