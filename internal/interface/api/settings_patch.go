@@ -118,6 +118,9 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
 	}
 	existing.MemoryExtractionModel = req.MemoryExtractionModel
+	if req.MemoryRecentRounds != nil {
+		existing.MemoryRecentRounds = *req.MemoryRecentRounds
+	}
 	existing.LogChannelID = req.LogChannelID
 	if req.DiscordPersonaID != "" {
 		if _, ok := h.personaService.Get(req.DiscordPersonaID); !ok {
@@ -138,6 +141,9 @@ func (h *Handlers) validateUpdatedSettings(settings config.Settings) error {
 		return err
 	}
 	if err := validateDiscordObserveSettings(settings.DiscordObserveMaxResults, settings.DiscordObserveMessageScope); err != nil {
+		return err
+	}
+	if err := validateMemoryRetentionSettings(settings.MemoryRecentRounds); err != nil {
 		return err
 	}
 	return validateToolLoopSettings(
@@ -172,6 +178,9 @@ func (h *Handlers) saveAndHotSwapSettings(existing config.Settings) (map[string]
 		MaxWebSearchCallsPerTurn:       existing.MaxWebSearchCallsPerTurn,
 		ForceFinalAnswerAfterToolLimit: existing.ForceFinalAnswerAfterToolLimit,
 		DiscordShowInternalToolErrors:  existing.DiscordShowInternalToolErrors,
+	})
+	h.chatService.UpdateMemoryRetentionPolicy(app.MemoryRetentionPolicy{
+		RecentRounds: existing.MemoryRecentRounds,
 	})
 	if pool := h.providerManager.GetPool(); pool != nil {
 		pool.SetTransientRecoveryWait(

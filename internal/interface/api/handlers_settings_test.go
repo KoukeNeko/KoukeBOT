@@ -181,3 +181,27 @@ func TestValidateToolLoopSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateMemoryRetentionSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		rounds  int
+		wantErr bool
+	}{
+		{name: "valid minimum", rounds: config.MinMemoryRecentRounds, wantErr: false},
+		{name: "valid default", rounds: config.DefaultMemoryRecentRounds, wantErr: false},
+		{name: "valid maximum", rounds: config.MaxMemoryRecentRounds, wantErr: false},
+		{name: "too small", rounds: config.MinMemoryRecentRounds - 1, wantErr: true},
+		{name: "too large", rounds: config.MaxMemoryRecentRounds + 1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateMemoryRetentionSettings(tt.rounds)
+		if tt.wantErr && err == nil {
+			t.Fatalf("%s: expected error", tt.name)
+		}
+		if !tt.wantErr && err != nil {
+			t.Fatalf("%s: unexpected error: %v", tt.name, err)
+		}
+	}
+}

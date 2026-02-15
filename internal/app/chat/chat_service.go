@@ -28,12 +28,23 @@ type ToolExecutionPolicy struct {
 	DiscordShowInternalToolErrors  bool
 }
 
+// MemoryRetentionPolicy controls how much recent raw history to preserve.
+type MemoryRetentionPolicy struct {
+	RecentRounds int // one round = user + assistant
+}
+
 func DefaultToolExecutionPolicy() ToolExecutionPolicy {
 	return ToolExecutionPolicy{
 		MaxToolRounds:                  DefaultMaxToolRounds,
 		MaxWebSearchCallsPerTurn:       DefaultMaxWebSearchCallsPerTurn,
 		ForceFinalAnswerAfterToolLimit: true,
 		DiscordShowInternalToolErrors:  true,
+	}
+}
+
+func DefaultMemoryRetentionPolicy() MemoryRetentionPolicy {
+	return MemoryRetentionPolicy{
+		RecentRounds: defaultMemoryRecentRounds,
 	}
 }
 
@@ -52,8 +63,10 @@ type ChatService struct {
 	memoryFlushRunner MemoryFlushRunner
 	multimodalRunner  MultimodalRunner
 
-	toolPolicyMu sync.RWMutex
-	toolPolicy   ToolExecutionPolicy
+	toolPolicyMu   sync.RWMutex
+	toolPolicy     ToolExecutionPolicy
+	memoryPolicyMu sync.RWMutex
+	memoryPolicy   MemoryRetentionPolicy
 
 	metricToolGuardDuplicateBlocked uint64
 	metricToolGuardLimitBlocked     uint64
@@ -93,7 +106,9 @@ func NewChatService(
 		toolRegistry:      toolRegistry,
 		contextManager:    contextManager,
 		toolPolicy:        DefaultToolExecutionPolicy(),
+		memoryPolicy:      DefaultMemoryRetentionPolicy(),
 	}
+	service.applyMemoryRetentionPolicy(service.memoryPolicy)
 	service.toolLoopRunner = defaultToolLoopRunner{service: service}
 	service.memoryFlushRunner = defaultMemoryFlushRunner{service: service}
 	service.multimodalRunner = defaultMultimodalRunner{service: service}
@@ -119,6 +134,18 @@ func (s *ChatService) UpdateToolExecutionPolicy(policy ToolExecutionPolicy) {
 	s.toolPolicyMu.Unlock()
 }
 
+// UpdateMemoryRetentionPolicy hot-swaps recent-history retention without restart.
+func (s *ChatService) UpdateMemoryRetentionPolicy(policy MemoryRetentionPolicy) {
+	if s == nil {
+		return
+	}
+	normalized := normalizeMemoryRetentionPolicy(policy)
+	s.memoryPolicyMu.Lock()
+	s.memoryPolicy = normalized
+	s.memoryPolicyMu.Unlock()
+	s.applyMemoryRetentionPolicy(normalized)
+}
+
 func (s *ChatService) toolExecutionPolicySnapshot() ToolExecutionPolicy {
 	if s == nil {
 		return DefaultToolExecutionPolicy()
@@ -127,6 +154,30 @@ func (s *ChatService) toolExecutionPolicySnapshot() ToolExecutionPolicy {
 	policy := s.toolPolicy
 	s.toolPolicyMu.RUnlock()
 	return normalizeToolExecutionPolicy(policy)
+}
+
+func (s *ChatService) memoryRetentionPolicySnapshot() MemoryRetentionPolicy {
+	if s == nil {
+		return DefaultMemoryRetentionPolicy()
+	}
+	s.memoryPolicyMu.RLock()
+	policy := s.memoryPolicy
+	s.memoryPolicyMu.RUnlock()
+	return normalizeMemoryRetentionPolicy(policy)
+}
+
+func (s *ChatService) keepRecentMessagesSnapshot() int {
+	return roundsToRecentMessages(s.memoryRetentionPolicySnapshot().RecentRounds)
+}
+
+func (s *ChatService) applyMemoryRetentionPolicy(policy MemoryRetentionPolicy) {
+	recentMessages := roundsToRecentMessages(policy.RecentRounds)
+	if s.assembler != nil {
+		s.assembler.UpdateMemoryRecentMessages(recentMessages)
+	}
+	if s.contextManager != nil {
+		s.contextManager.UpdateKeepRecentMessages(recentMessages)
+	}
 }
 
 func normalizeToolExecutionPolicy(policy ToolExecutionPolicy) ToolExecutionPolicy {
@@ -144,6 +195,21 @@ func normalizeToolExecutionPolicy(policy ToolExecutionPolicy) ToolExecutionPolic
 		policy.MaxWebSearchCallsPerTurn = 4
 	}
 	return policy
+}
+
+func normalizeMemoryRetentionPolicy(policy MemoryRetentionPolicy) MemoryRetentionPolicy {
+	defaults := DefaultMemoryRetentionPolicy()
+	if policy.RecentRounds < minMemoryRecentMessages/2 {
+		policy.RecentRounds = defaults.RecentRounds
+	}
+	if policy.RecentRounds > maxMemoryRecentMessages/2 {
+		policy.RecentRounds = maxMemoryRecentMessages / 2
+	}
+	return policy
+}
+
+func roundsToRecentMessages(rounds int) int {
+	return normalizeMemoryRetentionPolicy(MemoryRetentionPolicy{RecentRounds: rounds}).RecentRounds * 2
 }
 
 func (s *ChatService) incrementToolGuardDuplicateBlocked() {

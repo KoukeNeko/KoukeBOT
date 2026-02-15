@@ -178,6 +178,9 @@ func buildRuntimeServices(
 		ForceFinalAnswerAfterToolLimit: settings.ForceFinalAnswerAfterToolLimit,
 		DiscordShowInternalToolErrors:  settings.DiscordShowInternalToolErrors,
 	})
+	chatService.UpdateMemoryRetentionPolicy(app.MemoryRetentionPolicy{
+		RecentRounds: settings.MemoryRecentRounds,
+	})
 
 	return &runtimeServices{
 		providerManager: providerManager,

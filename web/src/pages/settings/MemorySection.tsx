@@ -54,6 +54,27 @@ export default function MemorySection({ form, setForm, modelOptions, saving, onS
         </div>
       )}
 
+      <div className="tool-settings-indent">
+        <label className="form-field">
+          <span>近期原始對話輪數</span>
+          <input
+            type="number"
+            min={20}
+            max={100}
+            value={form.memory_recent_rounds}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                memory_recent_rounds: Number.parseInt(e.target.value || "0", 10),
+              })
+            }
+          />
+          <span className="hint">
+            控制保留多少近期原始對話（1 輪 = 使用者 + 助手）。預設 50 輪約等於 100 則訊息。
+          </span>
+        </label>
+      </div>
+
       <button onClick={onSave} disabled={saving} className="btn-save-bottom">
         {saving ? "Saving..." : "Save"}
       </button>

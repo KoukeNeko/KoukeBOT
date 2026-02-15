@@ -10,13 +10,14 @@ import (
 // Chat facade types keep existing app-level API stable while chat internals
 // live in a dedicated package for clearer project structure.
 type (
-	ChatService         = chatpkg.ChatService
-	ToolExecutionPolicy = chatpkg.ToolExecutionPolicy
-	ToolLoopMetrics     = chatpkg.ToolLoopMetrics
-	ContextManager      = chatpkg.ContextManager
-	ContextAssembler    = chatpkg.ContextAssembler
-	PromptGuardPolicy   = chatpkg.PromptGuardPolicy
-	AssembledContext    = chatpkg.AssembledContext
+	ChatService           = chatpkg.ChatService
+	ToolExecutionPolicy   = chatpkg.ToolExecutionPolicy
+	MemoryRetentionPolicy = chatpkg.MemoryRetentionPolicy
+	ToolLoopMetrics       = chatpkg.ToolLoopMetrics
+	ContextManager        = chatpkg.ContextManager
+	ContextAssembler      = chatpkg.ContextAssembler
+	PromptGuardPolicy     = chatpkg.PromptGuardPolicy
+	AssembledContext      = chatpkg.AssembledContext
 )
 
 const (
@@ -31,6 +32,10 @@ func DefaultPromptGuardPolicy() PromptGuardPolicy {
 
 func DefaultToolExecutionPolicy() ToolExecutionPolicy {
 	return chatpkg.DefaultToolExecutionPolicy()
+}
+
+func DefaultMemoryRetentionPolicy() MemoryRetentionPolicy {
+	return chatpkg.DefaultMemoryRetentionPolicy()
 }
 
 func NewContextManager(flushThreshold, windowSize int) *ContextManager {

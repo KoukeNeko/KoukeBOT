@@ -34,7 +34,7 @@ func (s *ChatService) applyTokenAccounting(conv *domain.Conversation, turnTokens
 		return
 	}
 	conv.AddUsageTokens(turnTokens)
-	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, s.keepRecentMessagesSnapshot())
 
 	if turnTokens > 0 {
 		logChat.Logf("tokens: +%d (usage_total: %d, context_estimate: %d)", turnTokens, conv.UsageTokensTotal, conv.CumulativeTokens)

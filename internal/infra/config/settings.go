@@ -24,6 +24,9 @@ const (
 	DefaultMaxToolRounds              = 3
 	DefaultMaxWebSearchCallsPerTurn   = 2
 	DefaultTransientRecoveryWaitMax   = 5
+	DefaultMemoryRecentRounds         = 50
+	MinMemoryRecentRounds             = 20
+	MaxMemoryRecentRounds             = 100
 )
 
 // Settings holds the runtime-configurable values.
@@ -55,6 +58,7 @@ type Settings struct {
 	// Memory extraction settings (UI-visible, not yet wired to backend logic)
 	MemoryExtractionEnabled bool   `json:"memory_extraction_enabled"` // Enable automatic memory extraction after conversations
 	MemoryExtractionModel   string `json:"memory_extraction_model"`   // Model for memory extraction (e.g. "gemini-2.0-flash")
+	MemoryRecentRounds      int    `json:"memory_recent_rounds"`      // Number of recent user+assistant rounds to keep as raw history
 
 	// Provider pool settings
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
@@ -183,6 +187,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 		if settings.TransientRecoveryWaitMaxSeconds <= 0 {
 			settings.TransientRecoveryWaitMaxSeconds = DefaultTransientRecoveryWaitMax
 		}
+		if settings.MemoryRecentRounds <= 0 {
+			settings.MemoryRecentRounds = DefaultMemoryRecentRounds
+		}
 		return normalizeVisibilityAndBooleans(settings)
 	}
 
@@ -228,6 +235,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	}
 	if _, ok := raw["discord_strip_leading_bot_mention"]; !ok {
 		settings.DiscordStripLeadingBotMention = false
+	}
+	if _, ok := raw["memory_recent_rounds"]; !ok {
+		settings.MemoryRecentRounds = DefaultMemoryRecentRounds
 	}
 
 	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
@@ -279,6 +289,12 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 	}
 	if settings.TransientRecoveryWaitMaxSeconds > 15 {
 		settings.TransientRecoveryWaitMaxSeconds = 15
+	}
+	if settings.MemoryRecentRounds < MinMemoryRecentRounds {
+		settings.MemoryRecentRounds = DefaultMemoryRecentRounds
+	}
+	if settings.MemoryRecentRounds > MaxMemoryRecentRounds {
+		settings.MemoryRecentRounds = MaxMemoryRecentRounds
 	}
 	return settings
 }

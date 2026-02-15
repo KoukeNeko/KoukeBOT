@@ -23,7 +23,11 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	if err != nil {
 		return "", err
 	}
-	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
+	keepRecentMessages := s.keepRecentMessagesSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentMessages); err != nil {
+		return "", err
+	}
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
 
 	conv.AppendUserMessage(userMessage)
 
@@ -89,7 +93,11 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
+	keepRecentMessages := s.keepRecentMessagesSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentMessages); err != nil {
+		return nil, err
+	}
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
@@ -163,7 +171,11 @@ func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx contex
 	if err != nil {
 		return nil, err
 	}
-	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
+	keepRecentMessages := s.keepRecentMessagesSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentMessages); err != nil {
+		return nil, err
+	}
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
@@ -200,4 +212,36 @@ func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx contex
 		HistoryEntries:   historyEntries,
 		CurrentImageRefs: imageRefs,
 	})
+}
+
+func (s *ChatService) preflightConversationRetention(
+	ctx context.Context,
+	conv *domain.Conversation,
+	persona *domain.PersonaModule,
+	keepRecentMessages int,
+) error {
+	if conv == nil {
+		return nil
+	}
+
+	removedCount, addedDigests := compactHistoryWithKeepRecent(conv, persona, keepRecentMessages)
+	if removedCount == 0 {
+		return nil
+	}
+	if s.store == nil {
+		return fmt.Errorf("conversation store is not configured")
+	}
+
+	logChat.Logf(
+		"preflight retention: conversation_id=%s removed=%d kept=%d added_digests=%d digests_total=%d",
+		conv.ID,
+		removedCount,
+		keepRecentMessages,
+		addedDigests,
+		len(conv.ContextDigests),
+	)
+	if err := s.store.Save(ctx, conv); err != nil {
+		return fmt.Errorf("preflight retention save [%s/%s]: %w", conv.ChannelID, conv.PersonaID, err)
+	}
+	return nil
 }

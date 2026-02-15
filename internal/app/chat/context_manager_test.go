@@ -9,9 +9,9 @@ import (
 
 func TestCompactHistoryAddsDigestAndKeepsRecentMessages(t *testing.T) {
 	conv := &domain.Conversation{
-		Messages: make([]domain.Message, 0, 32),
+		Messages: make([]domain.Message, 0, 96),
 	}
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 90; i++ {
 		role := domain.RoleUser
 		content := "message content for digest testing"
 		if i%2 == 1 {
@@ -26,6 +26,7 @@ func TestCompactHistoryAddsDigestAndKeepsRecentMessages(t *testing.T) {
 	}
 
 	cm := NewContextManager(4000, 800000)
+	cm.UpdateKeepRecentMessages(40)
 	persona := &domain.PersonaModule{
 		Config: domain.PersonaConfig{
 			Variables: map[string]any{
@@ -35,8 +36,8 @@ func TestCompactHistoryAddsDigestAndKeepsRecentMessages(t *testing.T) {
 	}
 	cm.CompactHistory(conv, persona)
 
-	if got := len(conv.Messages); got != 20 {
-		t.Fatalf("len(conv.Messages) = %d, want 20", got)
+	if got := len(conv.Messages); got != 40 {
+		t.Fatalf("len(conv.Messages) = %d, want 40", got)
 	}
 	if len(conv.ContextDigests) == 0 {
 		t.Fatalf("context digest should be created")
@@ -70,5 +71,10 @@ func TestEstimateConversationContextTokens(t *testing.T) {
 	got := EstimateConversationContextTokens(conv)
 	if got <= 0 {
 		t.Fatalf("EstimateConversationContextTokens() = %d, want > 0", got)
+	}
+
+	capped := EstimateConversationContextTokensWithRecentCap(conv, 20)
+	if capped <= 0 {
+		t.Fatalf("EstimateConversationContextTokensWithRecentCap() = %d, want > 0", capped)
 	}
 }

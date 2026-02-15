@@ -63,6 +63,7 @@ export interface SettingsData {
   // Memory extraction settings
   memory_extraction_enabled: boolean
   memory_extraction_model: string  // e.g. "gemini-2.0-flash"
+  memory_recent_rounds: number
 
   // Discord logging settings
   log_channel_id?: string         // Discord channel ID for stdout logs

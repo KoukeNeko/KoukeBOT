@@ -18,6 +18,13 @@ import (
 
 const estimatedCharsPerToken = 4
 
+const (
+	defaultMemoryRecentRounds   = 50
+	defaultMemoryRecentMessages = defaultMemoryRecentRounds * 2
+	minMemoryRecentMessages     = 40
+	maxMemoryRecentMessages     = 200
+)
+
 var logPrompt = logger.New("prompt", logger.Yellow)
 
 const (
@@ -81,7 +88,7 @@ type ContextBudgetManager struct {
 func NewContextBudgetManager() *ContextBudgetManager {
 	return &ContextBudgetManager{
 		ResponseReserveTokens: 4096,
-		MaxRecentMessages:     40,
+		MaxRecentMessages:     defaultMemoryRecentMessages,
 		MaxDigests:            4,
 		DigestBudgetRatio:     0.30,
 	}
@@ -110,6 +117,7 @@ func (bm *ContextBudgetManager) historyBudget(systemPrompt string, caps llm.Mode
 // choosing the topology based on model capabilities.
 type ContextAssembler struct {
 	budget            *ContextBudgetManager
+	budgetMu          sync.RWMutex
 	guardMu           sync.RWMutex
 	guard             PromptGuardPolicy
 	lockInjectedCount uint64
@@ -134,8 +142,41 @@ func (a *ContextAssembler) PromptGuardPolicy() PromptGuardPolicy {
 	return a.guard
 }
 
+func (a *ContextAssembler) UpdateMemoryRecentMessages(maxMessages int) {
+	if a == nil {
+		return
+	}
+	a.budgetMu.Lock()
+	a.budget.MaxRecentMessages = normalizeMemoryRecentMessages(maxMessages)
+	a.budgetMu.Unlock()
+}
+
+func (a *ContextAssembler) MemoryRecentMessages() int {
+	if a == nil {
+		return defaultMemoryRecentMessages
+	}
+	a.budgetMu.RLock()
+	maxMessages := a.budget.MaxRecentMessages
+	a.budgetMu.RUnlock()
+	return normalizeMemoryRecentMessages(maxMessages)
+}
+
 func (a *ContextAssembler) snapshotPromptGuardPolicy() PromptGuardPolicy {
 	return a.PromptGuardPolicy()
+}
+
+func (a *ContextAssembler) snapshotBudget() ContextBudgetManager {
+	a.budgetMu.RLock()
+	budget := *a.budget
+	a.budgetMu.RUnlock()
+	budget.MaxRecentMessages = normalizeMemoryRecentMessages(budget.MaxRecentMessages)
+	if budget.MaxDigests <= 0 {
+		budget.MaxDigests = 4
+	}
+	if budget.DigestBudgetRatio <= 0 || budget.DigestBudgetRatio >= 1 {
+		budget.DigestBudgetRatio = 0.30
+	}
+	return budget
 }
 
 // Assemble builds the complete context for an LLM call.
@@ -269,9 +310,10 @@ func (a *ContextAssembler) assembleThinkingModel(
 	generation domain.GenerationConfig,
 	policy PromptGuardPolicy,
 ) []domain.Message {
-	budgetTokens := a.budget.historyBudget(systemPrompt, caps, generation)
+	budget := a.snapshotBudget()
+	budgetTokens := budget.historyBudget(systemPrompt, caps, generation)
 
-	recentBudget := int(float64(budgetTokens) * (1.0 - a.budget.DigestBudgetRatio))
+	recentBudget := int(float64(budgetTokens) * (1.0 - budget.DigestBudgetRatio))
 	digestBudget := budgetTokens - recentBudget
 
 	currentUserContent := ""
@@ -283,7 +325,7 @@ func (a *ContextAssembler) assembleThinkingModel(
 	}
 
 	var out []domain.Message
-	digestMsg := a.buildDigestMessage(a.selectRelevantDigests(conv.ContextDigests, currentUserContent), digestBudget)
+	digestMsg := a.buildDigestMessage(a.selectRelevantDigests(conv.ContextDigests, currentUserContent, budget.MaxDigests), digestBudget)
 	if digestMsg != "" {
 		out = append(out, domain.Message{
 			Role:    domain.RoleUser,
@@ -299,7 +341,7 @@ func (a *ContextAssembler) assembleThinkingModel(
 		})
 	}
 
-	recent := a.selectRecentMessages(conv.Messages, recentBudget, a.budget.MaxRecentMessages)
+	recent := a.selectRecentMessages(conv.Messages, recentBudget, budget.MaxRecentMessages)
 	out = append(out, recent...)
 
 	if len(out) == 0 {
@@ -421,7 +463,7 @@ func isInternalToolHistoryMessage(content string) bool {
 	return strings.HasPrefix(trimmed, "Tool execution results:")
 }
 
-func (a *ContextAssembler) selectRelevantDigests(digests []domain.ConversationDigest, currentMessage string) []domain.ConversationDigest {
+func (a *ContextAssembler) selectRelevantDigests(digests []domain.ConversationDigest, currentMessage string, maxDigests int) []domain.ConversationDigest {
 	if len(digests) == 0 {
 		return nil
 	}
@@ -456,7 +498,7 @@ func (a *ContextAssembler) selectRelevantDigests(digests []domain.ConversationDi
 		return items[i].score > items[j].score
 	})
 
-	limit := a.budget.MaxDigests
+	limit := maxDigests
 	if limit <= 0 {
 		limit = 3
 	}
@@ -546,6 +588,7 @@ func (a *ContextAssembler) assembleLegacyModel(
 	persona *domain.PersonaModule,
 	conv *domain.Conversation,
 ) []domain.Message {
+	budget := a.snapshotBudget()
 	var messages []domain.Message
 
 	// Anchors as explicit few-shot pairs (strongest anti-drift for legacy models)
@@ -557,7 +600,7 @@ func (a *ContextAssembler) assembleLegacyModel(
 	}
 
 	// Recent conversation history (rolling window)
-	const recentWindowSize = 20
+	recentWindowSize := budget.MaxRecentMessages
 	history := conv.Messages
 	if len(history) > recentWindowSize {
 		history = history[len(history)-recentWindowSize:]
@@ -576,6 +619,16 @@ func estimateTokens(s string) int {
 		return 1
 	}
 	return tokens
+}
+
+func normalizeMemoryRecentMessages(maxMessages int) int {
+	if maxMessages < minMemoryRecentMessages {
+		return defaultMemoryRecentMessages
+	}
+	if maxMessages > maxMemoryRecentMessages {
+		return maxMemoryRecentMessages
+	}
+	return maxMessages
 }
 
 // formatAnchorsForTemplate renders anchors as readable text for {{.Anchors}} injection.

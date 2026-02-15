@@ -51,6 +51,7 @@ export default function Settings() {
     location: "",
     memory_extraction_enabled: false,
     memory_extraction_model: "",
+    memory_recent_rounds: 50,
     log_channel_id: "",
     discord_persona_id: "",
     discord_observe_enabled: false,

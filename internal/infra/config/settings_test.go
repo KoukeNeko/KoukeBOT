@@ -71,6 +71,9 @@ func TestNormalizeSettingsAppliesPromptGuardDefaultsForLegacyFile(t *testing.T) 
 	if got.DiscordStripLeadingBotMention {
 		t.Fatalf("DiscordStripLeadingBotMention should default to false (preserve mention text)")
 	}
+	if got.MemoryRecentRounds != DefaultMemoryRecentRounds {
+		t.Fatalf("MemoryRecentRounds = %d, want %d", got.MemoryRecentRounds, DefaultMemoryRecentRounds)
+	}
 }
 
 func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
@@ -141,5 +144,20 @@ func TestNormalizeSettingsDiscordObserveDefaultsOnSavePath(t *testing.T) {
 	}
 	if got.DiscordObserveMessageScope != DefaultDiscordObserveMessageScope {
 		t.Fatalf("DiscordObserveMessageScope = %q, want %q", got.DiscordObserveMessageScope, DefaultDiscordObserveMessageScope)
+	}
+	if got.MemoryRecentRounds != DefaultMemoryRecentRounds {
+		t.Fatalf("MemoryRecentRounds = %d, want %d", got.MemoryRecentRounds, DefaultMemoryRecentRounds)
+	}
+}
+
+func TestNormalizeSettingsMemoryRecentRoundsBounds(t *testing.T) {
+	gotLow := normalizeSettings(Settings{MemoryRecentRounds: MinMemoryRecentRounds - 1}, nil)
+	if gotLow.MemoryRecentRounds != DefaultMemoryRecentRounds {
+		t.Fatalf("MemoryRecentRounds low = %d, want %d", gotLow.MemoryRecentRounds, DefaultMemoryRecentRounds)
+	}
+
+	gotHigh := normalizeSettings(Settings{MemoryRecentRounds: MaxMemoryRecentRounds + 20}, nil)
+	if gotHigh.MemoryRecentRounds != MaxMemoryRecentRounds {
+		t.Fatalf("MemoryRecentRounds high = %d, want %d", gotHigh.MemoryRecentRounds, MaxMemoryRecentRounds)
 	}
 }

@@ -35,6 +35,7 @@ type SettingsResponse struct {
 	DiscordPersonaID                string `json:"discord_persona_id"`
 	MemoryExtractionEnabled         bool   `json:"memory_extraction_enabled"`
 	MemoryExtractionModel           string `json:"memory_extraction_model"`
+	MemoryRecentRounds              int    `json:"memory_recent_rounds"`
 	PersonaLockEveryTurns           int    `json:"persona_lock_every_turns"`
 	TripletOutputEnabled            bool   `json:"triplet_output_enabled"`
 	AnalysisVisibility              string `json:"analysis_visibility"`
@@ -75,6 +76,7 @@ type SettingsUpdateRequest struct {
 	DiscordPersonaID                string `json:"discord_persona_id"`
 	MemoryExtractionEnabled         *bool  `json:"memory_extraction_enabled"`
 	MemoryExtractionModel           string `json:"memory_extraction_model"`
+	MemoryRecentRounds              *int   `json:"memory_recent_rounds"`
 	PersonaLockEveryTurns           *int   `json:"persona_lock_every_turns"`
 	TripletOutputEnabled            *bool  `json:"triplet_output_enabled"`
 	AnalysisVisibility              string `json:"analysis_visibility"`
@@ -138,6 +140,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		DiscordPersonaID:                discordPersonaID,
 		MemoryExtractionEnabled:         settings.MemoryExtractionEnabled,
 		MemoryExtractionModel:           settings.MemoryExtractionModel,
+		MemoryRecentRounds:              settings.MemoryRecentRounds,
 		PersonaLockEveryTurns:           settings.PersonaLockEveryTurns,
 		TripletOutputEnabled:            settings.TripletOutputEnabled,
 		AnalysisVisibility:              settings.AnalysisVisibility,
@@ -350,6 +353,17 @@ func validateToolLoopSettings(maxToolRounds, maxWebSearchCallsPerTurn, transient
 	}
 	if transientRecoveryWaitMaxSeconds < 1 || transientRecoveryWaitMaxSeconds > 15 {
 		return fmt.Errorf("transient_recovery_wait_max_seconds must be between 1 and 15")
+	}
+	return nil
+}
+
+func validateMemoryRetentionSettings(memoryRecentRounds int) error {
+	if memoryRecentRounds < config.MinMemoryRecentRounds || memoryRecentRounds > config.MaxMemoryRecentRounds {
+		return fmt.Errorf(
+			"memory_recent_rounds must be between %d and %d",
+			config.MinMemoryRecentRounds,
+			config.MaxMemoryRecentRounds,
+		)
 	}
 	return nil
 }

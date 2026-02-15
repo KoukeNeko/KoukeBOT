@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,89 @@ func TestSelectRecentMessagesSkipsInternalToolHistory(t *testing.T) {
 	}
 	if got[1].Content != "actual assistant response" {
 		t.Fatalf("unexpected second message: %q", got[1].Content)
+	}
+}
+
+func TestAssembleLegacyModelUsesConfiguredRecentWindow(t *testing.T) {
+	assembler := NewContextAssembler()
+	assembler.UpdateMemoryRecentMessages(40)
+
+	persona := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			SystemTemplate: "legacy test {{.Lore}} {{.Anchors}} {{.Time}}",
+		},
+		Lore: "legacy",
+	}
+	conv := &domain.Conversation{Messages: make([]domain.Message, 0, 60)}
+	for i := 0; i < 60; i++ {
+		role := domain.RoleUser
+		if i%2 == 1 {
+			role = domain.RoleAssistant
+		}
+		conv.Messages = append(conv.Messages, domain.Message{
+			Role:      role,
+			Content:   fmt.Sprintf("msg-%02d", i),
+			Timestamp: time.Now(),
+		})
+	}
+
+	assembled, err := assembler.Assemble(persona, conv, llm.ModelCapabilities{SupportsThinking: false})
+	if err != nil {
+		t.Fatalf("Assemble() error = %v", err)
+	}
+	if len(assembled.Messages) != 40 {
+		t.Fatalf("assembled legacy messages = %d, want 40", len(assembled.Messages))
+	}
+	if assembled.Messages[0].Content != "msg-20" {
+		t.Fatalf("legacy first recent message = %q, want msg-20", assembled.Messages[0].Content)
+	}
+	if assembled.Messages[39].Content != "msg-59" {
+		t.Fatalf("legacy last recent message = %q, want msg-59", assembled.Messages[39].Content)
+	}
+}
+
+func TestAssembleThinkingModelUsesConfiguredRecentWindow(t *testing.T) {
+	assembler := NewContextAssembler()
+	assembler.UpdateMemoryRecentMessages(40)
+	policy := DefaultPromptGuardPolicy()
+	policy.PersonaLockEveryTurns = 999
+	assembler.UpdatePromptGuardPolicy(policy)
+
+	persona := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			SystemTemplate: "thinking test {{.Lore}} {{.Anchors}} {{.Time}}",
+		},
+		Lore: "thinking",
+	}
+	conv := &domain.Conversation{Messages: make([]domain.Message, 0, 80)}
+	for i := 0; i < 80; i++ {
+		role := domain.RoleUser
+		if i%2 == 1 {
+			role = domain.RoleAssistant
+		}
+		conv.Messages = append(conv.Messages, domain.Message{
+			Role:      role,
+			Content:   fmt.Sprintf("turn-%02d", i),
+			Timestamp: time.Now(),
+		})
+	}
+
+	assembled, err := assembler.Assemble(persona, conv, llm.ModelCapabilities{
+		SupportsThinking: true,
+		ContextWindow:    64_000,
+	})
+	if err != nil {
+		t.Fatalf("Assemble() error = %v", err)
+	}
+
+	// No digest/persona-lock expected here, so count should match configured recent window.
+	if len(assembled.Messages) != 40 {
+		t.Fatalf("assembled thinking messages = %d, want 40", len(assembled.Messages))
+	}
+	if assembled.Messages[0].Content != "turn-40" {
+		t.Fatalf("thinking first recent message = %q, want turn-40", assembled.Messages[0].Content)
+	}
+	if assembled.Messages[39].Content != "turn-79" {
+		t.Fatalf("thinking last recent message = %q, want turn-79", assembled.Messages[39].Content)
 	}
 }

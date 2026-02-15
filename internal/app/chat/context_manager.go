@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,8 +25,10 @@ var digestStyleQuoteCount uint64
 // Implements OpenClaw's approach: when approaching context window limit,
 // inject a silent turn asking the agent to save memories before compacting history.
 type ContextManager struct {
-	flushThreshold int // Tokens before limit to trigger flush (default: 4000)
-	windowSize     int // Total context window size (default: 800000)
+	mu                 sync.RWMutex
+	flushThreshold     int // Tokens before limit to trigger flush (default: 4000)
+	windowSize         int // Total context window size (default: 800000)
+	keepRecentMessages int // Number of most recent raw messages to retain during compaction
 }
 
 func NewContextManager(flushThreshold, windowSize int) *ContextManager {
@@ -36,8 +39,9 @@ func NewContextManager(flushThreshold, windowSize int) *ContextManager {
 		windowSize = 800_000 // Conservative for Gemini 2.5 Pro (actual: 1M)
 	}
 	return &ContextManager{
-		flushThreshold: flushThreshold,
-		windowSize:     windowSize,
+		flushThreshold:     flushThreshold,
+		windowSize:         windowSize,
+		keepRecentMessages: defaultMemoryRecentMessages,
 	}
 }
 
@@ -46,7 +50,9 @@ func (cm *ContextManager) ShouldFlush(conv *domain.Conversation) bool {
 	if conv == nil {
 		return false
 	}
+	cm.mu.RLock()
 	threshold := cm.windowSize - cm.flushThreshold
+	cm.mu.RUnlock()
 	if conv.CumulativeTokens >= threshold {
 		logCtx.Logf("approaching limit: %d tokens (threshold: %d)", conv.CumulativeTokens, threshold)
 		return true
@@ -54,34 +60,54 @@ func (cm *ContextManager) ShouldFlush(conv *domain.Conversation) bool {
 	return false
 }
 
+func (cm *ContextManager) UpdateKeepRecentMessages(maxMessages int) {
+	if cm == nil {
+		return
+	}
+	cm.mu.Lock()
+	cm.keepRecentMessages = normalizeMemoryRecentMessages(maxMessages)
+	cm.mu.Unlock()
+}
+
+func (cm *ContextManager) KeepRecentMessages() int {
+	if cm == nil {
+		return defaultMemoryRecentMessages
+	}
+	cm.mu.RLock()
+	maxMessages := cm.keepRecentMessages
+	cm.mu.RUnlock()
+	return normalizeMemoryRecentMessages(maxMessages)
+}
+
 // CompactHistory removes old messages, keeping only the most recent ones.
 // Should be called AFTER memory flush so important information is already persisted.
 func (cm *ContextManager) CompactHistory(conv *domain.Conversation, persona *domain.PersonaModule) {
-	const keepRecent = 20
-	if len(conv.Messages) <= keepRecent {
+	keepRecent := cm.KeepRecentMessages()
+	removedCount, addedDigests := compactHistoryWithKeepRecent(conv, persona, keepRecent)
+	if removedCount == 0 {
 		return
 	}
-
-	removedCount := len(conv.Messages) - keepRecent
-	removed := conv.Messages[:removedCount]
-
-	if digest, ok := cm.buildDigest(removed, persona); ok {
-		conv.AddDigest(digest)
-	}
-
-	conv.Messages = conv.Messages[removedCount:]
-	conv.CumulativeTokens = EstimateConversationContextTokens(conv)
-	logCtx.Logf("compacted: removed %d old messages, kept %d recent, digests=%d", removedCount, keepRecent, len(conv.ContextDigests))
+	logCtx.Logf(
+		"compacted: removed %d old messages, kept %d recent, added_digests=%d, digests_total=%d",
+		removedCount,
+		keepRecent,
+		addedDigests,
+		len(conv.ContextDigests),
+	)
 }
 
 // EstimateConversationContextTokens estimates current context footprint from
 // recent conversation messages + retained digests. This is used for flush tracking.
 func EstimateConversationContextTokens(conv *domain.Conversation) int {
+	return EstimateConversationContextTokensWithRecentCap(conv, defaultMemoryRecentMessages)
+}
+
+func EstimateConversationContextTokensWithRecentCap(conv *domain.Conversation, maxRecentMessages int) int {
 	if conv == nil {
 		return 0
 	}
 
-	const maxRecentMessages = 40
+	maxRecentMessages = normalizeMemoryRecentMessages(maxRecentMessages)
 	const maxDigests = 4
 	const perMessageOverhead = 12
 	const perDigestOverhead = 24
@@ -121,6 +147,28 @@ func EstimateConversationContextTokens(conv *domain.Conversation) int {
 		return 0
 	}
 	return total
+}
+
+func compactHistoryWithKeepRecent(conv *domain.Conversation, persona *domain.PersonaModule, keepRecentMessages int) (removedCount int, addedDigests int) {
+	if conv == nil {
+		return 0, 0
+	}
+	keepRecentMessages = normalizeMemoryRecentMessages(keepRecentMessages)
+	if len(conv.Messages) <= keepRecentMessages {
+		conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+		return 0, 0
+	}
+
+	removedCount = len(conv.Messages) - keepRecentMessages
+	removed := conv.Messages[:removedCount]
+	if digest, ok := (&ContextManager{}).buildDigest(removed, persona); ok {
+		conv.AddDigest(digest)
+		addedDigests = 1
+	}
+
+	conv.Messages = conv.Messages[removedCount:]
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+	return removedCount, addedDigests
 }
 
 func estimateStringSliceTokens(items []string) int {
