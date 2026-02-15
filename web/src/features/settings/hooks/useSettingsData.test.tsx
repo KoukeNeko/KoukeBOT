@@ -6,8 +6,6 @@ import type { ProviderStatus, RuntimeMetrics, SettingsData } from '../../../type
 import { useSettingsData } from './useSettingsData'
 
 vi.mock('../../../api', () => ({
-  discoverMCPServer: vi.fn(),
-  getMCPStatus: vi.fn(),
   getProviderStatus: vi.fn(),
   getRuntimeMetrics: vi.fn(),
   getSettings: vi.fn(),
@@ -59,6 +57,7 @@ const settingsFixture: SettingsData = {
   scheduled_monitor_max_per_user: 3,
   mcp: {
     enabled: false,
+    verbose_logging: false,
     discovery_timeout_seconds: 10,
     tool_call_timeout_seconds: 20,
     servers: [],
@@ -104,9 +103,7 @@ describe('useSettingsData', () => {
       { id: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro' },
     ])
     vi.mocked(api.listPersonas).mockResolvedValue([])
-    vi.mocked(api.getMCPStatus).mockResolvedValue([])
     vi.mocked(api.listScheduledTasks).mockResolvedValue([])
-    vi.mocked(api.discoverMCPServer).mockResolvedValue({ tools: [] })
     vi.mocked(api.updateSettings).mockResolvedValue({ status: 'ok' })
   })
 
