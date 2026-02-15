@@ -73,6 +73,58 @@ func TestApplySettingsPatchRejectsInvalidPersonaID(t *testing.T) {
 	}
 }
 
+func TestApplySettingsPatchKeepsMaskedMCPSecrets(t *testing.T) {
+	h := &Handlers{}
+	existing := config.Settings{
+		MCP: config.MCPSettings{
+			Enabled:                 true,
+			DiscoveryTimeoutSeconds: 10,
+			ToolCallTimeoutSeconds:  20,
+			Servers: []config.MCPServerSetting{
+				{
+					ID:            "remote_1",
+					Name:          "Remote 1",
+					Enabled:       true,
+					Transport:     "http",
+					URL:           "https://example.com/mcp",
+					Headers:       map[string]string{"Authorization": "Bearer old-token"},
+					Env:           map[string]string{"API_KEY": "old-key"},
+					ToolAllowlist: []string{"search"},
+				},
+			},
+		},
+	}
+
+	err := h.applySettingsPatch(&existing, SettingsUpdateRequest{
+		MCP: &MCPSettingsUpdateRequest{
+			Enabled:                 true,
+			DiscoveryTimeoutSeconds: 10,
+			ToolCallTimeoutSeconds:  20,
+			Servers: []MCPServerUpdateRequest{
+				{
+					ID:            "remote_1",
+					Name:          "Remote 1",
+					Enabled:       true,
+					Transport:     "http",
+					URL:           "https://example.com/mcp",
+					Headers:       map[string]string{"Authorization": "***...oken"},
+					Env:           map[string]string{"API_KEY": "***...-key"},
+					ToolAllowlist: []string{"search"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("applySettingsPatch returned error: %v", err)
+	}
+	if got := existing.MCP.Servers[0].Headers["Authorization"]; got != "Bearer old-token" {
+		t.Fatalf("authorization header = %q, want preserved old token", got)
+	}
+	if got := existing.MCP.Servers[0].Env["API_KEY"]; got != "old-key" {
+		t.Fatalf("env api key = %q, want preserved old key", got)
+	}
+}
+
 func TestSaveAndHotSwapSettingsReturnsWarningWithoutBlockingSave(t *testing.T) {
 	tempDir := t.TempDir()
 	settingsPath := filepath.Join(tempDir, "settings.json")

@@ -29,6 +29,12 @@ const (
 	MaxMemoryRecentRounds             = 100
 	DefaultScheduledMonitorMaxPerUser = 3
 	MaxScheduledMonitorMaxPerUser     = 20
+	DefaultMCPDiscoveryTimeoutSeconds = 10
+	DefaultMCPToolCallTimeoutSeconds  = 20
+	MinMCPDiscoveryTimeoutSeconds     = 1
+	MaxMCPDiscoveryTimeoutSeconds     = 30
+	MinMCPToolCallTimeoutSeconds      = 1
+	MaxMCPToolCallTimeoutSeconds      = 120
 )
 
 // Settings holds the runtime-configurable values.
@@ -74,6 +80,9 @@ type Settings struct {
 	DiscordShowInternalToolErrors   bool `json:"discord_show_internal_tool_errors"`
 	ScheduledMonitorMaxPerUser      int  `json:"scheduled_monitor_max_per_user"`
 
+	// MCP settings
+	MCP MCPSettings `json:"mcp"`
+
 	// Discord logging settings
 	LogChannelID string `json:"log_channel_id"` // Discord channel ID for stdout logs (optional)
 	// Preferred active persona for Discord bot runtime.
@@ -92,6 +101,26 @@ type Settings struct {
 	AnalysisVisibility        string `json:"analysis_visibility"`         // "visible" | "hidden" | "debug"
 	NegativeConstraintEnabled bool   `json:"negative_constraint_enabled"` // Enable anti-generic constraints
 	NegativeConstraintDefault string `json:"negative_constraint_default"` // Global fallback negative constraint
+}
+
+type MCPSettings struct {
+	Enabled                 bool               `json:"enabled"`
+	DiscoveryTimeoutSeconds int                `json:"discovery_timeout_seconds"`
+	ToolCallTimeoutSeconds  int                `json:"tool_call_timeout_seconds"`
+	Servers                 []MCPServerSetting `json:"servers"`
+}
+
+type MCPServerSetting struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Enabled       bool              `json:"enabled"`
+	Transport     string            `json:"transport"` // "stdio" | "http"
+	Command       string            `json:"command"`
+	Args          []string          `json:"args"`
+	Env           map[string]string `json:"env"`
+	URL           string            `json:"url"`
+	Headers       map[string]string `json:"headers"`
+	ToolAllowlist []string          `json:"tool_allowlist"`
 }
 
 // SettingsStore reads and writes settings to a JSON file.
@@ -311,5 +340,81 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 	if settings.ScheduledMonitorMaxPerUser > MaxScheduledMonitorMaxPerUser {
 		settings.ScheduledMonitorMaxPerUser = MaxScheduledMonitorMaxPerUser
 	}
+	settings.MCP = normalizeMCPSettings(settings.MCP)
 	return settings
+}
+
+func normalizeMCPSettings(mcp MCPSettings) MCPSettings {
+	if mcp.DiscoveryTimeoutSeconds < MinMCPDiscoveryTimeoutSeconds {
+		mcp.DiscoveryTimeoutSeconds = DefaultMCPDiscoveryTimeoutSeconds
+	}
+	if mcp.DiscoveryTimeoutSeconds > MaxMCPDiscoveryTimeoutSeconds {
+		mcp.DiscoveryTimeoutSeconds = MaxMCPDiscoveryTimeoutSeconds
+	}
+	if mcp.ToolCallTimeoutSeconds < MinMCPToolCallTimeoutSeconds {
+		mcp.ToolCallTimeoutSeconds = DefaultMCPToolCallTimeoutSeconds
+	}
+	if mcp.ToolCallTimeoutSeconds > MaxMCPToolCallTimeoutSeconds {
+		mcp.ToolCallTimeoutSeconds = MaxMCPToolCallTimeoutSeconds
+	}
+	mcp.Servers = normalizeMCPServers(mcp.Servers)
+	return mcp
+}
+
+func normalizeMCPServers(servers []MCPServerSetting) []MCPServerSetting {
+	if len(servers) == 0 {
+		return nil
+	}
+	out := make([]MCPServerSetting, 0, len(servers))
+	for _, server := range servers {
+		server.ID = strings.TrimSpace(server.ID)
+		server.Name = strings.TrimSpace(server.Name)
+		server.Transport = strings.TrimSpace(server.Transport)
+		server.Command = strings.TrimSpace(server.Command)
+		server.URL = strings.TrimSpace(server.URL)
+		server.Args = normalizeStringSlice(server.Args)
+		server.Env = normalizeStringMap(server.Env)
+		server.Headers = normalizeStringMap(server.Headers)
+		server.ToolAllowlist = normalizeStringSlice(server.ToolAllowlist)
+		out = append(out, server)
+	}
+	return out
+}
+
+func normalizeStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func normalizeStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		k := strings.TrimSpace(key)
+		if k == "" {
+			continue
+		}
+		out[k] = strings.TrimSpace(value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

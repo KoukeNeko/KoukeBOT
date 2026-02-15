@@ -58,7 +58,8 @@ type ChatService struct {
 	imageHistoryTurns int               // how many recent user turns to load images for (default 3)
 	personas          map[string]*domain.PersonaModule
 	toolRegistry      map[string]domain.Tool // tool name → tool instance
-	contextManager    *ContextManager        // pre-compaction memory flush (nil = disabled)
+	toolRegistryMu    sync.RWMutex
+	contextManager    *ContextManager // pre-compaction memory flush (nil = disabled)
 	toolLoopRunner    ToolLoopRunner
 	memoryFlushRunner MemoryFlushRunner
 	multimodalRunner  MultimodalRunner
@@ -168,6 +169,20 @@ func (s *ChatService) memoryRetentionPolicySnapshot() MemoryRetentionPolicy {
 
 func (s *ChatService) keepRecentMessagesSnapshot() int {
 	return roundsToRecentMessages(s.memoryRetentionPolicySnapshot().RecentRounds)
+}
+
+// UpdateToolRegistry hot-swaps tool declarations and runtime handlers.
+func (s *ChatService) UpdateToolRegistry(tools []domain.Tool) {
+	if s == nil {
+		return
+	}
+	next := make(map[string]domain.Tool, len(tools))
+	for _, tool := range tools {
+		next[tool.Name()] = tool
+	}
+	s.toolRegistryMu.Lock()
+	s.toolRegistry = next
+	s.toolRegistryMu.Unlock()
 }
 
 func (s *ChatService) applyMemoryRetentionPolicy(policy MemoryRetentionPolicy) {

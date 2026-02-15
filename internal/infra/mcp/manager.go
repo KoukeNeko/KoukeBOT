@@ -1,0 +1,279 @@
+package mcp
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
+)
+
+var logMCP = logger.New("mcp", logger.Cyan)
+
+type Manager struct {
+	mu         sync.RWMutex
+	settings   config.MCPSettings
+	servers    map[string]config.MCPServerSetting
+	statuses   map[string]ServerStatus
+	httpClient *http.Client
+}
+
+func NewManager() *Manager {
+	return &Manager{
+		servers:    make(map[string]config.MCPServerSetting),
+		statuses:   make(map[string]ServerStatus),
+		httpClient: &http.Client{},
+	}
+}
+
+func (m *Manager) Configure(settings config.MCPSettings) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.settings = settings
+	nextServers := make(map[string]config.MCPServerSetting, len(settings.Servers))
+	nextStatuses := make(map[string]ServerStatus, len(settings.Servers))
+	for _, server := range settings.Servers {
+		nextServers[server.ID] = server
+		prev := m.statuses[server.ID]
+		nextStatuses[server.ID] = ServerStatus{
+			ServerID:        server.ID,
+			Enabled:         server.Enabled,
+			Transport:       server.Transport,
+			Reachable:       prev.Reachable,
+			LastError:       prev.LastError,
+			DiscoveredTools: prev.DiscoveredTools,
+			RegisteredTools: prev.RegisteredTools,
+			UpdatedAt:       prev.UpdatedAt,
+		}
+	}
+	m.servers = nextServers
+	m.statuses = nextStatuses
+}
+
+func (m *Manager) BuildTools(ctx context.Context, settings config.MCPSettings) ([]domain.Tool, []string) {
+	m.Configure(settings)
+	if !settings.Enabled {
+		m.resetRegistrations()
+		return nil, nil
+	}
+
+	tools := make([]domain.Tool, 0)
+	warnings := make([]string, 0)
+
+	for _, server := range settings.Servers {
+		if !server.Enabled {
+			m.updateStatus(server.ID, func(status *ServerStatus) {
+				status.Enabled = false
+				status.Reachable = false
+				status.RegisteredTools = nil
+				status.UpdatedAt = time.Now().UTC()
+			})
+			continue
+		}
+
+		timeout := time.Duration(settings.DiscoveryTimeoutSeconds) * time.Second
+		discoverCtx, cancel := context.WithTimeout(ctx, timeout)
+		discovered, err := m.discoverWithServer(discoverCtx, server)
+		cancel()
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("mcp server %s discovery failed: %v", server.ID, err))
+			m.updateStatus(server.ID, func(status *ServerStatus) {
+				status.Enabled = true
+				status.Transport = server.Transport
+				status.Reachable = false
+				status.LastError = truncateMCPError(err.Error(), 240)
+				status.RegisteredTools = nil
+				status.DiscoveredTools = nil
+				status.UpdatedAt = time.Now().UTC()
+			})
+			continue
+		}
+
+		allowlist := make(map[string]struct{}, len(server.ToolAllowlist))
+		for _, name := range server.ToolAllowlist {
+			allowlist[strings.TrimSpace(name)] = struct{}{}
+		}
+
+		registered := make([]string, 0, len(discovered))
+		discoveredNames := make([]string, 0, len(discovered))
+		for _, descriptor := range discovered {
+			discoveredNames = append(discoveredNames, descriptor.Name)
+			if _, ok := allowlist[descriptor.Name]; !ok {
+				continue
+			}
+			exposedName := ExposedToolName(server.ID, descriptor.Name)
+			tools = append(tools, NewToolAdapter(m, server.ID, descriptor.Name, exposedName, descriptor.Description, descriptor.InputSchema))
+			registered = append(registered, exposedName)
+		}
+
+		m.updateStatus(server.ID, func(status *ServerStatus) {
+			status.Enabled = true
+			status.Transport = server.Transport
+			status.Reachable = true
+			status.LastError = ""
+			status.DiscoveredTools = sortStrings(discoveredNames)
+			status.RegisteredTools = sortStrings(registered)
+			status.UpdatedAt = time.Now().UTC()
+		})
+	}
+
+	return tools, warnings
+}
+
+func (m *Manager) DiscoverServer(ctx context.Context, server config.MCPServerSetting, timeout time.Duration) ([]ToolDescriptor, error) {
+	if timeout <= 0 {
+		timeout = time.Duration(config.DefaultMCPDiscoveryTimeoutSeconds) * time.Second
+	}
+
+	timedCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	tools, err := m.discoverWithServer(timedCtx, server)
+	if server.ID != "" {
+		if err != nil {
+			m.updateStatus(server.ID, func(status *ServerStatus) {
+				status.ServerID = server.ID
+				status.Enabled = server.Enabled
+				status.Transport = server.Transport
+				status.Reachable = false
+				status.LastError = truncateMCPError(err.Error(), 240)
+				status.UpdatedAt = time.Now().UTC()
+			})
+		} else {
+			names := make([]string, 0, len(tools))
+			for _, tool := range tools {
+				names = append(names, tool.Name)
+			}
+			m.updateStatus(server.ID, func(status *ServerStatus) {
+				status.ServerID = server.ID
+				status.Enabled = server.Enabled
+				status.Transport = server.Transport
+				status.Reachable = true
+				status.LastError = ""
+				status.DiscoveredTools = sortStrings(names)
+				status.UpdatedAt = time.Now().UTC()
+			})
+		}
+	}
+	return tools, err
+}
+
+func (m *Manager) CallTool(ctx context.Context, serverID, toolName string, input map[string]interface{}) (string, bool, error) {
+	server, timeout, err := m.lookupServer(serverID)
+	if err != nil {
+		return "", false, err
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var content string
+	var isError bool
+	switch strings.TrimSpace(server.Transport) {
+	case TransportStdio:
+		content, isError, err = runStdioCallTool(callCtx, server, toolName, input)
+	case TransportHTTP:
+		content, isError, err = runHTTPCallTool(callCtx, m.httpClient, server, toolName, input)
+	default:
+		err = fmt.Errorf("unsupported MCP transport: %s", server.Transport)
+	}
+
+	if err != nil {
+		m.updateStatus(serverID, func(status *ServerStatus) {
+			status.Reachable = false
+			status.LastError = truncateMCPError(err.Error(), 240)
+			status.UpdatedAt = time.Now().UTC()
+		})
+		return "", false, err
+	}
+
+	m.updateStatus(serverID, func(status *ServerStatus) {
+		status.Reachable = true
+		status.LastError = ""
+		status.UpdatedAt = time.Now().UTC()
+	})
+	return content, isError, nil
+}
+
+func (m *Manager) StatusSnapshot() []ServerStatus {
+	m.mu.RLock()
+	statuses := make([]ServerStatus, 0, len(m.statuses))
+	for _, status := range m.statuses {
+		statuses = append(statuses, status)
+	}
+	m.mu.RUnlock()
+
+	sort.Slice(statuses, func(i, j int) bool {
+		return statuses[i].ServerID < statuses[j].ServerID
+	})
+	return statuses
+}
+
+func (m *Manager) lookupServer(serverID string) (config.MCPServerSetting, time.Duration, error) {
+	m.mu.RLock()
+	server, ok := m.servers[serverID]
+	settings := m.settings
+	m.mu.RUnlock()
+	if !ok {
+		return config.MCPServerSetting{}, 0, fmt.Errorf("MCP server %q not found", serverID)
+	}
+	if !server.Enabled {
+		return config.MCPServerSetting{}, 0, fmt.Errorf("MCP server %q is disabled", serverID)
+	}
+	timeout := time.Duration(settings.ToolCallTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = time.Duration(config.DefaultMCPToolCallTimeoutSeconds) * time.Second
+	}
+	return server, timeout, nil
+}
+
+func (m *Manager) discoverWithServer(ctx context.Context, server config.MCPServerSetting) ([]ToolDescriptor, error) {
+	switch strings.TrimSpace(server.Transport) {
+	case TransportStdio:
+		return runStdioListTools(ctx, server)
+	case TransportHTTP:
+		return runHTTPListTools(ctx, m.httpClient, server)
+	default:
+		return nil, fmt.Errorf("unsupported MCP transport: %s", server.Transport)
+	}
+}
+
+func (m *Manager) resetRegistrations() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, status := range m.statuses {
+		status.Reachable = false
+		status.RegisteredTools = nil
+		status.UpdatedAt = time.Now().UTC()
+		m.statuses[key] = status
+	}
+}
+
+func (m *Manager) updateStatus(serverID string, update func(status *ServerStatus)) {
+	if strings.TrimSpace(serverID) == "" {
+		return
+	}
+	m.mu.Lock()
+	status, ok := m.statuses[serverID]
+	if !ok {
+		status = ServerStatus{ServerID: serverID}
+	}
+	update(&status)
+	m.statuses[serverID] = status
+	m.mu.Unlock()
+}
+
+func truncateMCPError(text string, maxLen int) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= maxLen || maxLen <= 3 {
+		return text
+	}
+	return text[:maxLen-3] + "..."
+}

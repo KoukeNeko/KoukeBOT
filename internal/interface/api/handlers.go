@@ -10,8 +10,10 @@ import (
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	discordruntime "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/mcp"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
 
@@ -24,6 +26,8 @@ type Handlers struct {
 	schedulerService *schedulerpkg.Service
 	settingsStore    *config.SettingsStore
 	providerManager  *app.ProviderManager
+	mcpManager       *mcp.Manager
+	discordRuntime   *discordruntime.Runtime
 	discordPersona   DiscordPersonaController
 	oauthFlow        *llm.GeminiOAuthFlow
 	convStore        store.ConversationRepository
@@ -42,6 +46,8 @@ func NewHandlers(
 	schedulerService *schedulerpkg.Service,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	mcpManager *mcp.Manager,
+	discordRuntime *discordruntime.Runtime,
 	discordPersona DiscordPersonaController,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
@@ -54,6 +60,8 @@ func NewHandlers(
 		schedulerService: schedulerService,
 		settingsStore:    settingsStore,
 		providerManager:  providerManager,
+		mcpManager:       mcpManager,
+		discordRuntime:   discordRuntime,
 		discordPersona:   discordPersona,
 		oauthFlow:        oauthFlow,
 		convStore:        convStore,

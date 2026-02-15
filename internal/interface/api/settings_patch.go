@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
+	"github.com/KoukeNeko/KoukeBOT/internal/app/tooling"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 )
+
+const personaConfigsBaseDir = "configs/personas"
 
 func decodeSettingsUpdateRequest(r *http.Request) (SettingsUpdateRequest, error) {
 	var req SettingsUpdateRequest
@@ -118,6 +122,11 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.ScheduledMonitorMaxPerUser != nil {
 		existing.ScheduledMonitorMaxPerUser = *req.ScheduledMonitorMaxPerUser
 	}
+	if req.MCP != nil {
+		prevMCP := existing.MCP
+		existing.MCP = convertMCPSettingsUpdate(*req.MCP)
+		resolveMaskedMCPSettingsSecrets(&existing.MCP, prevMCP)
+	}
 	if req.MemoryExtractionEnabled != nil {
 		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
 	}
@@ -151,6 +160,9 @@ func (h *Handlers) validateUpdatedSettings(settings config.Settings) error {
 		return err
 	}
 	if err := validateSchedulerSettings(settings.ScheduledMonitorMaxPerUser); err != nil {
+		return err
+	}
+	if err := validateMCPSettings(settings.MCP); err != nil {
 		return err
 	}
 	return validateToolLoopSettings(
@@ -201,12 +213,72 @@ func (h *Handlers) saveAndHotSwapSettings(existing config.Settings) (map[string]
 		)
 	}
 
+	fileToolPersonaID := tooling.SelectFileToolPersonaID(personaConfigsBaseDir, existing.DiscordPersonaID)
+	catalog := tooling.BuildCatalog(h.ctx, existing, fileToolPersonaID, h.discordRuntime, h.schedulerService, h.mcpManager)
+	h.providerManager.RegisterTools(catalog.Tools)
+	h.chatService.UpdateToolRegistry(catalog.Tools)
+	for _, warning := range catalog.Warnings {
+		logAPI.Warnf("settings: tool catalog warning: %s", warning)
+	}
+
 	response := map[string]string{"status": "saved"}
 	if err := h.activateProvider(existing); err != nil {
 		logAPI.Warnf("settings: provider activation failed (settings saved): %v", err)
 		response["warning"] = err.Error()
 	}
+	if len(catalog.Warnings) > 0 {
+		warningText := fmt.Sprintf("MCP warnings: %s", strings.Join(catalog.Warnings, "; "))
+		if existingWarning := response["warning"]; existingWarning != "" {
+			response["warning"] = existingWarning + " | " + warningText
+		} else {
+			response["warning"] = warningText
+		}
+	}
 
 	logAPI.Logf("settings: saved (warning=%v)", response["warning"] != "")
 	return response, nil
+}
+
+func convertMCPSettingsUpdate(req MCPSettingsUpdateRequest) config.MCPSettings {
+	servers := make([]config.MCPServerSetting, 0, len(req.Servers))
+	for _, server := range req.Servers {
+		servers = append(servers, config.MCPServerSetting{
+			ID:            server.ID,
+			Name:          server.Name,
+			Enabled:       server.Enabled,
+			Transport:     server.Transport,
+			Command:       server.Command,
+			Args:          append([]string(nil), server.Args...),
+			Env:           cloneStringMap(server.Env),
+			URL:           server.URL,
+			Headers:       cloneStringMap(server.Headers),
+			ToolAllowlist: append([]string(nil), server.ToolAllowlist...),
+		})
+	}
+	return config.MCPSettings{
+		Enabled:                 req.Enabled,
+		DiscoveryTimeoutSeconds: req.DiscoveryTimeoutSeconds,
+		ToolCallTimeoutSeconds:  req.ToolCallTimeoutSeconds,
+		Servers:                 servers,
+	}
+}
+
+func resolveMaskedMCPSettingsSecrets(incoming *config.MCPSettings, existing config.MCPSettings) {
+	if incoming == nil {
+		return
+	}
+	for idx := range incoming.Servers {
+		resolveMaskedMCPServerSecrets(&incoming.Servers[idx], existing)
+	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }

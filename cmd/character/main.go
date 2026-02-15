@@ -13,12 +13,13 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
+	"github.com/KoukeNeko/KoukeBOT/internal/app/tooling"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
-	"github.com/KoukeNeko/KoukeBOT/internal/infra/search"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/mcp"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 	"github.com/KoukeNeko/KoukeBOT/internal/interface/api"
 	discordhandler "github.com/KoukeNeko/KoukeBOT/internal/interface/discord"
@@ -90,6 +91,8 @@ func run() error {
 		runtime.schedulerService,
 		settingsStore,
 		runtime.providerManager,
+		runtime.mcpManager,
+		runtime.discordRuntime,
 		discordBot,
 		oauthFlow,
 		runtime.convStore,
@@ -118,6 +121,7 @@ type runtimeServices struct {
 	convStore        store.ConversationRepository
 	imageStore       *store.ImageStore
 	discordRuntime   *discordbot.Runtime
+	mcpManager       *mcp.Manager
 }
 
 func resolvePort() string {
@@ -181,9 +185,17 @@ func buildRuntimeServices(
 		MonitorMaxPerUser: settings.ScheduledMonitorMaxPerUser,
 	})
 	schedulerService.SetActivitySource(discordRuntimeActivitySource{runtime: discordRuntime})
-
-	fileToolPersonaID := selectFileToolPersonaID(personasDir, settings.DiscordPersonaID)
-	tools := initializeTools(settings, fileToolPersonaID, discordRuntime, schedulerService)
+	mcpManager := mcp.NewManager()
+	fileToolPersonaID := tooling.SelectFileToolPersonaID(personasDir, settings.DiscordPersonaID)
+	catalog := tooling.BuildCatalog(ctx, settings, fileToolPersonaID, discordRuntime, schedulerService, mcpManager)
+	tools := catalog.Tools
+	for _, name := range catalog.Names {
+		logTools.Logf("%s", name)
+	}
+	for _, warning := range catalog.Warnings {
+		logTools.Warnf("%s", warning)
+	}
+	logTools.Logf("total: %d tool(s) registered", len(tools))
 	if len(tools) > 0 {
 		providerManager.RegisterTools(tools)
 	}
@@ -222,6 +234,7 @@ func buildRuntimeServices(
 		convStore:        convStore,
 		imageStore:       imageStore,
 		discordRuntime:   discordRuntime,
+		mcpManager:       mcpManager,
 	}, nil
 }
 
@@ -450,12 +463,14 @@ func startAPIServer(
 	schedulerService *schedulerpkg.Service,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	mcpManager *mcp.Manager,
+	discordRuntime *discordbot.Runtime,
 	discordBot *discordbot.Bot,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
 ) <-chan error {
-	router := api.NewRouter(personaService, chatService, schedulerService, settingsStore, providerManager, discordBot, oauthFlow, convStore, imageStore, ctx)
+	router := api.NewRouter(personaService, chatService, schedulerService, settingsStore, providerManager, mcpManager, discordRuntime, discordBot, oauthFlow, convStore, imageStore, ctx)
 	handler := router.Handler()
 
 	// Wrap with SPA static file serving if web/dist exists
@@ -500,102 +515,9 @@ func withSPA(webDir string, apiHandler http.Handler) http.Handler {
 	})
 }
 
-// initializeTools creates and returns enabled tools based on settings
-func initializeTools(settings config.Settings, personaID string, discordRuntime *discordbot.Runtime, schedulerService *schedulerpkg.Service) []domain.Tool {
-	var tools []domain.Tool
-	var toolNames []string
-
-	// Web Search Tool
-	if settings.WebSearchEnabled {
-		router := search.NewProviderRouter(
-			settings.BraveAPIKey,
-			settings.PerplexityAPIKey,
-			settings.SearchProvider,
-		)
-		if router.IsConfigured() {
-			tools = append(tools, llm.NewWebSearchTool(router))
-			toolNames = append(toolNames, fmt.Sprintf("web_search (provider: %s)", settings.SearchProvider))
-		}
-	}
-
-	// Web Fetch Tool
-	if settings.WebFetchEnabled {
-		tools = append(tools, llm.NewWebFetchTool(search.NewWebFetcher()))
-		toolNames = append(toolNames, "web_fetch")
-	}
-
-	// Session Status Tool
-	timezone := settings.Timezone
-	if timezone == "" {
-		timezone = "auto"
-	}
-	timeFormat := settings.TimeFormat
-	if timeFormat == "" {
-		timeFormat = "auto"
-	}
-	tools = append(tools, llm.NewSessionStatusTool(timezone, timeFormat))
-	toolNames = append(toolNames, fmt.Sprintf("session_status (tz: %s)", timezone))
-
-	// Discord observe tool (read-only; Discord-source only).
-	if settings.DiscordObserveEnabled && discordRuntime != nil {
-		discordRuntime.SetOptions(discordbot.RuntimeOptions{
-			MemberIntentEnabled:   settings.DiscordMemberIntentEnabled,
-			PresenceIntentEnabled: settings.DiscordPresenceIntentEnabled,
-			MessageScope:          settings.DiscordObserveMessageScope,
-			MaxResults:            settings.DiscordObserveMaxResults,
-		})
-		tools = append(tools, llm.NewDiscordObserveTool(discordRuntime))
-		toolNames = append(toolNames, "discord_observe (read-only; current guild scope)")
-	}
-
-	// Scheduler tool (Discord source only).
-	if schedulerService != nil {
-		tools = append(tools, llm.NewSchedulerTool(schedulerService))
-		toolNames = append(toolNames, "schedule_manager (discord only)")
-	}
-
-	// File Operations Tools (declarations only).
-	// Actual file tool execution is resolved dynamically by request persona at runtime.
-	declarationPersonaID := personaID
-	if declarationPersonaID == "" {
-		declarationPersonaID = "_template"
-	}
-	declarationDir := filepath.Join("configs/personas", declarationPersonaID)
-	tools = append(tools,
-		llm.NewFileReadTool(declarationDir),
-		llm.NewFileWriteTool(declarationDir),
-		llm.NewFileAppendTool(declarationDir),
-	)
-	toolNames = append(toolNames, "file_read, file_write, file_append (declarations only; runtime persona-bound execution enabled)")
-
-	// Print all tools in compact format
-	for _, name := range toolNames {
-		logTools.Logf("%s", name)
-	}
-	logTools.Logf("total: %d tool(s) registered", len(tools))
-
-	return tools
-}
-
+// selectFileToolPersonaID keeps test compatibility while delegating to shared tooling.
 func selectFileToolPersonaID(baseDir, preferred string) string {
-	if preferred != "" {
-		path := filepath.Join(baseDir, preferred)
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
-			return preferred
-		}
-	}
-
-	entries, err := os.ReadDir(baseDir)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), "_") {
-			continue
-		}
-		return entry.Name()
-	}
-	return ""
+	return tooling.SelectFileToolPersonaID(baseDir, preferred)
 }
 
 type discordRuntimeActivitySource struct {

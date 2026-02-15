@@ -8,8 +8,10 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	discordruntime "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/mcp"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
 
@@ -27,13 +29,15 @@ func NewRouter(
 	schedulerService *schedulerpkg.Service,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
+	mcpManager *mcp.Manager,
+	discordRuntime *discordruntime.Runtime,
 	discordPersona DiscordPersonaController,
 	oauthFlow *llm.GeminiOAuthFlow,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
 	ctx context.Context,
 ) *Router {
-	handlers := NewHandlers(personaService, chatService, schedulerService, settingsStore, providerManager, discordPersona, oauthFlow, convStore, imageStore, ctx)
+	handlers := NewHandlers(personaService, chatService, schedulerService, settingsStore, providerManager, mcpManager, discordRuntime, discordPersona, oauthFlow, convStore, imageStore, ctx)
 	mux := http.NewServeMux()
 
 	r := &Router{mux: mux, handlers: handlers}
@@ -68,6 +72,8 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/settings", r.handlers.GetSettings)
 	r.mux.HandleFunc("PUT /api/settings", r.handlers.UpdateSettings)
 	r.mux.HandleFunc("GET /api/settings/status", r.handlers.GetProviderStatus)
+	r.mux.HandleFunc("POST /api/mcp/discover", r.handlers.DiscoverMCPServer)
+	r.mux.HandleFunc("GET /api/mcp/status", r.handlers.GetMCPStatus)
 	r.mux.HandleFunc("GET /api/metrics/runtime", r.handlers.GetRuntimeMetrics)
 	r.mux.HandleFunc("GET /api/models", r.handlers.ListModels)
 

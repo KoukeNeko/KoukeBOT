@@ -14,6 +14,8 @@ import {
   listModels,
   listPersonas,
   listScheduledTasks,
+  discoverMCPServer,
+  getMCPStatus,
 } from "../api";
 import ProviderSection, { type ProviderTab } from "./settings/ProviderSection";
 import DiscordSection from "./settings/DiscordSection";
@@ -24,6 +26,7 @@ import ToolsSection from "./settings/ToolsSection";
 import TimeLocationSection from "./settings/TimeLocationSection";
 import MemorySection from "./settings/MemorySection";
 import ScheduledTasksSection from "./settings/ScheduledTasksSection";
+import MCPSection from "./settings/MCPSection";
 import type {
   SettingsData,
   ProviderStatus,
@@ -33,6 +36,9 @@ import type {
   PoolEntry,
   PersonaSummary,
   ScheduledTask,
+  MCPStatusEntry,
+  MCPToolEntry,
+  MCPServerData,
 } from "../types";
 
 import "./Settings.css"; // Import the new CSS file
@@ -69,6 +75,12 @@ export default function Settings() {
     transient_recovery_wait_max_seconds: 5,
     discord_show_internal_tool_errors: true,
     scheduled_monitor_max_per_user: 3,
+    mcp: {
+      enabled: false,
+      discovery_timeout_seconds: 10,
+      tool_call_timeout_seconds: 20,
+      servers: [],
+    },
     persona_lock_every_turns: 4,
     triplet_output_enabled: true,
     analysis_visibility: "visible",
@@ -80,6 +92,7 @@ export default function Settings() {
   const [personas, setPersonas] = useState<PersonaSummary[]>([]);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null);
+  const [mcpStatus, setMCPStatus] = useState<MCPStatusEntry[]>([]);
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [scheduledTasksLoading, setScheduledTasksLoading] = useState(false);
   const [scheduledTasksError, setScheduledTasksError] = useState<string | null>(null);
@@ -150,6 +163,15 @@ export default function Settings() {
     }
   }, []);
 
+  const refreshMCPStatus = useCallback(async () => {
+    try {
+      const statusEntries = await getMCPStatus();
+      setMCPStatus(statusEntries);
+    } catch {
+      setMCPStatus([]);
+    }
+  }, []);
+
   const refreshScheduledTasks = useCallback(async () => {
     setScheduledTasksLoading(true);
     try {
@@ -175,8 +197,9 @@ export default function Settings() {
       listModels(),
       listPersonas(),
       getOAuthPool().catch(() => [] as PoolEntry[]),
+      getMCPStatus().catch(() => [] as MCPStatusEntry[]),
     ])
-      .then(([s, st, metrics, oauth, modelList, personaList, poolEntries]) => {
+      .then(([s, st, metrics, oauth, modelList, personaList, poolEntries, mcpStatusEntries]) => {
         setForm(s);
         setStatus(st);
         setRuntimeMetrics(metrics);
@@ -184,6 +207,7 @@ export default function Settings() {
         setModels(modelList);
         setPersonas(personaList);
         setPool(poolEntries);
+        setMCPStatus(mcpStatusEntries);
         if (s.provider_type === "oauth") {
           setProviderTab("oauth");
         } else if (s.provider_type === "api-key") {
@@ -197,9 +221,10 @@ export default function Settings() {
   useEffect(() => {
     const id = window.setInterval(() => {
       void refreshRuntimeMetrics();
+      void refreshMCPStatus();
     }, 10_000);
     return () => window.clearInterval(id);
-  }, [refreshRuntimeMetrics]);
+  }, [refreshRuntimeMetrics, refreshMCPStatus]);
 
   useEffect(() => {
     void refreshScheduledTasks();
@@ -222,6 +247,7 @@ export default function Settings() {
       setStatus(st);
       setForm(updated);
       setModels(modelList);
+      void refreshMCPStatus();
       if (result.warning) {
         setMessage({ type: "ok", text: `設定已儲存。警告：${result.warning}` });
       } else {
@@ -236,6 +262,25 @@ export default function Settings() {
       setSaving(false);
     }
   };
+
+  const handleDiscoverMCPServer = useCallback(
+    async (server: MCPServerData): Promise<MCPToolEntry[]> => {
+      try {
+        const result = await discoverMCPServer(server);
+        setMessage({
+          type: "ok",
+          text: `MCP discover 成功：${server.id}（${result.tools.length} tools）`,
+        });
+        await refreshMCPStatus();
+        return result.tools;
+      } catch (e) {
+        const text = e instanceof Error ? e.message : "MCP discover failed";
+        setMessage({ type: "err", text });
+        throw e;
+      }
+    },
+    [refreshMCPStatus],
+  );
 
   const pollOAuthCompletion = useCallback(
     async (previousPoolSize: number, timeoutMs: number): Promise<boolean> => {
@@ -488,6 +533,15 @@ export default function Settings() {
         setForm={setForm}
         saving={saving}
         onSave={() => handleSave()}
+      />
+
+      <MCPSection
+        form={form}
+        setForm={setForm}
+        statuses={mcpStatus}
+        saving={saving}
+        onSave={() => handleSave()}
+        onDiscover={handleDiscoverMCPServer}
       />
 
       <ToolsSection form={form} setForm={setForm} saving={saving} onSave={() => handleSave()} />

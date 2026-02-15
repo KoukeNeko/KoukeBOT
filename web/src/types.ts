@@ -80,6 +80,7 @@ export interface SettingsData {
   transient_recovery_wait_max_seconds: number
   discord_show_internal_tool_errors: boolean
   scheduled_monitor_max_per_user: number
+  mcp: MCPSettingsData
 
   // Prompt guard / persona stability settings
   persona_lock_every_turns: number
@@ -87,6 +88,47 @@ export interface SettingsData {
   analysis_visibility: 'visible' | 'hidden' | 'debug'
   negative_constraint_enabled: boolean
   negative_constraint_default: string
+}
+
+export interface MCPSettingsData {
+  enabled: boolean
+  discovery_timeout_seconds: number
+  tool_call_timeout_seconds: number
+  servers: MCPServerData[]
+}
+
+export interface MCPServerData {
+  id: string
+  name: string
+  enabled: boolean
+  transport: 'stdio' | 'http'
+  command: string
+  args: string[]
+  env: Record<string, string>
+  url: string
+  headers: Record<string, string>
+  tool_allowlist: string[]
+}
+
+export interface MCPToolEntry {
+  name: string
+  description: string
+  input_schema: Record<string, unknown>
+}
+
+export interface MCPDiscoverResponse {
+  tools: MCPToolEntry[]
+}
+
+export interface MCPStatusEntry {
+  server_id: string
+  enabled: boolean
+  transport: string
+  reachable: boolean
+  last_error?: string
+  discovered_tools: string[]
+  registered_tools: string[]
+  updated_at: string
 }
 
 export interface ModelEntry {

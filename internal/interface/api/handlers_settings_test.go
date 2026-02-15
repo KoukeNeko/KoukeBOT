@@ -229,3 +229,101 @@ func TestValidateSchedulerSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateMCPSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   config.MCPSettings
+		wantErr bool
+	}{
+		{
+			name: "valid stdio",
+			input: config.MCPSettings{
+				Enabled:                 true,
+				DiscoveryTimeoutSeconds: 10,
+				ToolCallTimeoutSeconds:  20,
+				Servers: []config.MCPServerSetting{
+					{
+						ID:            "local_files",
+						Enabled:       true,
+						Transport:     "stdio",
+						Command:       "npx",
+						ToolAllowlist: []string{"read_file"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid http localhost",
+			input: config.MCPSettings{
+				Enabled:                 true,
+				DiscoveryTimeoutSeconds: 10,
+				ToolCallTimeoutSeconds:  20,
+				Servers: []config.MCPServerSetting{
+					{
+						ID:            "remote_local",
+						Enabled:       true,
+						Transport:     "http",
+						URL:           "http://127.0.0.1:8787/mcp",
+						ToolAllowlist: []string{"search"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid id format",
+			input: config.MCPSettings{
+				Enabled:                 true,
+				DiscoveryTimeoutSeconds: 10,
+				ToolCallTimeoutSeconds:  20,
+				Servers: []config.MCPServerSetting{
+					{
+						ID:        "Bad ID",
+						Enabled:   true,
+						Transport: "stdio",
+						Command:   "npx",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid timeout",
+			input: config.MCPSettings{
+				Enabled:                 true,
+				DiscoveryTimeoutSeconds: 0,
+				ToolCallTimeoutSeconds:  20,
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid remote http host",
+			input: config.MCPSettings{
+				Enabled:                 true,
+				DiscoveryTimeoutSeconds: 10,
+				ToolCallTimeoutSeconds:  20,
+				Servers: []config.MCPServerSetting{
+					{
+						ID:        "remote_public",
+						Enabled:   true,
+						Transport: "http",
+						URL:       "http://example.com/mcp",
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		err := validateMCPSettings(tt.input)
+		if tt.wantErr && err == nil {
+			t.Fatalf("%s: expected error", tt.name)
+		}
+		if !tt.wantErr && err != nil {
+			t.Fatalf("%s: unexpected error: %v", tt.name, err)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, RuntimeMetrics, OAuthDetectResult, OAuthStartResult, OAuthCompleteResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation, PoolEntry, ScheduledTask } from './types'
+import type { PersonaSummary, PersonaDetail, ChatResponse, SettingsData, ProviderStatus, RuntimeMetrics, OAuthDetectResult, OAuthStartResult, OAuthCompleteResult, OAuthStatus, ModelEntry, ConversationSummary, Conversation, PoolEntry, ScheduledTask, MCPServerData, MCPDiscoverResponse, MCPStatusEntry } from './types'
 
 const BASE = '/api'
 
@@ -187,4 +187,16 @@ export function listScheduledTasks(options?: {
   const query = params.toString()
   const url = query ? `${BASE}/schedules?${query}` : `${BASE}/schedules`
   return fetchJSON(url)
+}
+
+export function discoverMCPServer(server: MCPServerData): Promise<MCPDiscoverResponse> {
+  return fetchJSON(`${BASE}/mcp/discover`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ server }),
+  })
+}
+
+export function getMCPStatus(): Promise<MCPStatusEntry[]> {
+  return fetchJSON(`${BASE}/mcp/status`)
 }

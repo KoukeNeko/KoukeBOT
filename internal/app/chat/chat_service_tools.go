@@ -136,7 +136,9 @@ func (s *ChatService) resolveTool(name, personaID string) (domain.Tool, error) {
 		}
 	}
 
+	s.toolRegistryMu.RLock()
 	tool, exists := s.toolRegistry[name]
+	s.toolRegistryMu.RUnlock()
 	if !exists {
 		return nil, fmt.Errorf("tool %q not found", name)
 	}
