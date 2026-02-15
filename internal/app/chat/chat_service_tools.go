@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
@@ -15,25 +16,64 @@ import (
 // executeTools executes a list of tool calls and returns the results.
 func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolCall, personaID string) []domain.ToolResult {
 	results := make([]domain.ToolResult, 0, len(toolCalls))
+	if len(toolCalls) == 0 {
+		return results
+	}
 
-	for _, call := range toolCalls {
+	logChat.Logf("tool batch start: total=%d persona=%s", len(toolCalls), strings.TrimSpace(personaID))
+	successCount := 0
+	errorCount := 0
+
+	for idx, call := range toolCalls {
 		targetSummary := summarizeToolTarget(call, personaID)
+		callID := summarizeToolCallID(call.ID)
+		inputSummary := summarizeToolInput(call.Input)
+		logChat.Logf(
+			"tool[%d/%d] start: id=%s name=%s%s input=%s",
+			idx+1,
+			len(toolCalls),
+			callID,
+			call.Name,
+			targetSummary,
+			inputSummary,
+		)
+
 		tool, err := s.resolveTool(call.Name, personaID)
 		if err != nil {
+			errorCount++
 			results = append(results, domain.ToolResult{
 				ToolCallID: call.ID,
 				Content:    err.Error(),
 				IsError:    true,
 			})
-			logChat.Warnf("tool %s failed%s: %s", call.Name, targetSummary, truncateLog(err.Error(), 140))
+			logChat.Warnf(
+				"tool[%d/%d] resolve failed: id=%s name=%s%s err=%s",
+				idx+1,
+				len(toolCalls),
+				callID,
+				call.Name,
+				targetSummary,
+				truncateLog(err.Error(), 180),
+			)
 			continue
 		}
 
 		// Execute tool
-		logChat.Logf("executing: %s%s", call.Name, targetSummary)
+		startedAt := time.Now()
 		result, err := tool.Execute(ctx, call.Input)
+		elapsed := time.Since(startedAt)
 		if err != nil {
-			logChat.Warnf("tool %s error%s: %v", call.Name, targetSummary, err)
+			errorCount++
+			logChat.Warnf(
+				"tool[%d/%d] execute error: id=%s name=%s%s elapsed=%s err=%s",
+				idx+1,
+				len(toolCalls),
+				callID,
+				call.Name,
+				targetSummary,
+				formatToolElapsed(elapsed),
+				truncateLog(err.Error(), 180),
+			)
 			results = append(results, domain.ToolResult{
 				ToolCallID: call.ID,
 				Content:    fmt.Sprintf("Error executing tool: %v", err),
@@ -43,15 +83,39 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 		}
 
 		if result.IsError {
-			logChat.Warnf("tool %s failed%s: %s", call.Name, targetSummary, truncateLog(result.Content, 140))
+			errorCount++
+			logChat.Warnf(
+				"tool[%d/%d] done: id=%s name=%s%s status=error elapsed=%s output_chars=%d output=%s",
+				idx+1,
+				len(toolCalls),
+				callID,
+				call.Name,
+				targetSummary,
+				formatToolElapsed(elapsed),
+				len(result.Content),
+				summarizeToolOutput(result.Content),
+			)
 		} else {
-			logChat.Logf("tool %s done%s: %d chars", call.Name, targetSummary, len(result.Content))
+			successCount++
+			logChat.Logf(
+				"tool[%d/%d] done: id=%s name=%s%s status=ok elapsed=%s output_chars=%d output=%s",
+				idx+1,
+				len(toolCalls),
+				callID,
+				call.Name,
+				targetSummary,
+				formatToolElapsed(elapsed),
+				len(result.Content),
+				summarizeToolOutput(result.Content),
+			)
 		}
 
 		// Success - set tool call ID
 		result.ToolCallID = call.ID
 		results = append(results, result)
 	}
+
+	logChat.Logf("tool batch done: total=%d success=%d error=%d", len(toolCalls), successCount, errorCount)
 
 	return results
 }
@@ -160,4 +224,39 @@ func toolCallSignature(call domain.ToolCall) string {
 		return fmt.Sprintf("%s|%v", call.Name, call.Input)
 	}
 	return call.Name + "|" + string(b)
+}
+
+func summarizeToolCallID(id string) string {
+	if strings.TrimSpace(id) == "" {
+		return "n/a"
+	}
+	return truncateLog(id, 48)
+}
+
+func summarizeToolInput(input map[string]interface{}) string {
+	if len(input) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(input)
+	if err != nil {
+		return truncateLog(fmt.Sprintf("%v", input), 220)
+	}
+	return truncateLog(singleLineToolLog(string(b)), 220)
+}
+
+func summarizeToolOutput(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return `""`
+	}
+	return truncateLog(singleLineToolLog(content), 220)
+}
+
+func formatToolElapsed(d time.Duration) string {
+	return d.Round(time.Millisecond).String()
+}
+
+func singleLineToolLog(text string) string {
+	line := strings.ReplaceAll(text, "\n", `\n`)
+	line = strings.ReplaceAll(line, "\r", "")
+	return line
 }

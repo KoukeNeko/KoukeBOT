@@ -1,6 +1,8 @@
 package discord
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -67,6 +69,11 @@ func (p *discordStreamPresenter) handleStreamError(err error) {
 }
 
 func (p *discordStreamPresenter) handleLegacyToolCallIndicator(toolCalls []domain.ToolCall) {
+	logHandler.Logf(
+		"tool indicator [%s]: %s",
+		p.channelID,
+		summarizeToolCallsForLog(toolCalls),
+	)
 	toolIndicator := formatToolCallIndicator(toolCalls)
 	if p.messageID == "" {
 		if _, err := p.sendInitial(toolIndicator); err != nil {
@@ -85,6 +92,12 @@ func (p *discordStreamPresenter) handleLegacyToolCallIndicator(toolCalls []domai
 func (p *discordStreamPresenter) handleToolStatus(chunk llm.StreamChunk) {
 	switch chunk.ToolStatus {
 	case "tool_start":
+		logHandler.Logf(
+			"tool status [%s]: start name=%s input=%s",
+			p.channelID,
+			safeToolName(chunk.ToolName),
+			summarizeStreamToolInput(chunk.ToolInput),
+		)
 		toolMsg := formatToolStartStatusMessage(chunk.ToolName, chunk.ToolInput)
 		if p.messageID == "" {
 			if _, err := p.sendInitial(toolMsg); err != nil {
@@ -94,11 +107,19 @@ func (p *discordStreamPresenter) handleToolStatus(chunk llm.StreamChunk) {
 		}
 		_ = p.handler.bot.EditMessage(p.channelID, p.messageID, toolMsg)
 	case "tool_error":
+		logHandler.Warnf(
+			"tool status [%s]: error name=%s input=%s err=%s",
+			p.channelID,
+			safeToolName(chunk.ToolName),
+			summarizeStreamToolInput(chunk.ToolInput),
+			truncateDiscordToolLog(chunk.ToolError, 180),
+		)
 		errMsg := formatToolStatusError(chunk.ToolName, chunk.ToolInput, chunk.ToolError)
 		if err := p.handler.bot.SendMessage(p.channelID, errMsg); err != nil {
 			logHandler.Errorf("send tool error [%s]: %v", p.channelID, err)
 		}
 	case "tool_done":
+		logHandler.Logf("tool status [%s]: done", p.channelID)
 		p.fullResponse.Reset()
 	}
 }
@@ -178,4 +199,46 @@ func (p *discordStreamPresenter) sendFinal() {
 	for _, segment := range segments {
 		_ = p.handler.bot.SendMessage(p.channelID, segment)
 	}
+}
+
+func summarizeToolCallsForLog(toolCalls []domain.ToolCall) string {
+	if len(toolCalls) == 0 {
+		return "-"
+	}
+	names := make([]string, 0, len(toolCalls))
+	for _, call := range toolCalls {
+		name := safeToolName(call.Name)
+		if call.ID != "" {
+			name += "#" + truncateDiscordToolLog(call.ID, 10)
+		}
+		names = append(names, name)
+	}
+	return strings.Join(names, ", ")
+}
+
+func summarizeStreamToolInput(input map[string]interface{}) string {
+	if len(input) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(input)
+	if err != nil {
+		return truncateDiscordToolLog(strings.ReplaceAll(fmt.Sprintf("%v", input), "\n", " "), 220)
+	}
+	return truncateDiscordToolLog(strings.ReplaceAll(string(b), "\n", `\n`), 220)
+}
+
+func truncateDiscordToolLog(text string, maxLen int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "-"
+	}
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	if maxLen <= 0 || len(text) <= maxLen {
+		return text
+	}
+	if maxLen <= 3 {
+		return text[:maxLen]
+	}
+	return text[:maxLen-3] + "..."
 }

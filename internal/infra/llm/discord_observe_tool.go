@@ -98,24 +98,28 @@ func (t *DiscordObserveTool) Execute(ctx context.Context, input map[string]inter
 
 	action := readString(input, "action")
 	if action == "" {
+		logTool.Warnf("discord_observe rejected: missing action field")
 		return t.errorResult(action, "missing required field: action", nil, map[string]any{})
 	}
 
 	reqCtx, ok := GetRequestContext(ctx)
 	if !ok || reqCtx.Source != RequestSourceDiscord {
 		metricLogf("discord_tool.denied_non_discord_source", &discordToolDeniedNonDiscordSource)
+		logTool.Warnf("discord_observe denied: action=%s reason=non_discord_source source=%s", action, reqCtx.Source)
 		return t.errorResult(action, "discord_observe is only available for Discord-origin requests", nil, map[string]any{
 			"source": reqCtx.Source,
 		})
 	}
 	if strings.TrimSpace(reqCtx.GuildID) == "" {
 		metricLogf("discord_tool.denied_dm", &discordToolDeniedDM)
+		logTool.Warnf("discord_observe denied: action=%s reason=dm_context channel=%s", action, reqCtx.ChannelID)
 		return t.errorResult(action, "discord_observe is disabled in DM context", nil, map[string]any{
 			"source":   reqCtx.Source,
 			"guild_id": reqCtx.GuildID,
 		})
 	}
 	if t.runtime == nil {
+		logTool.Warnf("discord_observe denied: action=%s reason=runtime_not_configured guild=%s", action, reqCtx.GuildID)
 		return t.errorResult(action, "discord runtime not configured", nil, map[string]any{
 			"guild_id": reqCtx.GuildID,
 		})
@@ -126,29 +130,49 @@ func (t *DiscordObserveTool) Execute(ctx context.Context, input map[string]inter
 	channelID := readString(input, "channel_id")
 	userID := readString(input, "user_id")
 
+	logTool.Logf(
+		"discord_observe start: action=%s guild=%s channel=%s requested_channel=%s user=%s limit=%d before=%s",
+		action,
+		summarizeDiscordID(reqCtx.GuildID),
+		summarizeDiscordID(reqCtx.ChannelID),
+		summarizeDiscordID(channelID),
+		summarizeDiscordID(userID),
+		limit,
+		truncateObserveLogField(before, 40),
+	)
+
+	var (
+		result domain.ToolResult
+		err    error
+	)
+
 	switch action {
 	case discordObserveActionCapabilities:
-		return t.capabilitiesResult(reqCtx), nil
+		result = t.capabilitiesResult(reqCtx)
 	case discordObserveActionGuildInfo:
-		return t.guildInfo(ctx, reqCtx, action)
+		result, err = t.guildInfo(ctx, reqCtx, action)
 	case discordObserveActionListChannels:
-		return t.listChannels(ctx, reqCtx, action)
+		result, err = t.listChannels(ctx, reqCtx, action)
 	case discordObserveActionListRoles:
-		return t.listRoles(ctx, reqCtx, action)
+		result, err = t.listRoles(ctx, reqCtx, action)
 	case discordObserveActionListMembers:
-		return t.listMembers(ctx, reqCtx, action, limit)
+		result, err = t.listMembers(ctx, reqCtx, action, limit)
 	case discordObserveActionGetMember:
 		if userID == "" {
-			return t.errorResult(action, "user_id is required for get_member", nil, t.baseMeta(reqCtx, action))
+			result, err = t.errorResult(action, "user_id is required for get_member", nil, t.baseMeta(reqCtx, action))
+			break
 		}
-		return t.getMember(ctx, reqCtx, action, userID)
+		result, err = t.getMember(ctx, reqCtx, action, userID)
 	case discordObserveActionListPresence:
-		return t.listPresences(reqCtx, action)
+		result, err = t.listPresences(reqCtx, action)
 	case discordObserveActionListMessages:
-		return t.listMessages(ctx, reqCtx, action, channelID, before, limit)
+		result, err = t.listMessages(ctx, reqCtx, action, channelID, before, limit)
 	default:
-		return t.errorResult(action, "unsupported action", nil, t.baseMeta(reqCtx, action))
+		result, err = t.errorResult(action, "unsupported action", nil, t.baseMeta(reqCtx, action))
 	}
+
+	logObserveCompletion(action, result, err)
+	return result, err
 }
 
 func (t *DiscordObserveTool) capabilitiesResult(reqCtx RequestContext) domain.ToolResult {
@@ -632,4 +656,88 @@ func metricLogf(metric string, counter *uint64) {
 	}
 	value := atomic.AddUint64(counter, 1)
 	logTool.Logf("metric %s=%d", metric, value)
+}
+
+func summarizeDiscordID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "-"
+	}
+	return truncateObserveLogField(id, 28)
+}
+
+func truncateObserveLogField(text string, maxLen int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "-"
+	}
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	if maxLen <= 0 || len(text) <= maxLen {
+		return text
+	}
+	if maxLen <= 3 {
+		return text[:maxLen]
+	}
+	return text[:maxLen-3] + "..."
+}
+
+func logObserveCompletion(action string, result domain.ToolResult, execErr error) {
+	status := "ok"
+	if execErr != nil || result.IsError {
+		status = "error"
+	}
+
+	summary := summarizeObserveResultForLog(result)
+	if execErr != nil {
+		logTool.Warnf(
+			"discord_observe done: action=%s status=%s exec_error=%s result=%s",
+			action,
+			status,
+			truncateObserveLogField(execErr.Error(), 180),
+			summary,
+		)
+		return
+	}
+	if result.IsError {
+		logTool.Warnf("discord_observe done: action=%s status=%s result=%s", action, status, summary)
+		return
+	}
+	logTool.Logf("discord_observe done: action=%s status=%s result=%s", action, status, summary)
+}
+
+func summarizeObserveResultForLog(result domain.ToolResult) string {
+	parts := []string{
+		fmt.Sprintf("is_error=%t", result.IsError),
+		fmt.Sprintf("chars=%d", len(result.Content)),
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content), &payload); err != nil {
+		return strings.Join(parts, " ")
+	}
+
+	if meta, ok := payload["meta"].(map[string]any); ok {
+		if count, exists := meta["count"]; exists {
+			parts = append(parts, fmt.Sprintf("count=%v", count))
+		}
+		if channel, exists := meta["channel_id"]; exists {
+			channelText := truncateObserveLogField(fmt.Sprintf("%v", channel), 28)
+			if channelText != "-" {
+				parts = append(parts, fmt.Sprintf("channel=%s", channelText))
+			}
+		}
+		if limit, exists := meta["limit"]; exists {
+			parts = append(parts, fmt.Sprintf("limit=%v", limit))
+		}
+	}
+
+	if warnings, ok := payload["warnings"].([]any); ok && len(warnings) > 0 {
+		parts = append(parts, fmt.Sprintf("warnings=%d", len(warnings)))
+	}
+	if errMsg, ok := payload["error"].(string); ok && strings.TrimSpace(errMsg) != "" {
+		parts = append(parts, fmt.Sprintf("error=%s", truncateObserveLogField(errMsg, 120)))
+	}
+
+	return strings.Join(parts, " ")
 }
