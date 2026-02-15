@@ -19,7 +19,7 @@ func (h *Handler) filterIncomingMessage(s *discordgo.Session, m *discordgo.Messa
 		return "", false
 	}
 
-	content := cleanMention(s, m.Content)
+	content := cleanMention(s, m, h.stripLeadingBotMentionPrefix)
 	if strings.TrimSpace(content) == "" && len(m.Attachments) > 0 {
 		content = buildAttachmentPlaceholder(m.Attachments)
 	}

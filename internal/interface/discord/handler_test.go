@@ -80,3 +80,96 @@ func TestBuildReplyReferenceEntryRespectsCutoff(t *testing.T) {
 		t.Fatalf("expected reply content to be included, got: %s", entry.FormattedText)
 	}
 }
+
+func TestCleanMentionStripsBotPrefixButPreservesOtherUserTags(t *testing.T) {
+	session := &discordgo.Session{
+		State: &discordgo.State{
+			Ready: discordgo.Ready{
+				User: &discordgo.User{ID: "bot-1"},
+			},
+		},
+	}
+	message := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "<@bot-1> 請找 <@user-2> 與 <@!user-3>",
+			Mentions: []*discordgo.User{
+				{ID: "bot-1"},
+				{ID: "user-2"},
+				{ID: "user-3"},
+			},
+		},
+	}
+
+	got := cleanMention(session, message, true)
+	if strings.Contains(got, "<@bot-1>") {
+		t.Fatalf("bot mention should be removed from leading prefix: %q", got)
+	}
+	if !strings.Contains(got, "<@user-2>") {
+		t.Fatalf("expected user-2 mention to remain: %q", got)
+	}
+	if !strings.Contains(got, "<@!user-3>") {
+		t.Fatalf("expected user-3 nickname mention to remain: %q", got)
+	}
+}
+
+func TestCleanMentionPreservesBotMentionWhenStripDisabled(t *testing.T) {
+	session := &discordgo.Session{
+		State: &discordgo.State{
+			Ready: discordgo.Ready{
+				User: &discordgo.User{ID: "bot-1"},
+			},
+		},
+	}
+	message := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "<@bot-1> 請找 <@user-2>",
+			Mentions: []*discordgo.User{
+				{ID: "bot-1"},
+				{ID: "user-2"},
+			},
+		},
+	}
+
+	got := cleanMention(session, message, false)
+	if !strings.Contains(got, "<@bot-1>") {
+		t.Fatalf("bot mention should be preserved when strip is disabled: %q", got)
+	}
+	if !strings.Contains(got, "<@user-2>") {
+		t.Fatalf("user mention should still be present: %q", got)
+	}
+}
+
+func TestCleanMentionRebuildsMentionsWhenContentEmpty(t *testing.T) {
+	session := &discordgo.Session{
+		State: &discordgo.State{
+			Ready: discordgo.Ready{
+				User: &discordgo.User{ID: "bot-1"},
+			},
+		},
+	}
+	message := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "",
+			Mentions: []*discordgo.User{
+				{ID: "bot-1"},
+				{ID: "user-2"},
+			},
+			MentionRoles:    []string{"role-9"},
+			MentionEveryone: true,
+		},
+	}
+
+	got := cleanMention(session, message, true)
+	if !strings.Contains(got, "<@user-2>") {
+		t.Fatalf("expected user mention rebuilt, got: %q", got)
+	}
+	if !strings.Contains(got, "<@&role-9>") {
+		t.Fatalf("expected role mention rebuilt, got: %q", got)
+	}
+	if !strings.Contains(got, "@everyone") {
+		t.Fatalf("expected @everyone rebuilt, got: %q", got)
+	}
+	if strings.Contains(got, "<@bot-1>") {
+		t.Fatalf("bot mention should not be rebuilt, got: %q", got)
+	}
+}

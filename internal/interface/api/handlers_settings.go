@@ -21,6 +21,7 @@ type SettingsResponse struct {
 	BraveAPIKey                     string `json:"brave_api_key"`
 	WebSearchEnabled                bool   `json:"web_search_enabled"`
 	DiscordUseReply                 bool   `json:"discord_use_reply"`
+	DiscordStripLeadingBotMention   bool   `json:"discord_strip_leading_bot_mention"`
 	PerplexityAPIKey                string `json:"perplexity_api_key"` // OpenClaw 相容
 	SearchProvider                  string `json:"search_provider"`    // OpenClaw 相容
 	WebFetchEnabled                 bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
@@ -60,6 +61,7 @@ type SettingsUpdateRequest struct {
 	BraveAPIKey                     string `json:"brave_api_key"`
 	WebSearchEnabled                *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
 	DiscordUseReply                 *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
+	DiscordStripLeadingBotMention   *bool  `json:"discord_strip_leading_bot_mention"`
 	PerplexityAPIKey                string `json:"perplexity_api_key"` // OpenClaw 相容
 	SearchProvider                  string `json:"search_provider"`    // OpenClaw 相容
 	WebFetchEnabled                 *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
@@ -122,6 +124,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		BraveAPIKey:                     maskKey(settings.BraveAPIKey),
 		WebSearchEnabled:                settings.WebSearchEnabled,
 		DiscordUseReply:                 settings.DiscordUseReply,
+		DiscordStripLeadingBotMention:   settings.DiscordStripLeadingBotMention,
 		PerplexityAPIKey:                maskKey(settings.PerplexityAPIKey),
 		SearchProvider:                  searchProvider,
 		WebFetchEnabled:                 settings.WebFetchEnabled,

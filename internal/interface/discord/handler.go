@@ -36,18 +36,26 @@ const (
 
 // Handler bridges Discord events to the ChatService.
 type Handler struct {
-	bot         *discordbot.Bot
-	chatService *app.ChatService
-	convStore   store.ConversationRepository
-	useReply    bool // Whether to use Discord reply feature
+	bot                          *discordbot.Bot
+	chatService                  *app.ChatService
+	convStore                    store.ConversationRepository
+	useReply                     bool // Whether to use Discord reply feature
+	stripLeadingBotMentionPrefix bool // Whether to remove leading <@bot> token from inbound content
 }
 
-func NewHandler(bot *discordbot.Bot, chatService *app.ChatService, convStore store.ConversationRepository, useReply bool) *Handler {
+func NewHandler(
+	bot *discordbot.Bot,
+	chatService *app.ChatService,
+	convStore store.ConversationRepository,
+	useReply bool,
+	stripLeadingBotMentionPrefix bool,
+) *Handler {
 	return &Handler{
-		bot:         bot,
-		chatService: chatService,
-		convStore:   convStore,
-		useReply:    useReply,
+		bot:                          bot,
+		chatService:                  chatService,
+		convStore:                    convStore,
+		useReply:                     useReply,
+		stripLeadingBotMentionPrefix: stripLeadingBotMentionPrefix,
 	}
 }
 
@@ -217,11 +225,84 @@ func isDM(m *discordgo.MessageCreate) bool {
 	return m.GuildID == ""
 }
 
-// cleanMention strips the bot's @mention from the message content.
-func cleanMention(s *discordgo.Session, content string) string {
-	content = strings.ReplaceAll(content, "<@"+s.State.User.ID+">", "")
-	content = strings.ReplaceAll(content, "<@!"+s.State.User.ID+">", "")
-	return strings.TrimSpace(content)
+// cleanMention strips only leading bot @mentions and preserves all other tags.
+// If content becomes empty, it reconstructs non-bot mentions from message metadata.
+func cleanMention(s *discordgo.Session, m *discordgo.MessageCreate, stripLeadingBotMentionPrefix bool) string {
+	if m == nil {
+		return ""
+	}
+	content := strings.TrimSpace(m.Content)
+	botID := ""
+	if s != nil && s.State != nil && s.State.User != nil {
+		botID = s.State.User.ID
+	}
+	if stripLeadingBotMentionPrefix {
+		content = trimLeadingBotMentions(content, botID)
+	}
+	if strings.TrimSpace(content) != "" {
+		return content
+	}
+	return rebuildMentionContent(m, botID)
+}
+
+func trimLeadingBotMentions(content, botID string) string {
+	if strings.TrimSpace(content) == "" || strings.TrimSpace(botID) == "" {
+		return strings.TrimSpace(content)
+	}
+
+	mention := "<@" + botID + ">"
+	mentionNick := "<@!" + botID + ">"
+	content = strings.TrimSpace(content)
+
+	for {
+		switch {
+		case strings.HasPrefix(content, mention):
+			content = strings.TrimSpace(strings.TrimPrefix(content, mention))
+		case strings.HasPrefix(content, mentionNick):
+			content = strings.TrimSpace(strings.TrimPrefix(content, mentionNick))
+		default:
+			return strings.TrimSpace(content)
+		}
+	}
+}
+
+func rebuildMentionContent(m *discordgo.MessageCreate, botID string) string {
+	if m == nil {
+		return ""
+	}
+
+	tokens := make([]string, 0, len(m.Mentions)+len(m.MentionRoles)+1)
+	seen := make(map[string]struct{})
+
+	appendToken := func(token string) {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return
+		}
+		if _, ok := seen[token]; ok {
+			return
+		}
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+
+	for _, user := range m.Mentions {
+		if user == nil || strings.TrimSpace(user.ID) == "" || user.ID == botID {
+			continue
+		}
+		appendToken("<@" + user.ID + ">")
+	}
+	for _, roleID := range m.MentionRoles {
+		if strings.TrimSpace(roleID) == "" {
+			continue
+		}
+		appendToken("<@&" + roleID + ">")
+	}
+	if m.MentionEveryone {
+		appendToken("@everyone")
+	}
+
+	return strings.Join(tokens, " ")
 }
 
 // splitMessage breaks a long message into chunks that fit Discord's limit.

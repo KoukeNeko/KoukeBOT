@@ -68,6 +68,9 @@ func TestNormalizeSettingsAppliesPromptGuardDefaultsForLegacyFile(t *testing.T) 
 	if !got.DiscordShowInternalToolErrors {
 		t.Fatalf("DiscordShowInternalToolErrors should default to true for legacy settings")
 	}
+	if got.DiscordStripLeadingBotMention {
+		t.Fatalf("DiscordStripLeadingBotMention should default to false (preserve mention text)")
+	}
 }
 
 func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
@@ -84,6 +87,7 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 		"force_final_answer_after_tool_limit": explicitFalse,
 		"transient_recovery_wait_enabled":     explicitFalse,
 		"discord_show_internal_tool_errors":   explicitFalse,
+		"discord_strip_leading_bot_mention":   json.RawMessage("true"),
 		"max_tool_rounds":                     intVal,
 		"max_web_search_calls_per_turn":       intVal,
 		"transient_recovery_wait_max_seconds": waitVal,
@@ -97,6 +101,7 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 		ForceFinalAnswerAfterToolLimit:  false,
 		TransientRecoveryWaitEnabled:    false,
 		DiscordShowInternalToolErrors:   false,
+		DiscordStripLeadingBotMention:   true,
 		MaxToolRounds:                   3,
 		MaxWebSearchCallsPerTurn:        3,
 		TransientRecoveryWaitMaxSeconds: 5,
@@ -123,6 +128,9 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 	}
 	if got.DiscordShowInternalToolErrors {
 		t.Fatalf("DiscordShowInternalToolErrors should keep explicit false")
+	}
+	if !got.DiscordStripLeadingBotMention {
+		t.Fatalf("DiscordStripLeadingBotMention should keep explicit true")
 	}
 }
 

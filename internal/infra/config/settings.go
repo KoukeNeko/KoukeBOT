@@ -35,9 +35,12 @@ type Settings struct {
 	BraveAPIKey      string `json:"brave_api_key"`      // Brave Search API key for web search
 	WebSearchEnabled bool   `json:"web_search_enabled"` // Enable/disable web search tool
 	DiscordUseReply  bool   `json:"discord_use_reply"`  // Use reply feature in Discord (default: false)
-	PerplexityAPIKey string `json:"perplexity_api_key"` // Perplexity API key for Sonar search (OpenClaw 相容)
-	SearchProvider   string `json:"search_provider"`    // "brave" | "perplexity" | "auto" (OpenClaw 相容)
-	WebFetchEnabled  bool   `json:"web_fetch_enabled"`  // Enable/disable web_fetch tool (OpenClaw 相容)
+	// Whether to strip leading bot mention tokens (<@bot>, <@!bot>) from inbound Discord text.
+	// Default false (preserve mention text).
+	DiscordStripLeadingBotMention bool   `json:"discord_strip_leading_bot_mention"`
+	PerplexityAPIKey              string `json:"perplexity_api_key"` // Perplexity API key for Sonar search (OpenClaw 相容)
+	SearchProvider                string `json:"search_provider"`    // "brave" | "perplexity" | "auto" (OpenClaw 相容)
+	WebFetchEnabled               bool   `json:"web_fetch_enabled"`  // Enable/disable web_fetch tool (OpenClaw 相容)
 
 	// Time and location settings (OpenClaw 相容)
 	Timezone   string `json:"timezone"`    // "Asia/Taipei", "America/New_York", "auto"
@@ -222,6 +225,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	}
 	if _, ok := raw["discord_show_internal_tool_errors"]; !ok {
 		settings.DiscordShowInternalToolErrors = true
+	}
+	if _, ok := raw["discord_strip_leading_bot_mention"]; !ok {
+		settings.DiscordStripLeadingBotMention = false
 	}
 
 	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {

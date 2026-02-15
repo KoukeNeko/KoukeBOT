@@ -197,6 +197,7 @@ func maybeStartDiscordBot(settings config.Settings, personaService *app.PersonaS
 	bot, err := startDiscordBot(
 		settings.DiscordToken,
 		settings.DiscordUseReply,
+		settings.DiscordStripLeadingBotMention,
 		settings.DiscordPersonaID,
 		settings.DiscordMemberIntentEnabled,
 		settings.DiscordPresenceIntentEnabled,
@@ -342,6 +343,7 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 func startDiscordBot(
 	token string,
 	useReply bool,
+	stripLeadingBotMentionPrefix bool,
 	preferredPersonaID string,
 	enableMemberIntent bool,
 	enablePresenceIntent bool,
@@ -379,7 +381,7 @@ func startDiscordBot(
 	}
 
 	// Register message handler (responds to @mentions and DMs)
-	handler := discordhandler.NewHandler(bot, chatService, convStore, useReply)
+	handler := discordhandler.NewHandler(bot, chatService, convStore, useReply, stripLeadingBotMentionPrefix)
 	handler.Register()
 
 	// Connection must be open before registering slash commands

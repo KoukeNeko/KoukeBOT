@@ -15,17 +15,20 @@ import (
 func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	h := &Handlers{}
 	existing := config.Settings{
-		GeminiAPIKey:          "real-key",
-		WebSearchEnabled:      true,
-		ContextFlushThreshold: 4000,
+		GeminiAPIKey:                  "real-key",
+		WebSearchEnabled:              true,
+		DiscordStripLeadingBotMention: false,
+		ContextFlushThreshold:         4000,
 	}
 	webSearchEnabled := false
+	stripLeadingBotMention := true
 	contextFlushThreshold := 0
 
 	err := h.applySettingsPatch(&existing, SettingsUpdateRequest{
-		GeminiAPIKey:          "***...abcd",
-		WebSearchEnabled:      &webSearchEnabled,
-		ContextFlushThreshold: &contextFlushThreshold,
+		GeminiAPIKey:                  "***...abcd",
+		WebSearchEnabled:              &webSearchEnabled,
+		DiscordStripLeadingBotMention: &stripLeadingBotMention,
+		ContextFlushThreshold:         &contextFlushThreshold,
 	})
 	if err != nil {
 		t.Fatalf("applySettingsPatch returned error: %v", err)
@@ -35,6 +38,9 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	}
 	if existing.WebSearchEnabled {
 		t.Fatalf("web_search_enabled should be false")
+	}
+	if !existing.DiscordStripLeadingBotMention {
+		t.Fatalf("discord_strip_leading_bot_mention should be true")
 	}
 	if existing.ContextFlushThreshold != 0 {
 		t.Fatalf("context_flush_threshold = %d, want 0", existing.ContextFlushThreshold)

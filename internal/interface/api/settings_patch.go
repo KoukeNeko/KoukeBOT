@@ -44,6 +44,9 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.DiscordUseReply != nil {
 		existing.DiscordUseReply = *req.DiscordUseReply
 	}
+	if req.DiscordStripLeadingBotMention != nil {
+		existing.DiscordStripLeadingBotMention = *req.DiscordStripLeadingBotMention
+	}
 	if req.PerplexityAPIKey != "" && !isMasked(req.PerplexityAPIKey) {
 		existing.PerplexityAPIKey = req.PerplexityAPIKey
 	}
