@@ -172,6 +172,38 @@ func TestBuildToolLoopFallbackResponse(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolExecutionPolicyBounds(t *testing.T) {
+	p := normalizeToolExecutionPolicy(ToolExecutionPolicy{
+		MaxToolRounds:                  99,
+		MaxWebSearchCallsPerTurn:       0,
+		ForceFinalAnswerAfterToolLimit: true,
+	})
+	if p.MaxToolRounds != 6 {
+		t.Fatalf("MaxToolRounds = %d, want 6", p.MaxToolRounds)
+	}
+	if p.MaxWebSearchCallsPerTurn != DefaultMaxWebSearchCallsPerTurn {
+		t.Fatalf("MaxWebSearchCallsPerTurn = %d, want %d", p.MaxWebSearchCallsPerTurn, DefaultMaxWebSearchCallsPerTurn)
+	}
+}
+
+func TestToolGuardSummaryForceFinalAnswer(t *testing.T) {
+	policy := DefaultToolExecutionPolicy()
+	summary := toolGuardSummary{}
+	if summary.shouldForceFinalAnswer(policy) {
+		t.Fatalf("empty summary should not trigger forced final answer")
+	}
+
+	summary.Add(toolGuardKindDuplicate, "web_search", "duplicate_tool_call_blocked", "")
+	if !summary.shouldForceFinalAnswer(policy) {
+		t.Fatalf("duplicate guard should trigger forced final answer")
+	}
+
+	policy.ForceFinalAnswerAfterToolLimit = false
+	if summary.shouldForceFinalAnswer(policy) {
+		t.Fatalf("policy disabled should suppress forced final answer")
+	}
+}
+
 type fakeTool struct{}
 
 func (f *fakeTool) Name() string { return "fake_tool" }

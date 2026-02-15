@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,28 @@ var tripletParseFailedCount uint64
 
 const personaConfigsBaseDir = "configs/personas"
 
+const (
+	DefaultMaxToolRounds            = 3
+	DefaultMaxWebSearchCallsPerTurn = 2
+)
+
+// ToolExecutionPolicy controls per-request tool-loop behavior and resilience.
+type ToolExecutionPolicy struct {
+	MaxToolRounds                  int
+	MaxWebSearchCallsPerTurn       int
+	ForceFinalAnswerAfterToolLimit bool
+	DiscordShowInternalToolErrors  bool
+}
+
+func DefaultToolExecutionPolicy() ToolExecutionPolicy {
+	return ToolExecutionPolicy{
+		MaxToolRounds:                  DefaultMaxToolRounds,
+		MaxWebSearchCallsPerTurn:       DefaultMaxWebSearchCallsPerTurn,
+		ForceFinalAnswerAfterToolLimit: true,
+		DiscordShowInternalToolErrors:  true,
+	}
+}
+
 // ChatService orchestrates the full chat pipeline:
 // receive message → load conversation → assemble context → call LLM → persist → return.
 type ChatService struct {
@@ -32,6 +55,9 @@ type ChatService struct {
 	personas          map[string]*domain.PersonaModule
 	toolRegistry      map[string]domain.Tool // tool name → tool instance
 	contextManager    *ContextManager        // pre-compaction memory flush (nil = disabled)
+
+	toolPolicyMu sync.RWMutex
+	toolPolicy   ToolExecutionPolicy
 }
 
 func NewChatService(
@@ -63,6 +89,7 @@ func NewChatService(
 		personas:          personas,
 		toolRegistry:      toolRegistry,
 		contextManager:    contextManager,
+		toolPolicy:        DefaultToolExecutionPolicy(),
 	}
 }
 
@@ -72,6 +99,43 @@ func (s *ChatService) UpdatePromptGuardPolicy(policy PromptGuardPolicy) {
 		return
 	}
 	s.assembler.UpdatePromptGuardPolicy(policy)
+}
+
+// UpdateToolExecutionPolicy hot-swaps tool loop policy without restart.
+func (s *ChatService) UpdateToolExecutionPolicy(policy ToolExecutionPolicy) {
+	if s == nil {
+		return
+	}
+	s.toolPolicyMu.Lock()
+	s.toolPolicy = normalizeToolExecutionPolicy(policy)
+	s.toolPolicyMu.Unlock()
+}
+
+func (s *ChatService) toolExecutionPolicySnapshot() ToolExecutionPolicy {
+	if s == nil {
+		return DefaultToolExecutionPolicy()
+	}
+	s.toolPolicyMu.RLock()
+	policy := s.toolPolicy
+	s.toolPolicyMu.RUnlock()
+	return normalizeToolExecutionPolicy(policy)
+}
+
+func normalizeToolExecutionPolicy(policy ToolExecutionPolicy) ToolExecutionPolicy {
+	defaults := DefaultToolExecutionPolicy()
+	if policy.MaxToolRounds < 1 {
+		policy.MaxToolRounds = defaults.MaxToolRounds
+	}
+	if policy.MaxToolRounds > 6 {
+		policy.MaxToolRounds = 6
+	}
+	if policy.MaxWebSearchCallsPerTurn < 1 {
+		policy.MaxWebSearchCallsPerTurn = defaults.MaxWebSearchCallsPerTurn
+	}
+	if policy.MaxWebSearchCallsPerTurn > 4 {
+		policy.MaxWebSearchCallsPerTurn = 4
+	}
+	return policy
 }
 
 // HandleMessage processes a user message and returns the assistant response.
@@ -110,6 +174,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 		SystemPrompt: assembled.SystemPrompt,
 		Messages:     assembled.Messages,
 		Generation:   assembled.Generation,
+		ToolMode:     llm.ToolModeNormal,
 	})
 	if err != nil {
 		return "", fmt.Errorf("llm chat: %w", err)
@@ -182,6 +247,7 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 		SystemPrompt: assembled.SystemPrompt,
 		Messages:     assembled.Messages,
 		Generation:   assembled.Generation,
+		ToolMode:     llm.ToolModeNormal,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("llm stream: %w", err)
@@ -305,6 +371,7 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 		SystemPrompt: assembled.SystemPrompt,
 		Messages:     assembled.Messages,
 		Generation:   assembled.Generation,
+		ToolMode:     llm.ToolModeNormal,
 	})
 	if err != nil {
 		conv.Messages = conv.Messages[:len(conv.Messages)-1]
@@ -367,6 +434,7 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 			SystemPrompt: assembled.SystemPrompt,
 			Messages:     assembled.Messages,
 			Generation:   assembled.Generation,
+			ToolMode:     llm.ToolModeNormal,
 		})
 		if err != nil {
 			break
@@ -559,6 +627,79 @@ func toolCallSignature(call domain.ToolCall) string {
 	return call.Name + "|" + string(b)
 }
 
+type toolGuardKind string
+
+const (
+	toolGuardKindDuplicate   toolGuardKind = "duplicate_call"
+	toolGuardKindLimit       toolGuardKind = "tool_limit"
+	toolGuardKindMaxRounds   toolGuardKind = "max_tool_rounds"
+	toolGuardKindForcedFinal toolGuardKind = "forced_final_answer"
+)
+
+type toolGuardEvent struct {
+	Kind    toolGuardKind
+	Tool    string
+	Reason  string
+	Details string
+}
+
+type toolGuardSummary struct {
+	Events []toolGuardEvent
+}
+
+func (s *toolGuardSummary) Add(kind toolGuardKind, toolName, reason, details string) {
+	if s == nil {
+		return
+	}
+	s.Events = append(s.Events, toolGuardEvent{
+		Kind:    kind,
+		Tool:    toolName,
+		Reason:  reason,
+		Details: details,
+	})
+}
+
+func (s toolGuardSummary) Empty() bool {
+	return len(s.Events) == 0
+}
+
+func (s toolGuardSummary) Has(kind toolGuardKind) bool {
+	for _, event := range s.Events {
+		if event.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func (s toolGuardSummary) shouldForceFinalAnswer(policy ToolExecutionPolicy) bool {
+	if !policy.ForceFinalAnswerAfterToolLimit {
+		return false
+	}
+	return s.Has(toolGuardKindMaxRounds) || s.Has(toolGuardKindLimit) || s.Has(toolGuardKindDuplicate)
+}
+
+func (s toolGuardSummary) buildPromptText() string {
+	if len(s.Events) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Tool guard events in this turn:\n")
+	for i, event := range s.Events {
+		tool := event.Tool
+		if strings.TrimSpace(tool) == "" {
+			tool = "unknown"
+		}
+		b.WriteString(fmt.Sprintf("%d. kind=%s tool=%s reason=%s", i+1, event.Kind, tool, event.Reason))
+		if strings.TrimSpace(event.Details) != "" {
+			b.WriteString(" details=")
+			b.WriteString(event.Details)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func buildToolLoopFallbackResponse(policy PromptGuardPolicy) string {
 	if policy.TripletOutputEnabled {
 		return strings.TrimSpace(
@@ -568,6 +709,99 @@ func buildToolLoopFallbackResponse(policy PromptGuardPolicy) string {
 		)
 	}
 	return "抱歉，我剛剛在工具呼叫流程卡住了，已自動停止重複呼叫。請再說一次你的需求，我會直接回覆重點。"
+}
+
+func buildDuplicateToolGuardResult(call domain.ToolCall) domain.ToolResult {
+	return domain.ToolResult{
+		ToolCallID: call.ID,
+		Content: fmt.Sprintf(
+			"Tool guard: duplicate call blocked for %q with identical input in this turn. "+
+				"Do NOT call it again; continue with available results and answer the user directly.",
+			call.Name,
+		),
+		IsError: true,
+	}
+}
+
+func buildToolLimitGuardResult(call domain.ToolCall, limit int) domain.ToolResult {
+	return domain.ToolResult{
+		ToolCallID: call.ID,
+		Content: fmt.Sprintf(
+			"Tool guard: %q call limit reached (%d per turn). "+
+				"Do NOT call this tool again in this turn; continue with available results and answer directly.",
+			call.Name,
+			limit,
+		),
+		IsError: true,
+	}
+}
+
+func buildForcedFinalAnswerPrompt(summary toolGuardSummary) string {
+	var b strings.Builder
+	b.WriteString("[Tool guard continuation]\n")
+	b.WriteString("Tool execution was intentionally limited to prevent loops. ")
+	b.WriteString("You MUST provide the best possible final answer using only already available tool results and conversation context.\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do NOT call any tool again.\n")
+	b.WriteString("- If evidence is partial, state uncertainty briefly and still provide a concrete answer.\n")
+	b.WriteString("- Do not ask the user to repeat unless absolutely necessary.\n")
+	if details := summary.buildPromptText(); details != "" {
+		b.WriteString("\n")
+		b.WriteString(details)
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (s *ChatService) forceFinalAnswerWithoutTools(
+	ctx context.Context,
+	conv *domain.Conversation,
+	persona *domain.PersonaModule,
+	summary toolGuardSummary,
+) (string, int, error) {
+	forcedPrompt := buildForcedFinalAnswerPrompt(summary)
+	conv.Messages = append(conv.Messages, domain.Message{
+		Role:    domain.RoleUser,
+		Content: forcedPrompt,
+	})
+	defer func() {
+		if len(conv.Messages) > 0 {
+			conv.Messages = conv.Messages[:len(conv.Messages)-1]
+		}
+	}()
+
+	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+	if err != nil {
+		return "", 0, fmt.Errorf("assemble forced final answer: %w", err)
+	}
+	s.logPromptSnapshot("stream-forced-final", conv.ChannelID, conv.PersonaID, conv.ID, assembled)
+
+	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
+		SystemPrompt: assembled.SystemPrompt,
+		Messages:     assembled.Messages,
+		Generation:   assembled.Generation,
+		ToolMode:     llm.ToolModeDisabled,
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("forced final answer llm call: %w", err)
+	}
+
+	var fullResponse strings.Builder
+	var tokensUsed int
+	for chunk := range streamCh {
+		if chunk.TokensUsed > 0 {
+			tokensUsed += chunk.TokensUsed
+		}
+		if chunk.Error != nil {
+			return "", tokensUsed, chunk.Error
+		}
+		if len(chunk.ToolCalls) > 0 {
+			return "", tokensUsed, fmt.Errorf("forced final answer unexpectedly requested tool calls")
+		}
+		fullResponse.WriteString(chunk.Content)
+	}
+
+	return strings.TrimSpace(fullResponse.String()), tokensUsed, nil
 }
 
 // handleToolCallingStream handles the tool calling loop with streaming.
@@ -591,16 +825,19 @@ func (s *ChatService) handleToolCallingStream(
 	go func() {
 		defer close(outputCh)
 
-		const maxToolRounds = 3
+		toolPolicy := s.toolExecutionPolicySnapshot()
 		var allToolCalls []domain.ToolCall
 		var allToolResultsText string
 		var totalTokens int
 		toolCallAttempts := make(map[string]int)
-		policy := s.assembler.PromptGuardPolicy()
-		hideAnalysis := policy.TripletOutputEnabled && policy.AnalysisVisibility == AnalysisVisibilityHidden
+		toolCountsByName := make(map[string]int)
+		guardSummary := toolGuardSummary{}
+		promptPolicy := s.assembler.PromptGuardPolicy()
+		hideAnalysis := promptPolicy.TripletOutputEnabled && promptPolicy.AnalysisVisibility == AnalysisVisibilityHidden
 
 		currentStream := streamCh
 		var fullResponse string
+		finalTextSent := false
 		baseMessageCount := len(conv.Messages)
 		conv.AppendUserMessage(contextForLLM)
 		defer func() {
@@ -609,7 +846,7 @@ func (s *ChatService) handleToolCallingStream(
 			}
 		}()
 
-		for round := 0; round <= maxToolRounds; round++ {
+		for round := 0; round <= toolPolicy.MaxToolRounds; round++ {
 			var pendingToolCalls []domain.ToolCall
 			fullResponse = ""
 			var visibleRoundContent strings.Builder
@@ -638,13 +875,8 @@ func (s *ChatService) handleToolCallingStream(
 			if len(pendingToolCalls) == 0 {
 				if !hideAnalysis && visibleRoundContent.Len() > 0 {
 					outputCh <- llm.StreamChunk{Content: visibleRoundContent.String()}
+					finalTextSent = true
 				}
-				break
-			}
-
-			// Max rounds reached → stop and use whatever we have
-			if round == maxToolRounds {
-				logChat.Warnf("max tool rounds (%d) reached, stopping", maxToolRounds)
 				break
 			}
 
@@ -653,8 +885,16 @@ func (s *ChatService) handleToolCallingStream(
 			for i, c := range pendingToolCalls {
 				names[i] = c.Name
 			}
-			logChat.Logf("tool calls (round %d): %s", round+1, strings.Join(names, ", "))
+			logChat.Logf("tool calls (round %d/%d): %s", round+1, toolPolicy.MaxToolRounds, strings.Join(names, ", "))
 			allToolCalls = append(allToolCalls, pendingToolCalls...)
+
+			// Max rounds reached → force finalize on next step.
+			if round == toolPolicy.MaxToolRounds {
+				guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached",
+					fmt.Sprintf("max_tool_rounds=%d", toolPolicy.MaxToolRounds))
+				logChat.Warnf("max tool rounds (%d) reached, stopping", toolPolicy.MaxToolRounds)
+				break
+			}
 
 			// Send tool execution start status for each tool
 			for _, call := range pendingToolCalls {
@@ -669,21 +909,27 @@ func (s *ChatService) handleToolCallingStream(
 			executableCalls := make([]domain.ToolCall, 0, len(pendingToolCalls))
 			toolResults := make([]domain.ToolResult, 0, len(pendingToolCalls))
 			for _, call := range pendingToolCalls {
+				if call.Name == "web_search" && toolCountsByName[call.Name] >= toolPolicy.MaxWebSearchCallsPerTurn {
+					guardSummary.Add(
+						toolGuardKindLimit,
+						call.Name,
+						"tool_call_limit_reached",
+						fmt.Sprintf("max_web_search_calls_per_turn=%d", toolPolicy.MaxWebSearchCallsPerTurn),
+					)
+					toolResults = append(toolResults, buildToolLimitGuardResult(call, toolPolicy.MaxWebSearchCallsPerTurn))
+					logChat.Warnf("tool loop guard blocked limit (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
+					continue
+				}
+
 				signature := toolCallSignature(call)
 				if toolCallAttempts[signature] >= 1 {
-					toolResults = append(toolResults, domain.ToolResult{
-						ToolCallID: call.ID,
-						Content: fmt.Sprintf(
-							"Duplicate tool call blocked: %q with identical input was already executed in this turn. "+
-								"Do NOT call it again; continue with available results and answer the user directly.",
-							call.Name,
-						),
-						IsError: true,
-					})
+					guardSummary.Add(toolGuardKindDuplicate, call.Name, "duplicate_tool_call_blocked", "")
+					toolResults = append(toolResults, buildDuplicateToolGuardResult(call))
 					logChat.Warnf("tool loop guard blocked duplicate call (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
 					continue
 				}
 				toolCallAttempts[signature]++
+				toolCountsByName[call.Name]++
 				executableCalls = append(executableCalls, call)
 			}
 
@@ -700,11 +946,13 @@ func (s *ChatService) handleToolCallingStream(
 					continue
 				}
 				call := toolCallMap[result.ToolCallID]
-				outputCh <- llm.StreamChunk{
-					ToolStatus: "tool_error",
-					ToolName:   call.Name,
-					ToolInput:  call.Input,
-					ToolError:  truncateLog(result.Content, 240),
+				if toolPolicy.DiscordShowInternalToolErrors {
+					outputCh <- llm.StreamChunk{
+						ToolStatus: "tool_error",
+						ToolName:   call.Name,
+						ToolInput:  call.Input,
+						ToolError:  truncateLog(result.Content, 240),
+					}
 				}
 			}
 
@@ -755,6 +1003,7 @@ func (s *ChatService) handleToolCallingStream(
 					SystemPrompt: assembled.SystemPrompt,
 					Messages:     assembled.Messages,
 					Generation:   assembled.Generation,
+					ToolMode:     llm.ToolModeNormal,
 				})
 			}
 			if err != nil {
@@ -763,8 +1012,24 @@ func (s *ChatService) handleToolCallingStream(
 			}
 		}
 
+		if strings.TrimSpace(fullResponse) == "" && len(allToolCalls) > 0 && guardSummary.shouldForceFinalAnswer(toolPolicy) {
+			guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
+			forcedResponse, forcedTokens, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, guardSummary)
+			totalTokens += forcedTokens
+			if err != nil {
+				logChat.Warnf("forced final answer failed: %v", err)
+			} else if strings.TrimSpace(forcedResponse) != "" {
+				fullResponse = forcedResponse
+				if !hideAnalysis {
+					outputCh <- llm.StreamChunk{Content: forcedResponse}
+					finalTextSent = true
+				}
+				logChat.Logf("tool loop forced final answer generated after %d tool call(s)", len(allToolCalls))
+			}
+		}
+
 		if strings.TrimSpace(fullResponse) == "" && len(allToolCalls) > 0 {
-			fullResponse = buildToolLoopFallbackResponse(policy)
+			fullResponse = buildToolLoopFallbackResponse(promptPolicy)
 			logChat.Warnf("tool loop fallback response generated after %d tool call(s)", len(allToolCalls))
 		}
 
@@ -772,6 +1037,11 @@ func (s *ChatService) handleToolCallingStream(
 
 		if hideAnalysis && finalView.Display != "" {
 			outputCh <- llm.StreamChunk{Content: finalView.Display}
+			finalTextSent = true
+		}
+		if !hideAnalysis && !finalTextSent && finalView.Display != "" {
+			outputCh <- llm.StreamChunk{Content: finalView.Display}
+			finalTextSent = true
 		}
 
 		// Save conversation and emit final signals

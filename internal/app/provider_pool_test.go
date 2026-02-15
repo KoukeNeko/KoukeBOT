@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -289,5 +290,47 @@ func TestProviderPoolContextDeadlineDoesNotFailoverOrExhaust(t *testing.T) {
 		if e.Email == "first@example.com" && e.Status != "available" {
 			t.Fatalf("first account status = %s, want available", e.Status)
 		}
+	}
+}
+
+func TestProviderPoolTransientWaitRetrySucceeds(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetTransientRecoveryWait(true, 2*time.Second)
+	pool.AddOrReplace(&stubProvider{id: "ok"}, "retry@example.com")
+
+	// Simulate short transient cooldown that should recover after wait.
+	pool.MarkTransientFailure("retry@example.com", errors.New("timeout"), 80*time.Millisecond)
+
+	start := time.Now()
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected retry success, got error: %v", err)
+	}
+	if resp == nil || resp.Content != "ok" {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if elapsed := time.Since(start); elapsed < 70*time.Millisecond {
+		t.Fatalf("expected wait before retry, elapsed=%v", elapsed)
+	}
+}
+
+func TestProviderPoolTransientWaitDisabledReturnsExhausted(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetTransientRecoveryWait(false, 2*time.Second)
+	pool.AddOrReplace(&stubProvider{id: "ok"}, "retry@example.com")
+	pool.MarkTransientFailure("retry@example.com", errors.New("timeout"), 200*time.Millisecond)
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatalf("expected exhausted error when transient wait retry is disabled")
+	}
+	if !strings.Contains(err.Error(), "exhausted") {
+		t.Fatalf("expected exhausted error, got: %v", err)
 	}
 }

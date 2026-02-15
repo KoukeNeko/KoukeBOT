@@ -21,6 +21,9 @@ const (
 	DiscordObserveScopeCurrentChannel = "current_channel"
 	DiscordObserveScopeCurrentGuild   = "current_guild"
 	DefaultDiscordObserveMessageScope = DiscordObserveScopeCurrentGuild
+	DefaultMaxToolRounds              = 3
+	DefaultMaxWebSearchCallsPerTurn   = 2
+	DefaultTransientRecoveryWaitMax   = 5
 )
 
 // Settings holds the runtime-configurable values.
@@ -52,6 +55,14 @@ type Settings struct {
 
 	// Provider pool settings
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
+
+	// Tool loop guard / resilience settings
+	MaxToolRounds                   int  `json:"max_tool_rounds"`
+	MaxWebSearchCallsPerTurn        int  `json:"max_web_search_calls_per_turn"`
+	ForceFinalAnswerAfterToolLimit  bool `json:"force_final_answer_after_tool_limit"`
+	TransientRecoveryWaitEnabled    bool `json:"transient_recovery_wait_enabled"`
+	TransientRecoveryWaitMaxSeconds int  `json:"transient_recovery_wait_max_seconds"`
+	DiscordShowInternalToolErrors   bool `json:"discord_show_internal_tool_errors"`
 
 	// Discord logging settings
 	LogChannelID string `json:"log_channel_id"` // Discord channel ID for stdout logs (optional)
@@ -160,6 +171,15 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 		if settings.DiscordObserveMessageScope == "" {
 			settings.DiscordObserveMessageScope = DefaultDiscordObserveMessageScope
 		}
+		if settings.MaxToolRounds <= 0 {
+			settings.MaxToolRounds = DefaultMaxToolRounds
+		}
+		if settings.MaxWebSearchCallsPerTurn <= 0 {
+			settings.MaxWebSearchCallsPerTurn = DefaultMaxWebSearchCallsPerTurn
+		}
+		if settings.TransientRecoveryWaitMaxSeconds <= 0 {
+			settings.TransientRecoveryWaitMaxSeconds = DefaultTransientRecoveryWaitMax
+		}
 		return normalizeVisibilityAndBooleans(settings)
 	}
 
@@ -184,6 +204,24 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	}
 	if _, ok := raw["discord_observe_message_scope"]; !ok && settings.DiscordObserveMessageScope == "" {
 		settings.DiscordObserveMessageScope = DefaultDiscordObserveMessageScope
+	}
+	if _, ok := raw["max_tool_rounds"]; !ok {
+		settings.MaxToolRounds = DefaultMaxToolRounds
+	}
+	if _, ok := raw["max_web_search_calls_per_turn"]; !ok {
+		settings.MaxWebSearchCallsPerTurn = DefaultMaxWebSearchCallsPerTurn
+	}
+	if _, ok := raw["force_final_answer_after_tool_limit"]; !ok {
+		settings.ForceFinalAnswerAfterToolLimit = true
+	}
+	if _, ok := raw["transient_recovery_wait_enabled"]; !ok {
+		settings.TransientRecoveryWaitEnabled = true
+	}
+	if _, ok := raw["transient_recovery_wait_max_seconds"]; !ok {
+		settings.TransientRecoveryWaitMaxSeconds = DefaultTransientRecoveryWaitMax
+	}
+	if _, ok := raw["discord_show_internal_tool_errors"]; !ok {
+		settings.DiscordShowInternalToolErrors = true
 	}
 
 	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
@@ -217,6 +255,24 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 		// valid
 	default:
 		settings.DiscordObserveMessageScope = DefaultDiscordObserveMessageScope
+	}
+	if settings.MaxToolRounds < 1 {
+		settings.MaxToolRounds = DefaultMaxToolRounds
+	}
+	if settings.MaxToolRounds > 6 {
+		settings.MaxToolRounds = 6
+	}
+	if settings.MaxWebSearchCallsPerTurn < 1 {
+		settings.MaxWebSearchCallsPerTurn = DefaultMaxWebSearchCallsPerTurn
+	}
+	if settings.MaxWebSearchCallsPerTurn > 4 {
+		settings.MaxWebSearchCallsPerTurn = 4
+	}
+	if settings.TransientRecoveryWaitMaxSeconds < 1 {
+		settings.TransientRecoveryWaitMaxSeconds = DefaultTransientRecoveryWaitMax
+	}
+	if settings.TransientRecoveryWaitMaxSeconds > 15 {
+		settings.TransientRecoveryWaitMaxSeconds = 15
 	}
 	return settings
 }

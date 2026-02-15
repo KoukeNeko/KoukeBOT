@@ -299,10 +299,10 @@ func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 		strings.Contains(g.model, "3")
 
 	return ModelCapabilities{
-		SupportsThinking: supportsThinking,
-		ContextWindow:    1_000_000,
+		SupportsThinking:  supportsThinking,
+		ContextWindow:     1_000_000,
 		SupportsStreaming: true,
-		ProviderName:     "gemini-oauth",
+		ProviderName:      "gemini-oauth",
 	}
 }
 
@@ -428,13 +428,18 @@ func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 		}
 	}
 
-	// Include tool declarations for function calling
-	if len(g.tools) > 0 {
+	toolsCount := len(g.tools)
+	if req.ToolMode == ToolModeDisabled {
+		toolsCount = 0
+	}
+
+	// Include tool declarations for function calling unless explicitly disabled.
+	if req.ToolMode != ToolModeDisabled && len(g.tools) > 0 {
 		caReq.Request.Tools = convertToolsForCA(g.tools)
 	}
 
 	logOAuth.Logf("request: messages=%d, tools=%d, temp=%.1f, maxTokens=%d",
-		len(req.Messages), len(g.tools), config.temperature, config.maxTokens)
+		len(req.Messages), toolsCount, config.temperature, config.maxTokens)
 
 	return caReq
 }

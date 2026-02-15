@@ -111,3 +111,73 @@ func TestValidateDiscordObserveSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateToolLoopSettings(t *testing.T) {
+	tests := []struct {
+		name           string
+		maxRounds      int
+		maxWebSearch   int
+		maxWaitSeconds int
+		wantErr        bool
+	}{
+		{
+			name:           "valid defaults",
+			maxRounds:      3,
+			maxWebSearch:   2,
+			maxWaitSeconds: 5,
+			wantErr:        false,
+		},
+		{
+			name:           "invalid max rounds low",
+			maxRounds:      0,
+			maxWebSearch:   2,
+			maxWaitSeconds: 5,
+			wantErr:        true,
+		},
+		{
+			name:           "invalid max rounds high",
+			maxRounds:      7,
+			maxWebSearch:   2,
+			maxWaitSeconds: 5,
+			wantErr:        true,
+		},
+		{
+			name:           "invalid web search low",
+			maxRounds:      3,
+			maxWebSearch:   0,
+			maxWaitSeconds: 5,
+			wantErr:        true,
+		},
+		{
+			name:           "invalid web search high",
+			maxRounds:      3,
+			maxWebSearch:   5,
+			maxWaitSeconds: 5,
+			wantErr:        true,
+		},
+		{
+			name:           "invalid wait seconds low",
+			maxRounds:      3,
+			maxWebSearch:   2,
+			maxWaitSeconds: 0,
+			wantErr:        true,
+		},
+		{
+			name:           "invalid wait seconds high",
+			maxRounds:      3,
+			maxWebSearch:   2,
+			maxWaitSeconds: 16,
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		err := validateToolLoopSettings(tt.maxRounds, tt.maxWebSearch, tt.maxWaitSeconds)
+		if tt.wantErr && err == nil {
+			t.Fatalf("%s: expected error", tt.name)
+		}
+		if !tt.wantErr && err != nil {
+			t.Fatalf("%s: unexpected error: %v", tt.name, err)
+		}
+	}
+}

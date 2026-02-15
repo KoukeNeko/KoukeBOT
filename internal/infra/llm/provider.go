@@ -15,11 +15,20 @@ type ModelCapabilities struct {
 	ProviderName      string // Human-readable provider identifier
 }
 
+// ToolMode controls whether providers should expose tool declarations for a request.
+type ToolMode string
+
+const (
+	ToolModeNormal   ToolMode = "normal"
+	ToolModeDisabled ToolMode = "disabled"
+)
+
 // ChatRequest is the input to a provider.
 type ChatRequest struct {
 	SystemPrompt string
 	Messages     []domain.Message
 	Generation   domain.GenerationConfig
+	ToolMode     ToolMode
 }
 
 // ChatResponse is a complete (non-streaming) response.

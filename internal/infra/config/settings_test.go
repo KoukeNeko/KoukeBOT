@@ -50,24 +50,56 @@ func TestNormalizeSettingsAppliesPromptGuardDefaultsForLegacyFile(t *testing.T) 
 	if got.DiscordObserveMessageScope != DefaultDiscordObserveMessageScope {
 		t.Fatalf("DiscordObserveMessageScope = %q, want %q", got.DiscordObserveMessageScope, DefaultDiscordObserveMessageScope)
 	}
+	if got.MaxToolRounds != DefaultMaxToolRounds {
+		t.Fatalf("MaxToolRounds = %d, want %d", got.MaxToolRounds, DefaultMaxToolRounds)
+	}
+	if got.MaxWebSearchCallsPerTurn != DefaultMaxWebSearchCallsPerTurn {
+		t.Fatalf("MaxWebSearchCallsPerTurn = %d, want %d", got.MaxWebSearchCallsPerTurn, DefaultMaxWebSearchCallsPerTurn)
+	}
+	if !got.ForceFinalAnswerAfterToolLimit {
+		t.Fatalf("ForceFinalAnswerAfterToolLimit should default to true for legacy settings")
+	}
+	if !got.TransientRecoveryWaitEnabled {
+		t.Fatalf("TransientRecoveryWaitEnabled should default to true for legacy settings")
+	}
+	if got.TransientRecoveryWaitMaxSeconds != DefaultTransientRecoveryWaitMax {
+		t.Fatalf("TransientRecoveryWaitMaxSeconds = %d, want %d", got.TransientRecoveryWaitMaxSeconds, DefaultTransientRecoveryWaitMax)
+	}
+	if !got.DiscordShowInternalToolErrors {
+		t.Fatalf("DiscordShowInternalToolErrors should default to true for legacy settings")
+	}
 }
 
 func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 	explicitFalse := json.RawMessage("false")
 	debugValue := json.RawMessage(`"debug"`)
 	constraintValue := json.RawMessage(`"keep this"`)
+	intVal := json.RawMessage(`3`)
+	waitVal := json.RawMessage(`5`)
 	raw := map[string]json.RawMessage{
-		"triplet_output_enabled":      explicitFalse,
-		"negative_constraint_enabled": explicitFalse,
-		"analysis_visibility":         debugValue,
-		"negative_constraint_default": constraintValue,
+		"triplet_output_enabled":              explicitFalse,
+		"negative_constraint_enabled":         explicitFalse,
+		"analysis_visibility":                 debugValue,
+		"negative_constraint_default":         constraintValue,
+		"force_final_answer_after_tool_limit": explicitFalse,
+		"transient_recovery_wait_enabled":     explicitFalse,
+		"discord_show_internal_tool_errors":   explicitFalse,
+		"max_tool_rounds":                     intVal,
+		"max_web_search_calls_per_turn":       intVal,
+		"transient_recovery_wait_max_seconds": waitVal,
 	}
 	in := Settings{
-		PersonaLockEveryTurns:     6,
-		TripletOutputEnabled:      false,
-		NegativeConstraintEnabled: false,
-		AnalysisVisibility:        "debug",
-		NegativeConstraintDefault: "keep this",
+		PersonaLockEveryTurns:           6,
+		TripletOutputEnabled:            false,
+		NegativeConstraintEnabled:       false,
+		AnalysisVisibility:              "debug",
+		NegativeConstraintDefault:       "keep this",
+		ForceFinalAnswerAfterToolLimit:  false,
+		TransientRecoveryWaitEnabled:    false,
+		DiscordShowInternalToolErrors:   false,
+		MaxToolRounds:                   3,
+		MaxWebSearchCallsPerTurn:        3,
+		TransientRecoveryWaitMaxSeconds: 5,
 	}
 	got := normalizeSettings(in, raw)
 
@@ -82,6 +114,15 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 	}
 	if got.NegativeConstraintDefault != "keep this" {
 		t.Fatalf("NegativeConstraintDefault changed unexpectedly: %q", got.NegativeConstraintDefault)
+	}
+	if got.ForceFinalAnswerAfterToolLimit {
+		t.Fatalf("ForceFinalAnswerAfterToolLimit should keep explicit false")
+	}
+	if got.TransientRecoveryWaitEnabled {
+		t.Fatalf("TransientRecoveryWaitEnabled should keep explicit false")
+	}
+	if got.DiscordShowInternalToolErrors {
+		t.Fatalf("DiscordShowInternalToolErrors should keep explicit false")
 	}
 }
 

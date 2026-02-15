@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -126,6 +127,12 @@ func run() error {
 		NegativeConstraintDefault: settings.NegativeConstraintDefault,
 	})
 	chatService := app.NewChatService(providerManager, assembler, convStore, imageStore, 0, personaService.GetAll(), tools, contextManager)
+	chatService.UpdateToolExecutionPolicy(app.ToolExecutionPolicy{
+		MaxToolRounds:                  settings.MaxToolRounds,
+		MaxWebSearchCallsPerTurn:       settings.MaxWebSearchCallsPerTurn,
+		ForceFinalAnswerAfterToolLimit: settings.ForceFinalAnswerAfterToolLimit,
+		DiscordShowInternalToolErrors:  settings.DiscordShowInternalToolErrors,
+	})
 
 	// Start Discord bot (optional — only if DISCORD_TOKEN is set)
 	var discordBot *discordbot.Bot
@@ -264,6 +271,10 @@ func initOAuthProvider(ctx context.Context, settings config.Settings, pm *app.Pr
 	if settings.AutoRetryCount > 0 {
 		pool.SetAutoRetryCount(settings.AutoRetryCount)
 	}
+	pool.SetTransientRecoveryWait(
+		settings.TransientRecoveryWaitEnabled,
+		time.Duration(settings.TransientRecoveryWaitMaxSeconds)*time.Second,
+	)
 
 	for _, tokenData := range tokens {
 		if err := llm.RefreshIfNeeded(ctx, tokenData, ""); err != nil {

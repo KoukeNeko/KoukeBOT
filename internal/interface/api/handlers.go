@@ -501,69 +501,81 @@ func truncate(s string, maxLen int) string {
 // --- Settings endpoints ---
 
 type SettingsResponse struct {
-	GeminiAPIKey                 string `json:"gemini_api_key"`
-	GeminiModel                  string `json:"gemini_model"`
-	DiscordToken                 string `json:"discord_token"`
-	ProviderType                 string `json:"provider_type"`
-	BraveAPIKey                  string `json:"brave_api_key"`
-	WebSearchEnabled             bool   `json:"web_search_enabled"`
-	DiscordUseReply              bool   `json:"discord_use_reply"`
-	PerplexityAPIKey             string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider               string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled              bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone                     string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat                   string `json:"time_format"`        // OpenClaw 相容
-	Location                     string `json:"location"`           // OpenClaw 相容
-	ContextFlushEnabled          bool   `json:"context_flush_enabled"`
-	ContextFlushThreshold        int    `json:"context_flush_threshold"`
-	ContextWindowSize            int    `json:"context_window_size"`
-	LogChannelID                 string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID             string `json:"discord_persona_id"`
-	MemoryExtractionEnabled      bool   `json:"memory_extraction_enabled"`
-	MemoryExtractionModel        string `json:"memory_extraction_model"`
-	PersonaLockEveryTurns        int    `json:"persona_lock_every_turns"`
-	TripletOutputEnabled         bool   `json:"triplet_output_enabled"`
-	AnalysisVisibility           string `json:"analysis_visibility"`
-	NegativeConstraintEnabled    bool   `json:"negative_constraint_enabled"`
-	NegativeConstraintDefault    string `json:"negative_constraint_default"`
-	DiscordObserveEnabled        bool   `json:"discord_observe_enabled"`
-	DiscordMemberIntentEnabled   bool   `json:"discord_member_intent_enabled"`
-	DiscordPresenceIntentEnabled bool   `json:"discord_presence_intent_enabled"`
-	DiscordObserveMaxResults     int    `json:"discord_observe_max_results"`
-	DiscordObserveMessageScope   string `json:"discord_observe_message_scope"`
+	GeminiAPIKey                    string `json:"gemini_api_key"`
+	GeminiModel                     string `json:"gemini_model"`
+	DiscordToken                    string `json:"discord_token"`
+	ProviderType                    string `json:"provider_type"`
+	BraveAPIKey                     string `json:"brave_api_key"`
+	WebSearchEnabled                bool   `json:"web_search_enabled"`
+	DiscordUseReply                 bool   `json:"discord_use_reply"`
+	PerplexityAPIKey                string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider                  string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled                 bool   `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                        string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat                      string `json:"time_format"`        // OpenClaw 相容
+	Location                        string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled             bool   `json:"context_flush_enabled"`
+	ContextFlushThreshold           int    `json:"context_flush_threshold"`
+	ContextWindowSize               int    `json:"context_window_size"`
+	LogChannelID                    string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID                string `json:"discord_persona_id"`
+	MemoryExtractionEnabled         bool   `json:"memory_extraction_enabled"`
+	MemoryExtractionModel           string `json:"memory_extraction_model"`
+	PersonaLockEveryTurns           int    `json:"persona_lock_every_turns"`
+	TripletOutputEnabled            bool   `json:"triplet_output_enabled"`
+	AnalysisVisibility              string `json:"analysis_visibility"`
+	NegativeConstraintEnabled       bool   `json:"negative_constraint_enabled"`
+	NegativeConstraintDefault       string `json:"negative_constraint_default"`
+	DiscordObserveEnabled           bool   `json:"discord_observe_enabled"`
+	DiscordMemberIntentEnabled      bool   `json:"discord_member_intent_enabled"`
+	DiscordPresenceIntentEnabled    bool   `json:"discord_presence_intent_enabled"`
+	DiscordObserveMaxResults        int    `json:"discord_observe_max_results"`
+	DiscordObserveMessageScope      string `json:"discord_observe_message_scope"`
+	MaxToolRounds                   int    `json:"max_tool_rounds"`
+	MaxWebSearchCallsPerTurn        int    `json:"max_web_search_calls_per_turn"`
+	ForceFinalAnswerAfterToolLimit  bool   `json:"force_final_answer_after_tool_limit"`
+	TransientRecoveryWaitEnabled    bool   `json:"transient_recovery_wait_enabled"`
+	TransientRecoveryWaitMaxSeconds int    `json:"transient_recovery_wait_max_seconds"`
+	DiscordShowInternalToolErrors   bool   `json:"discord_show_internal_tool_errors"`
 }
 
 type SettingsUpdateRequest struct {
-	GeminiAPIKey                 string `json:"gemini_api_key"`
-	GeminiModel                  string `json:"gemini_model"`
-	DiscordToken                 string `json:"discord_token"`
-	ProviderType                 string `json:"provider_type"`
-	BraveAPIKey                  string `json:"brave_api_key"`
-	WebSearchEnabled             *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
-	DiscordUseReply              *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
-	PerplexityAPIKey             string `json:"perplexity_api_key"` // OpenClaw 相容
-	SearchProvider               string `json:"search_provider"`    // OpenClaw 相容
-	WebFetchEnabled              *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
-	Timezone                     string `json:"timezone"`           // OpenClaw 相容
-	TimeFormat                   string `json:"time_format"`        // OpenClaw 相容
-	Location                     string `json:"location"`           // OpenClaw 相容
-	ContextFlushEnabled          *bool  `json:"context_flush_enabled"`
-	ContextFlushThreshold        *int   `json:"context_flush_threshold"`
-	ContextWindowSize            *int   `json:"context_window_size"`
-	LogChannelID                 string `json:"log_channel_id"` // Discord channel ID for stdout logs
-	DiscordPersonaID             string `json:"discord_persona_id"`
-	MemoryExtractionEnabled      *bool  `json:"memory_extraction_enabled"`
-	MemoryExtractionModel        string `json:"memory_extraction_model"`
-	PersonaLockEveryTurns        *int   `json:"persona_lock_every_turns"`
-	TripletOutputEnabled         *bool  `json:"triplet_output_enabled"`
-	AnalysisVisibility           string `json:"analysis_visibility"`
-	NegativeConstraintEnabled    *bool  `json:"negative_constraint_enabled"`
-	NegativeConstraintDefault    string `json:"negative_constraint_default"`
-	DiscordObserveEnabled        *bool  `json:"discord_observe_enabled"`
-	DiscordMemberIntentEnabled   *bool  `json:"discord_member_intent_enabled"`
-	DiscordPresenceIntentEnabled *bool  `json:"discord_presence_intent_enabled"`
-	DiscordObserveMaxResults     *int   `json:"discord_observe_max_results"`
-	DiscordObserveMessageScope   string `json:"discord_observe_message_scope"`
+	GeminiAPIKey                    string `json:"gemini_api_key"`
+	GeminiModel                     string `json:"gemini_model"`
+	DiscordToken                    string `json:"discord_token"`
+	ProviderType                    string `json:"provider_type"`
+	BraveAPIKey                     string `json:"brave_api_key"`
+	WebSearchEnabled                *bool  `json:"web_search_enabled"` // Pointer to distinguish false from unset
+	DiscordUseReply                 *bool  `json:"discord_use_reply"`  // Pointer to distinguish false from unset
+	PerplexityAPIKey                string `json:"perplexity_api_key"` // OpenClaw 相容
+	SearchProvider                  string `json:"search_provider"`    // OpenClaw 相容
+	WebFetchEnabled                 *bool  `json:"web_fetch_enabled"`  // OpenClaw 相容
+	Timezone                        string `json:"timezone"`           // OpenClaw 相容
+	TimeFormat                      string `json:"time_format"`        // OpenClaw 相容
+	Location                        string `json:"location"`           // OpenClaw 相容
+	ContextFlushEnabled             *bool  `json:"context_flush_enabled"`
+	ContextFlushThreshold           *int   `json:"context_flush_threshold"`
+	ContextWindowSize               *int   `json:"context_window_size"`
+	LogChannelID                    string `json:"log_channel_id"` // Discord channel ID for stdout logs
+	DiscordPersonaID                string `json:"discord_persona_id"`
+	MemoryExtractionEnabled         *bool  `json:"memory_extraction_enabled"`
+	MemoryExtractionModel           string `json:"memory_extraction_model"`
+	PersonaLockEveryTurns           *int   `json:"persona_lock_every_turns"`
+	TripletOutputEnabled            *bool  `json:"triplet_output_enabled"`
+	AnalysisVisibility              string `json:"analysis_visibility"`
+	NegativeConstraintEnabled       *bool  `json:"negative_constraint_enabled"`
+	NegativeConstraintDefault       string `json:"negative_constraint_default"`
+	DiscordObserveEnabled           *bool  `json:"discord_observe_enabled"`
+	DiscordMemberIntentEnabled      *bool  `json:"discord_member_intent_enabled"`
+	DiscordPresenceIntentEnabled    *bool  `json:"discord_presence_intent_enabled"`
+	DiscordObserveMaxResults        *int   `json:"discord_observe_max_results"`
+	DiscordObserveMessageScope      string `json:"discord_observe_message_scope"`
+	MaxToolRounds                   *int   `json:"max_tool_rounds"`
+	MaxWebSearchCallsPerTurn        *int   `json:"max_web_search_calls_per_turn"`
+	ForceFinalAnswerAfterToolLimit  *bool  `json:"force_final_answer_after_tool_limit"`
+	TransientRecoveryWaitEnabled    *bool  `json:"transient_recovery_wait_enabled"`
+	TransientRecoveryWaitMaxSeconds *int   `json:"transient_recovery_wait_max_seconds"`
+	DiscordShowInternalToolErrors   *bool  `json:"discord_show_internal_tool_errors"`
 }
 
 type ProviderStatusResponse struct {
@@ -590,36 +602,42 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SettingsResponse{
-		GeminiAPIKey:                 maskKey(settings.GeminiAPIKey),
-		GeminiModel:                  settings.GeminiModel,
-		DiscordToken:                 maskKey(settings.DiscordToken),
-		ProviderType:                 settings.ProviderType,
-		BraveAPIKey:                  maskKey(settings.BraveAPIKey),
-		WebSearchEnabled:             settings.WebSearchEnabled,
-		DiscordUseReply:              settings.DiscordUseReply,
-		PerplexityAPIKey:             maskKey(settings.PerplexityAPIKey),
-		SearchProvider:               searchProvider,
-		WebFetchEnabled:              settings.WebFetchEnabled,
-		Timezone:                     settings.Timezone,
-		TimeFormat:                   settings.TimeFormat,
-		Location:                     settings.Location,
-		ContextFlushEnabled:          settings.ContextFlushEnabled,
-		ContextFlushThreshold:        settings.ContextFlushThreshold,
-		ContextWindowSize:            settings.ContextWindowSize,
-		LogChannelID:                 settings.LogChannelID,
-		DiscordPersonaID:             discordPersonaID,
-		MemoryExtractionEnabled:      settings.MemoryExtractionEnabled,
-		MemoryExtractionModel:        settings.MemoryExtractionModel,
-		PersonaLockEveryTurns:        settings.PersonaLockEveryTurns,
-		TripletOutputEnabled:         settings.TripletOutputEnabled,
-		AnalysisVisibility:           settings.AnalysisVisibility,
-		NegativeConstraintEnabled:    settings.NegativeConstraintEnabled,
-		NegativeConstraintDefault:    settings.NegativeConstraintDefault,
-		DiscordObserveEnabled:        settings.DiscordObserveEnabled,
-		DiscordMemberIntentEnabled:   settings.DiscordMemberIntentEnabled,
-		DiscordPresenceIntentEnabled: settings.DiscordPresenceIntentEnabled,
-		DiscordObserveMaxResults:     settings.DiscordObserveMaxResults,
-		DiscordObserveMessageScope:   settings.DiscordObserveMessageScope,
+		GeminiAPIKey:                    maskKey(settings.GeminiAPIKey),
+		GeminiModel:                     settings.GeminiModel,
+		DiscordToken:                    maskKey(settings.DiscordToken),
+		ProviderType:                    settings.ProviderType,
+		BraveAPIKey:                     maskKey(settings.BraveAPIKey),
+		WebSearchEnabled:                settings.WebSearchEnabled,
+		DiscordUseReply:                 settings.DiscordUseReply,
+		PerplexityAPIKey:                maskKey(settings.PerplexityAPIKey),
+		SearchProvider:                  searchProvider,
+		WebFetchEnabled:                 settings.WebFetchEnabled,
+		Timezone:                        settings.Timezone,
+		TimeFormat:                      settings.TimeFormat,
+		Location:                        settings.Location,
+		ContextFlushEnabled:             settings.ContextFlushEnabled,
+		ContextFlushThreshold:           settings.ContextFlushThreshold,
+		ContextWindowSize:               settings.ContextWindowSize,
+		LogChannelID:                    settings.LogChannelID,
+		DiscordPersonaID:                discordPersonaID,
+		MemoryExtractionEnabled:         settings.MemoryExtractionEnabled,
+		MemoryExtractionModel:           settings.MemoryExtractionModel,
+		PersonaLockEveryTurns:           settings.PersonaLockEveryTurns,
+		TripletOutputEnabled:            settings.TripletOutputEnabled,
+		AnalysisVisibility:              settings.AnalysisVisibility,
+		NegativeConstraintEnabled:       settings.NegativeConstraintEnabled,
+		NegativeConstraintDefault:       settings.NegativeConstraintDefault,
+		DiscordObserveEnabled:           settings.DiscordObserveEnabled,
+		DiscordMemberIntentEnabled:      settings.DiscordMemberIntentEnabled,
+		DiscordPresenceIntentEnabled:    settings.DiscordPresenceIntentEnabled,
+		DiscordObserveMaxResults:        settings.DiscordObserveMaxResults,
+		DiscordObserveMessageScope:      settings.DiscordObserveMessageScope,
+		MaxToolRounds:                   settings.MaxToolRounds,
+		MaxWebSearchCallsPerTurn:        settings.MaxWebSearchCallsPerTurn,
+		ForceFinalAnswerAfterToolLimit:  settings.ForceFinalAnswerAfterToolLimit,
+		TransientRecoveryWaitEnabled:    settings.TransientRecoveryWaitEnabled,
+		TransientRecoveryWaitMaxSeconds: settings.TransientRecoveryWaitMaxSeconds,
+		DiscordShowInternalToolErrors:   settings.DiscordShowInternalToolErrors,
 	})
 }
 
@@ -710,6 +728,24 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.DiscordObserveMessageScope != "" {
 		existing.DiscordObserveMessageScope = req.DiscordObserveMessageScope
 	}
+	if req.MaxToolRounds != nil {
+		existing.MaxToolRounds = *req.MaxToolRounds
+	}
+	if req.MaxWebSearchCallsPerTurn != nil {
+		existing.MaxWebSearchCallsPerTurn = *req.MaxWebSearchCallsPerTurn
+	}
+	if req.ForceFinalAnswerAfterToolLimit != nil {
+		existing.ForceFinalAnswerAfterToolLimit = *req.ForceFinalAnswerAfterToolLimit
+	}
+	if req.TransientRecoveryWaitEnabled != nil {
+		existing.TransientRecoveryWaitEnabled = *req.TransientRecoveryWaitEnabled
+	}
+	if req.TransientRecoveryWaitMaxSeconds != nil {
+		existing.TransientRecoveryWaitMaxSeconds = *req.TransientRecoveryWaitMaxSeconds
+	}
+	if req.DiscordShowInternalToolErrors != nil {
+		existing.DiscordShowInternalToolErrors = *req.DiscordShowInternalToolErrors
+	}
 	// Memory extraction settings
 	if req.MemoryExtractionEnabled != nil {
 		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
@@ -737,6 +773,14 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateToolLoopSettings(
+		existing.MaxToolRounds,
+		existing.MaxWebSearchCallsPerTurn,
+		existing.TransientRecoveryWaitMaxSeconds,
+	); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
 		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)
@@ -760,6 +804,18 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		NegativeConstraintEnabled: existing.NegativeConstraintEnabled,
 		NegativeConstraintDefault: existing.NegativeConstraintDefault,
 	})
+	h.chatService.UpdateToolExecutionPolicy(app.ToolExecutionPolicy{
+		MaxToolRounds:                  existing.MaxToolRounds,
+		MaxWebSearchCallsPerTurn:       existing.MaxWebSearchCallsPerTurn,
+		ForceFinalAnswerAfterToolLimit: existing.ForceFinalAnswerAfterToolLimit,
+		DiscordShowInternalToolErrors:  existing.DiscordShowInternalToolErrors,
+	})
+	if pool := h.providerManager.GetPool(); pool != nil {
+		pool.SetTransientRecoveryWait(
+			existing.TransientRecoveryWaitEnabled,
+			time.Duration(existing.TransientRecoveryWaitMaxSeconds)*time.Second,
+		)
+	}
 
 	// Hot-swap the LLM provider based on selected provider_type.
 	// Provider activation failure should not block a successful save response,
@@ -802,6 +858,10 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 		if s.AutoRetryCount > 0 {
 			pool.SetAutoRetryCount(s.AutoRetryCount)
 		}
+		pool.SetTransientRecoveryWait(
+			s.TransientRecoveryWaitEnabled,
+			time.Duration(s.TransientRecoveryWaitMaxSeconds)*time.Second,
+		)
 		for _, tokenData := range tokens {
 			if err := llm.RefreshIfNeeded(h.ctx, tokenData, ""); err != nil {
 				logAPI.Warnf("activate-provider: token refresh failed for %s: %v", tokenData.Email, err)
@@ -924,6 +984,19 @@ func validateDiscordObserveSettings(maxResults int, messageScope string) error {
 	}
 }
 
+func validateToolLoopSettings(maxToolRounds, maxWebSearchCallsPerTurn, transientRecoveryWaitMaxSeconds int) error {
+	if maxToolRounds < 1 || maxToolRounds > 6 {
+		return fmt.Errorf("max_tool_rounds must be between 1 and 6")
+	}
+	if maxWebSearchCallsPerTurn < 1 || maxWebSearchCallsPerTurn > 4 {
+		return fmt.Errorf("max_web_search_calls_per_turn must be between 1 and 4")
+	}
+	if transientRecoveryWaitMaxSeconds < 1 || transientRecoveryWaitMaxSeconds > 15 {
+		return fmt.Errorf("transient_recovery_wait_max_seconds must be between 1 and 15")
+	}
+	return nil
+}
+
 // --- OAuth endpoints ---
 
 type OAuthDetectResponse struct {
@@ -1025,8 +1098,10 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state string) (*llm.OAuth
 	}
 
 	model := "gemini-2.5-pro"
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil && s.GeminiModel != "" {
-		model = s.GeminiModel
+	var loadedSettings config.Settings
+	loadedSettings, _ = h.settingsStore.Load()
+	if loadedSettings.GeminiModel != "" {
+		model = loadedSettings.GeminiModel
 	}
 
 	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
@@ -1039,9 +1114,23 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state string) (*llm.OAuth
 	if pool == nil {
 		pool = app.NewProviderPool()
 		pool.SetPoolStorePath(poolPath)
+		if loadedSettings.AutoRetryCount > 0 {
+			pool.SetAutoRetryCount(loadedSettings.AutoRetryCount)
+		}
+		pool.SetTransientRecoveryWait(
+			loadedSettings.TransientRecoveryWaitEnabled,
+			time.Duration(loadedSettings.TransientRecoveryWaitMaxSeconds)*time.Second,
+		)
 		h.providerManager.Update(pool)
 	} else {
 		pool.SetPoolStorePath(poolPath)
+		if loadedSettings.AutoRetryCount > 0 {
+			pool.SetAutoRetryCount(loadedSettings.AutoRetryCount)
+		}
+		pool.SetTransientRecoveryWait(
+			loadedSettings.TransientRecoveryWaitEnabled,
+			time.Duration(loadedSettings.TransientRecoveryWaitMaxSeconds)*time.Second,
+		)
 	}
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("OAuth account added to pool: %s (project: %s, pool size: %d)",

@@ -72,6 +72,12 @@ export interface SettingsData {
   discord_presence_intent_enabled: boolean
   discord_observe_max_results: number
   discord_observe_message_scope: 'current_channel' | 'current_guild'
+  max_tool_rounds: number
+  max_web_search_calls_per_turn: number
+  force_final_answer_after_tool_limit: boolean
+  transient_recovery_wait_enabled: boolean
+  transient_recovery_wait_max_seconds: number
+  discord_show_internal_tool_errors: boolean
 
   // Prompt guard / persona stability settings
   persona_lock_every_turns: number

@@ -70,12 +70,17 @@ type ProviderPool struct {
 	tools          []domain.Tool
 	autoRetryCount int // number of retries for short-delay 429s
 	poolStorePath  string
+
+	transientRecoveryWaitEnabled bool
+	transientRecoveryWaitMax     time.Duration
 }
 
 // NewProviderPool creates an empty provider pool.
 func NewProviderPool() *ProviderPool {
 	return &ProviderPool{
-		autoRetryCount: 3, // default: 3 retries for short-delay 429s
+		autoRetryCount:               3,               // default: 3 retries for short-delay 429s
+		transientRecoveryWaitEnabled: true,            // default: wait-and-retry when all accounts are cooling down briefly
+		transientRecoveryWaitMax:     5 * time.Second, // default max wait budget
 	}
 }
 
@@ -94,6 +99,18 @@ func (pp *ProviderPool) SetPoolStorePath(path string) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
 	pp.poolStorePath = strings.TrimSpace(path)
+}
+
+// SetTransientRecoveryWait configures short wait-and-retry behavior when all
+// accounts are transiently cooling down.
+func (pp *ProviderPool) SetTransientRecoveryWait(enabled bool, maxWait time.Duration) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	if maxWait <= 0 {
+		maxWait = 5 * time.Second
+	}
+	pp.transientRecoveryWaitEnabled = enabled
+	pp.transientRecoveryWaitMax = maxWait
 }
 
 // Add appends or replaces a provider in the pool.
@@ -312,6 +329,8 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		return zero, ErrProviderNotConfigured
 	}
 
+	waitRetryUsed := false
+
 	for tried := 0; tried < total; tried++ {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
@@ -321,10 +340,38 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 
 		provider, email, ok := pp.SelectNextProvider()
 		if !ok {
+			now := time.Now()
 			pp.mu.RLock()
-			earliest := pp.findEarliestResetLocked()
+			waitDuration, canWait := pp.shortTransientWaitLocked(now)
+			earliest := pp.findEarliestResetLockedAt(now)
 			totalEntries := len(pp.entries)
 			pp.mu.RUnlock()
+
+			if canWait && !waitRetryUsed {
+				waitRetryUsed = true
+				logPool.Logf("metric pool.transient_wait_retry=1")
+				logPool.Warnf("all %d account(s) cooling down transiently — waiting %s before one retry", totalEntries, formatDuration(waitDuration))
+
+				timer := time.NewTimer(waitDuration)
+				if ctx != nil {
+					select {
+					case <-timer.C:
+					case <-ctx.Done():
+						if !timer.Stop() {
+							<-timer.C
+						}
+						return zero, ctx.Err()
+					}
+				} else {
+					<-timer.C
+				}
+				tried--
+				continue
+			}
+
+			if waitRetryUsed {
+				logPool.Logf("metric pool.transient_wait_retry_failed=1")
+			}
 			if earliest != "" {
 				logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
 				return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
@@ -337,11 +384,17 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 
 		if err == nil {
 			pp.markSuccess(email, time.Now())
+			if waitRetryUsed {
+				logPool.Logf("metric pool.transient_wait_retry_succeeded=1")
+			}
 			return result, nil
 		}
 		if isContextTerminated(err) {
 			// Request-level timeout/cancel is not account-specific.
 			// Do not mark provider exhausted or fail over to another account.
+			if waitRetryUsed {
+				logPool.Logf("metric pool.transient_wait_retry_failed=1")
+			}
 			return result, err
 		}
 
@@ -387,9 +440,15 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 
 		case errorValidation:
 			logPool.Warnf("validation error with %s: %v", email, err)
+			if waitRetryUsed {
+				logPool.Logf("metric pool.transient_wait_retry_failed=1")
+			}
 			return result, err
 
 		default:
+			if waitRetryUsed {
+				logPool.Logf("metric pool.transient_wait_retry_failed=1")
+			}
 			return result, err
 		}
 	}
@@ -399,6 +458,9 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 	totalEntries := len(pp.entries)
 	pp.mu.RUnlock()
 
+	if waitRetryUsed {
+		logPool.Logf("metric pool.transient_wait_retry_failed=1")
+	}
 	if earliest != "" {
 		logPool.Warnf("all %d account(s) exhausted — next reset: %s", totalEntries, earliest)
 		return zero, fmt.Errorf("all %d OAuth account(s) exhausted — next reset: %s", totalEntries, earliest)
@@ -543,12 +605,38 @@ func (pp *ProviderPool) persistUsageStats(email string, usage *llm.OAuthUsageSta
 	}
 }
 
+func (pp *ProviderPool) shortTransientWaitLocked(now time.Time) (time.Duration, bool) {
+	if !pp.transientRecoveryWaitEnabled || pp.transientRecoveryWaitMax <= 0 {
+		return 0, false
+	}
+	earliest, _, ok := pp.findEarliestResetTimeLocked(now)
+	if !ok {
+		return 0, false
+	}
+	wait := earliest.Sub(now)
+	if wait <= 0 || wait > pp.transientRecoveryWaitMax {
+		return 0, false
+	}
+	return addJitter(wait, 250*time.Millisecond), true
+}
+
 // findEarliestResetLocked returns a human-readable string for the soonest recovery time.
 // Must be called with pp.mu held.
 func (pp *ProviderPool) findEarliestResetLocked() string {
+	return pp.findEarliestResetLockedAt(time.Now())
+}
+
+func (pp *ProviderPool) findEarliestResetLockedAt(now time.Time) string {
+	earliest, email, ok := pp.findEarliestResetTimeLocked(now)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%s (%s)", formatDuration(earliest.Sub(now)), email)
+}
+
+func (pp *ProviderPool) findEarliestResetTimeLocked(now time.Time) (time.Time, string, bool) {
 	var earliest time.Time
 	var earliestEmail string
-	now := time.Now()
 
 	for _, e := range pp.entries {
 		if e.exhaustedUntil.After(now) {
@@ -560,9 +648,9 @@ func (pp *ProviderPool) findEarliestResetLocked() string {
 	}
 
 	if earliest.IsZero() {
-		return ""
+		return time.Time{}, "", false
 	}
-	return fmt.Sprintf("%s (%s)", formatDuration(earliest.Sub(now)), earliestEmail)
+	return earliest, earliestEmail, true
 }
 
 // errorType classifies errors for appropriate failover handling.

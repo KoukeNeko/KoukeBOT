@@ -46,8 +46,8 @@ func (g *GeminiAPIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 		PresencePenalty:   genai.Ptr(float32(config.presencePenalty)),
 	}
 
-	// Add tools if registered
-	if len(g.tools) > 0 {
+	// Add tools if registered and request allows function calling.
+	if req.ToolMode != ToolModeDisabled && len(g.tools) > 0 {
 		genConfig.Tools = convertToGeminiTools(g.tools)
 	}
 
@@ -78,8 +78,8 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 		PresencePenalty:   genai.Ptr(float32(config.presencePenalty)),
 	}
 
-	// Add tools if registered
-	if len(g.tools) > 0 {
+	// Add tools if registered and request allows function calling.
+	if req.ToolMode != ToolModeDisabled && len(g.tools) > 0 {
 		genConfig.Tools = convertToGeminiTools(g.tools)
 	}
 
@@ -160,10 +160,10 @@ func (g *GeminiAPIProvider) ModelInfo() ModelCapabilities {
 		strings.Contains(g.model, "3")
 
 	return ModelCapabilities{
-		SupportsThinking: supportsThinking,
-		ContextWindow:    1_000_000,
+		SupportsThinking:  supportsThinking,
+		ContextWindow:     1_000_000,
 		SupportsStreaming: true,
-		ProviderName:     "gemini-api",
+		ProviderName:      "gemini-api",
 	}
 }
 

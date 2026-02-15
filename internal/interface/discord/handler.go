@@ -723,6 +723,11 @@ func formatToolStatusError(toolName string, toolInput map[string]interface{}, ra
 		errText = "未知錯誤"
 	}
 	errText = truncateError(errText, 220)
+	lowerErr := strings.ToLower(errText)
+
+	if strings.HasPrefix(lowerErr, "tool guard:") {
+		return fmt.Sprintf("⚠️ 工具保護機制觸發（%s）：%s", safeToolName(toolName), errText)
+	}
 
 	switch toolName {
 	case "file_write":
@@ -737,6 +742,13 @@ func formatToolStatusError(toolName string, toolInput map[string]interface{}, ra
 		}
 		return fmt.Sprintf("❌ 工具 %s 執行失敗：%s", toolName, errText)
 	}
+}
+
+func safeToolName(toolName string) string {
+	if strings.TrimSpace(toolName) == "" {
+		return "unknown"
+	}
+	return toolName
 }
 
 func extractToolFilename(toolInput map[string]interface{}) string {
