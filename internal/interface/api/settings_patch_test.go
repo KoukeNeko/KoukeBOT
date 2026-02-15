@@ -20,11 +20,13 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 		DiscordStripLeadingBotMention: false,
 		ContextFlushThreshold:         4000,
 		MemoryRecentRounds:            config.DefaultMemoryRecentRounds,
+		ScheduledMonitorMaxPerUser:    config.DefaultScheduledMonitorMaxPerUser,
 	}
 	webSearchEnabled := false
 	stripLeadingBotMention := true
 	contextFlushThreshold := 0
 	memoryRecentRounds := config.MaxMemoryRecentRounds
+	monitorMaxPerUser := 7
 
 	err := h.applySettingsPatch(&existing, SettingsUpdateRequest{
 		GeminiAPIKey:                  "***...abcd",
@@ -32,6 +34,7 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 		DiscordStripLeadingBotMention: &stripLeadingBotMention,
 		ContextFlushThreshold:         &contextFlushThreshold,
 		MemoryRecentRounds:            &memoryRecentRounds,
+		ScheduledMonitorMaxPerUser:    &monitorMaxPerUser,
 	})
 	if err != nil {
 		t.Fatalf("applySettingsPatch returned error: %v", err)
@@ -50,6 +53,9 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	}
 	if existing.MemoryRecentRounds != config.MaxMemoryRecentRounds {
 		t.Fatalf("memory_recent_rounds = %d, want %d", existing.MemoryRecentRounds, config.MaxMemoryRecentRounds)
+	}
+	if existing.ScheduledMonitorMaxPerUser != monitorMaxPerUser {
+		t.Fatalf("scheduled_monitor_max_per_user = %d, want %d", existing.ScheduledMonitorMaxPerUser, monitorMaxPerUser)
 	}
 }
 

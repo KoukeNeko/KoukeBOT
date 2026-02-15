@@ -122,6 +122,14 @@ func formatToolUsageAnnotation(toolCalls []domain.ToolCall) string {
 			} else {
 				annotation.WriteString(fmt.Sprintf("%d. %s **%s**\n", i+1, toolEmoji, toolDisplayName))
 			}
+		case "schedule_manager":
+			toolEmoji = "⏱️"
+			toolDisplayName = "排程管理"
+			if action, ok := call.Input["action"].(string); ok && strings.TrimSpace(action) != "" {
+				annotation.WriteString(fmt.Sprintf("%d. %s **%s**：`%s`\n", i+1, toolEmoji, toolDisplayName, action))
+			} else {
+				annotation.WriteString(fmt.Sprintf("%d. %s **%s**\n", i+1, toolEmoji, toolDisplayName))
+			}
 		default:
 			annotation.WriteString(fmt.Sprintf("%d. %s **%s**\n", i+1, toolEmoji, toolDisplayName))
 		}

@@ -107,6 +107,8 @@ func FormatToolStartMessage(toolName string, toolInput map[string]interface{}) s
 		return "⏰ 正在取得時間資訊..."
 	case "discord_observe":
 		return "🛰️ 正在讀取 Discord 狀態..."
+	case "schedule_manager":
+		return "⏱️ 正在處理排程任務..."
 	default:
 		if strings.TrimSpace(toolName) == "" {
 			toolName = "unknown"

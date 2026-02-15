@@ -74,6 +74,9 @@ func TestNormalizeSettingsAppliesPromptGuardDefaultsForLegacyFile(t *testing.T) 
 	if got.MemoryRecentRounds != DefaultMemoryRecentRounds {
 		t.Fatalf("MemoryRecentRounds = %d, want %d", got.MemoryRecentRounds, DefaultMemoryRecentRounds)
 	}
+	if got.ScheduledMonitorMaxPerUser != DefaultScheduledMonitorMaxPerUser {
+		t.Fatalf("ScheduledMonitorMaxPerUser = %d, want %d", got.ScheduledMonitorMaxPerUser, DefaultScheduledMonitorMaxPerUser)
+	}
 }
 
 func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
@@ -148,6 +151,9 @@ func TestNormalizeSettingsDiscordObserveDefaultsOnSavePath(t *testing.T) {
 	if got.MemoryRecentRounds != DefaultMemoryRecentRounds {
 		t.Fatalf("MemoryRecentRounds = %d, want %d", got.MemoryRecentRounds, DefaultMemoryRecentRounds)
 	}
+	if got.ScheduledMonitorMaxPerUser != DefaultScheduledMonitorMaxPerUser {
+		t.Fatalf("ScheduledMonitorMaxPerUser = %d, want %d", got.ScheduledMonitorMaxPerUser, DefaultScheduledMonitorMaxPerUser)
+	}
 }
 
 func TestNormalizeSettingsMemoryRecentRoundsBounds(t *testing.T) {
@@ -159,5 +165,15 @@ func TestNormalizeSettingsMemoryRecentRoundsBounds(t *testing.T) {
 	gotHigh := normalizeSettings(Settings{MemoryRecentRounds: MaxMemoryRecentRounds + 20}, nil)
 	if gotHigh.MemoryRecentRounds != MaxMemoryRecentRounds {
 		t.Fatalf("MemoryRecentRounds high = %d, want %d", gotHigh.MemoryRecentRounds, MaxMemoryRecentRounds)
+	}
+
+	gotMonitorLow := normalizeSettings(Settings{ScheduledMonitorMaxPerUser: 0}, nil)
+	if gotMonitorLow.ScheduledMonitorMaxPerUser != DefaultScheduledMonitorMaxPerUser {
+		t.Fatalf("ScheduledMonitorMaxPerUser low = %d, want %d", gotMonitorLow.ScheduledMonitorMaxPerUser, DefaultScheduledMonitorMaxPerUser)
+	}
+
+	gotMonitorHigh := normalizeSettings(Settings{ScheduledMonitorMaxPerUser: MaxScheduledMonitorMaxPerUser + 10}, nil)
+	if gotMonitorHigh.ScheduledMonitorMaxPerUser != MaxScheduledMonitorMaxPerUser {
+		t.Fatalf("ScheduledMonitorMaxPerUser high = %d, want %d", gotMonitorHigh.ScheduledMonitorMaxPerUser, MaxScheduledMonitorMaxPerUser)
 	}
 }

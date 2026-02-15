@@ -65,6 +65,7 @@ export default function Settings() {
     transient_recovery_wait_enabled: true,
     transient_recovery_wait_max_seconds: 5,
     discord_show_internal_tool_errors: true,
+    scheduled_monitor_max_per_user: 3,
     persona_lock_every_turns: 4,
     triplet_output_enabled: true,
     analysis_visibility: "visible",

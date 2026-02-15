@@ -52,6 +52,7 @@ type SettingsResponse struct {
 	TransientRecoveryWaitEnabled    bool   `json:"transient_recovery_wait_enabled"`
 	TransientRecoveryWaitMaxSeconds int    `json:"transient_recovery_wait_max_seconds"`
 	DiscordShowInternalToolErrors   bool   `json:"discord_show_internal_tool_errors"`
+	ScheduledMonitorMaxPerUser      int    `json:"scheduled_monitor_max_per_user"`
 }
 
 type SettingsUpdateRequest struct {
@@ -93,6 +94,7 @@ type SettingsUpdateRequest struct {
 	TransientRecoveryWaitEnabled    *bool  `json:"transient_recovery_wait_enabled"`
 	TransientRecoveryWaitMaxSeconds *int   `json:"transient_recovery_wait_max_seconds"`
 	DiscordShowInternalToolErrors   *bool  `json:"discord_show_internal_tool_errors"`
+	ScheduledMonitorMaxPerUser      *int   `json:"scheduled_monitor_max_per_user"`
 }
 
 type ProviderStatusResponse struct {
@@ -157,6 +159,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		TransientRecoveryWaitEnabled:    settings.TransientRecoveryWaitEnabled,
 		TransientRecoveryWaitMaxSeconds: settings.TransientRecoveryWaitMaxSeconds,
 		DiscordShowInternalToolErrors:   settings.DiscordShowInternalToolErrors,
+		ScheduledMonitorMaxPerUser:      settings.ScheduledMonitorMaxPerUser,
 	})
 }
 
@@ -353,6 +356,16 @@ func validateToolLoopSettings(maxToolRounds, maxWebSearchCallsPerTurn, transient
 	}
 	if transientRecoveryWaitMaxSeconds < 1 || transientRecoveryWaitMaxSeconds > 15 {
 		return fmt.Errorf("transient_recovery_wait_max_seconds must be between 1 and 15")
+	}
+	return nil
+}
+
+func validateSchedulerSettings(scheduledMonitorMaxPerUser int) error {
+	if scheduledMonitorMaxPerUser < 1 || scheduledMonitorMaxPerUser > config.MaxScheduledMonitorMaxPerUser {
+		return fmt.Errorf(
+			"scheduled_monitor_max_per_user must be between 1 and %d",
+			config.MaxScheduledMonitorMaxPerUser,
+		)
 	}
 	return nil
 }

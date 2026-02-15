@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
@@ -18,15 +19,16 @@ var logAPI = logger.New("api", logger.Cyan)
 
 // Handlers implements the REST API endpoints.
 type Handlers struct {
-	personaService  *app.PersonaService
-	chatService     *app.ChatService
-	settingsStore   *config.SettingsStore
-	providerManager *app.ProviderManager
-	discordPersona  DiscordPersonaController
-	oauthFlow       *llm.GeminiOAuthFlow
-	convStore       store.ConversationRepository
-	imageStore      *store.ImageStore
-	ctx             context.Context
+	personaService   *app.PersonaService
+	chatService      *app.ChatService
+	schedulerService *schedulerpkg.Service
+	settingsStore    *config.SettingsStore
+	providerManager  *app.ProviderManager
+	discordPersona   DiscordPersonaController
+	oauthFlow        *llm.GeminiOAuthFlow
+	convStore        store.ConversationRepository
+	imageStore       *store.ImageStore
+	ctx              context.Context
 }
 
 type DiscordPersonaController interface {
@@ -37,6 +39,7 @@ type DiscordPersonaController interface {
 func NewHandlers(
 	personaService *app.PersonaService,
 	chatService *app.ChatService,
+	schedulerService *schedulerpkg.Service,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
 	discordPersona DiscordPersonaController,
@@ -46,15 +49,16 @@ func NewHandlers(
 	ctx context.Context,
 ) *Handlers {
 	return &Handlers{
-		personaService:  personaService,
-		chatService:     chatService,
-		settingsStore:   settingsStore,
-		providerManager: providerManager,
-		discordPersona:  discordPersona,
-		oauthFlow:       oauthFlow,
-		convStore:       convStore,
-		imageStore:      imageStore,
-		ctx:             ctx,
+		personaService:   personaService,
+		chatService:      chatService,
+		schedulerService: schedulerService,
+		settingsStore:    settingsStore,
+		providerManager:  providerManager,
+		discordPersona:   discordPersona,
+		oauthFlow:        oauthFlow,
+		convStore:        convStore,
+		imageStore:       imageStore,
+		ctx:              ctx,
 	}
 }
 

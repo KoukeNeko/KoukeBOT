@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
@@ -24,12 +25,13 @@ import (
 )
 
 const (
-	personasDir    = "configs/personas"
-	settingsPath   = "data/settings.json"
-	oauthTokenPath = "data/gemini_oauth.json"
-	oauthPoolPath  = "data/oauth_pool.json"
-	defaultModel   = "gemini-2.5-pro"
-	defaultPort    = "8080"
+	personasDir        = "configs/personas"
+	settingsPath       = "data/settings.json"
+	scheduledTasksPath = "data/schedules/tasks.json"
+	oauthTokenPath     = "data/gemini_oauth.json"
+	oauthPoolPath      = "data/oauth_pool.json"
+	defaultModel       = "gemini-2.5-pro"
+	defaultPort        = "8080"
 )
 
 // Module loggers (Docker Compose style)
@@ -68,13 +70,31 @@ func run() error {
 	}
 
 	discordBot := maybeStartDiscordBot(settings, personaService, runtime)
+	if runtime.schedulerService != nil {
+		if discordBot != nil {
+			runtime.schedulerService.SetNotifier(discordBot)
+		}
+		runtime.schedulerService.Start(ctx)
+	}
 	oauthFlow := llm.NewGeminiOAuthFlow(
 		oauthTokenPath,
 		oauthPoolPath,
 		"http://127.0.0.1:"+port+"/api/oauth/gemini/callback",
 	)
 
-	serverErrCh := startAPIServer(ctx, port, personaService, runtime.chatService, settingsStore, runtime.providerManager, discordBot, oauthFlow, runtime.convStore, runtime.imageStore)
+	serverErrCh := startAPIServer(
+		ctx,
+		port,
+		personaService,
+		runtime.chatService,
+		runtime.schedulerService,
+		settingsStore,
+		runtime.providerManager,
+		discordBot,
+		oauthFlow,
+		runtime.convStore,
+		runtime.imageStore,
+	)
 
 	logSystem.Logf("ready — API on :%s", port)
 
@@ -92,11 +112,12 @@ func run() error {
 }
 
 type runtimeServices struct {
-	providerManager *app.ProviderManager
-	chatService     *app.ChatService
-	convStore       store.ConversationRepository
-	imageStore      *store.ImageStore
-	discordRuntime  *discordbot.Runtime
+	providerManager  *app.ProviderManager
+	chatService      *app.ChatService
+	schedulerService *schedulerpkg.Service
+	convStore        store.ConversationRepository
+	imageStore       *store.ImageStore
+	discordRuntime   *discordbot.Runtime
 }
 
 func resolvePort() string {
@@ -150,8 +171,19 @@ func buildRuntimeServices(
 		MessageScope:          settings.DiscordObserveMessageScope,
 		MaxResults:            settings.DiscordObserveMaxResults,
 	})
+	scheduledTaskStore, err := store.NewScheduledTaskFileStore(scheduledTasksPath)
+	if err != nil {
+		return nil, fmt.Errorf("init scheduled task store: %w", err)
+	}
+	logStore.Log(scheduledTasksPath)
+
+	schedulerService := schedulerpkg.NewService(scheduledTaskStore, schedulerpkg.ServiceOptions{
+		MonitorMaxPerUser: settings.ScheduledMonitorMaxPerUser,
+	})
+	schedulerService.SetActivitySource(discordRuntimeActivitySource{runtime: discordRuntime})
+
 	fileToolPersonaID := selectFileToolPersonaID(personasDir, settings.DiscordPersonaID)
-	tools := initializeTools(settings, fileToolPersonaID, discordRuntime)
+	tools := initializeTools(settings, fileToolPersonaID, discordRuntime, schedulerService)
 	if len(tools) > 0 {
 		providerManager.RegisterTools(tools)
 	}
@@ -181,13 +213,15 @@ func buildRuntimeServices(
 	chatService.UpdateMemoryRetentionPolicy(app.MemoryRetentionPolicy{
 		RecentRounds: settings.MemoryRecentRounds,
 	})
+	schedulerService.SetMessageGenerator(chatService)
 
 	return &runtimeServices{
-		providerManager: providerManager,
-		chatService:     chatService,
-		convStore:       convStore,
-		imageStore:      imageStore,
-		discordRuntime:  discordRuntime,
+		providerManager:  providerManager,
+		chatService:      chatService,
+		schedulerService: schedulerService,
+		convStore:        convStore,
+		imageStore:       imageStore,
+		discordRuntime:   discordRuntime,
 	}, nil
 }
 
@@ -210,6 +244,7 @@ func maybeStartDiscordBot(settings config.Settings, personaService *app.PersonaS
 		runtime.imageStore,
 		runtime.providerManager,
 		runtime.discordRuntime,
+		runtime.schedulerService,
 	)
 	if err != nil {
 		logDiscord.Warnf("failed to start: %v", err)
@@ -356,6 +391,7 @@ func startDiscordBot(
 	imageStore *store.ImageStore,
 	providerManager *app.ProviderManager,
 	discordRuntime *discordbot.Runtime,
+	schedulerService *schedulerpkg.Service,
 ) (*discordbot.Bot, error) {
 	// Use the first loaded persona as the default
 	var personaID string
@@ -384,7 +420,7 @@ func startDiscordBot(
 	}
 
 	// Register message handler (responds to @mentions and DMs)
-	handler := discordhandler.NewHandler(bot, chatService, convStore, useReply, stripLeadingBotMentionPrefix)
+	handler := discordhandler.NewHandler(bot, chatService, schedulerService, convStore, useReply, stripLeadingBotMentionPrefix)
 	handler.Register()
 
 	// Connection must be open before registering slash commands
@@ -411,6 +447,7 @@ func startAPIServer(
 	port string,
 	personaService *app.PersonaService,
 	chatService *app.ChatService,
+	schedulerService *schedulerpkg.Service,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
 	discordBot *discordbot.Bot,
@@ -418,7 +455,7 @@ func startAPIServer(
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
 ) <-chan error {
-	router := api.NewRouter(personaService, chatService, settingsStore, providerManager, discordBot, oauthFlow, convStore, imageStore, ctx)
+	router := api.NewRouter(personaService, chatService, schedulerService, settingsStore, providerManager, discordBot, oauthFlow, convStore, imageStore, ctx)
 	handler := router.Handler()
 
 	// Wrap with SPA static file serving if web/dist exists
@@ -464,7 +501,7 @@ func withSPA(webDir string, apiHandler http.Handler) http.Handler {
 }
 
 // initializeTools creates and returns enabled tools based on settings
-func initializeTools(settings config.Settings, personaID string, discordRuntime *discordbot.Runtime) []domain.Tool {
+func initializeTools(settings config.Settings, personaID string, discordRuntime *discordbot.Runtime, schedulerService *schedulerpkg.Service) []domain.Tool {
 	var tools []domain.Tool
 	var toolNames []string
 
@@ -511,6 +548,12 @@ func initializeTools(settings config.Settings, personaID string, discordRuntime 
 		toolNames = append(toolNames, "discord_observe (read-only; current guild scope)")
 	}
 
+	// Scheduler tool (Discord source only).
+	if schedulerService != nil {
+		tools = append(tools, llm.NewSchedulerTool(schedulerService))
+		toolNames = append(toolNames, "schedule_manager (discord only)")
+	}
+
 	// File Operations Tools (declarations only).
 	// Actual file tool execution is resolved dynamically by request persona at runtime.
 	declarationPersonaID := personaID
@@ -553,4 +596,31 @@ func selectFileToolPersonaID(baseDir, preferred string) string {
 		return entry.Name()
 	}
 	return ""
+}
+
+type discordRuntimeActivitySource struct {
+	runtime *discordbot.Runtime
+}
+
+func (s discordRuntimeActivitySource) ListChannelMessages(ctx context.Context, channelID, before string, limit int) ([]domain.ScheduledActivityMessage, error) {
+	if s.runtime == nil {
+		return nil, fmt.Errorf("discord runtime is not configured")
+	}
+	msgs, err := s.runtime.ChannelMessages(ctx, channelID, limit, before)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.ScheduledActivityMessage, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg == nil || msg.Author == nil {
+			continue
+		}
+		out = append(out, domain.ScheduledActivityMessage{
+			ID:        msg.ID,
+			AuthorID:  msg.Author.ID,
+			Content:   msg.Content,
+			Timestamp: msg.Timestamp.UTC(),
+		})
+	}
+	return out, nil
 }

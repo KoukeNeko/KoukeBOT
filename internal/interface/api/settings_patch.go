@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 )
 
@@ -114,6 +115,9 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.DiscordShowInternalToolErrors != nil {
 		existing.DiscordShowInternalToolErrors = *req.DiscordShowInternalToolErrors
 	}
+	if req.ScheduledMonitorMaxPerUser != nil {
+		existing.ScheduledMonitorMaxPerUser = *req.ScheduledMonitorMaxPerUser
+	}
 	if req.MemoryExtractionEnabled != nil {
 		existing.MemoryExtractionEnabled = *req.MemoryExtractionEnabled
 	}
@@ -144,6 +148,9 @@ func (h *Handlers) validateUpdatedSettings(settings config.Settings) error {
 		return err
 	}
 	if err := validateMemoryRetentionSettings(settings.MemoryRecentRounds); err != nil {
+		return err
+	}
+	if err := validateSchedulerSettings(settings.ScheduledMonitorMaxPerUser); err != nil {
 		return err
 	}
 	return validateToolLoopSettings(
@@ -182,6 +189,11 @@ func (h *Handlers) saveAndHotSwapSettings(existing config.Settings) (map[string]
 	h.chatService.UpdateMemoryRetentionPolicy(app.MemoryRetentionPolicy{
 		RecentRounds: existing.MemoryRecentRounds,
 	})
+	if h.schedulerService != nil {
+		h.schedulerService.UpdatePolicy(schedulerpkg.Policy{
+			MonitorMaxPerUser: existing.ScheduledMonitorMaxPerUser,
+		})
+	}
 	if pool := h.providerManager.GetPool(); pool != nil {
 		pool.SetTransientRecoveryWait(
 			existing.TransientRecoveryWaitEnabled,

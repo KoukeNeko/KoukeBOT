@@ -14,6 +14,7 @@ type RequestContext struct {
 	GuildID   string
 	ChannelID string
 	UserID    string
+	PersonaID string
 }
 
 type requestContextKey struct{}

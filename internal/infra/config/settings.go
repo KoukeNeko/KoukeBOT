@@ -27,6 +27,8 @@ const (
 	DefaultMemoryRecentRounds         = 50
 	MinMemoryRecentRounds             = 20
 	MaxMemoryRecentRounds             = 100
+	DefaultScheduledMonitorMaxPerUser = 3
+	MaxScheduledMonitorMaxPerUser     = 20
 )
 
 // Settings holds the runtime-configurable values.
@@ -70,6 +72,7 @@ type Settings struct {
 	TransientRecoveryWaitEnabled    bool `json:"transient_recovery_wait_enabled"`
 	TransientRecoveryWaitMaxSeconds int  `json:"transient_recovery_wait_max_seconds"`
 	DiscordShowInternalToolErrors   bool `json:"discord_show_internal_tool_errors"`
+	ScheduledMonitorMaxPerUser      int  `json:"scheduled_monitor_max_per_user"`
 
 	// Discord logging settings
 	LogChannelID string `json:"log_channel_id"` // Discord channel ID for stdout logs (optional)
@@ -190,6 +193,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 		if settings.MemoryRecentRounds <= 0 {
 			settings.MemoryRecentRounds = DefaultMemoryRecentRounds
 		}
+		if settings.ScheduledMonitorMaxPerUser <= 0 {
+			settings.ScheduledMonitorMaxPerUser = DefaultScheduledMonitorMaxPerUser
+		}
 		return normalizeVisibilityAndBooleans(settings)
 	}
 
@@ -238,6 +244,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	}
 	if _, ok := raw["memory_recent_rounds"]; !ok {
 		settings.MemoryRecentRounds = DefaultMemoryRecentRounds
+	}
+	if _, ok := raw["scheduled_monitor_max_per_user"]; !ok {
+		settings.ScheduledMonitorMaxPerUser = DefaultScheduledMonitorMaxPerUser
 	}
 
 	if strings.TrimSpace(settings.NegativeConstraintDefault) == "" {
@@ -295,6 +304,12 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 	}
 	if settings.MemoryRecentRounds > MaxMemoryRecentRounds {
 		settings.MemoryRecentRounds = MaxMemoryRecentRounds
+	}
+	if settings.ScheduledMonitorMaxPerUser < 1 {
+		settings.ScheduledMonitorMaxPerUser = DefaultScheduledMonitorMaxPerUser
+	}
+	if settings.ScheduledMonitorMaxPerUser > MaxScheduledMonitorMaxPerUser {
+		settings.ScheduledMonitorMaxPerUser = MaxScheduledMonitorMaxPerUser
 	}
 	return settings
 }

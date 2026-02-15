@@ -29,13 +29,14 @@ func (h *Handler) filterIncomingMessage(s *discordgo.Session, m *discordgo.Messa
 	return content, true
 }
 
-func (h *Handler) newDiscordRequestContext(m *discordgo.MessageCreate) (context.Context, context.CancelFunc) {
+func (h *Handler) newDiscordRequestContext(m *discordgo.MessageCreate, personaID string) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
 	ctx = llm.WithRequestContext(ctx, llm.RequestContext{
 		Source:    llm.RequestSourceDiscord,
 		GuildID:   m.GuildID,
 		ChannelID: m.ChannelID,
 		UserID:    m.Author.ID,
+		PersonaID: personaID,
 	})
 	return ctx, cancel
 }

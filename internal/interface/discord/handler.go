@@ -11,6 +11,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
@@ -38,6 +39,7 @@ const (
 type Handler struct {
 	bot                          *discordbot.Bot
 	chatService                  *app.ChatService
+	schedulerService             *schedulerpkg.Service
 	convStore                    store.ConversationRepository
 	useReply                     bool // Whether to use Discord reply feature
 	stripLeadingBotMentionPrefix bool // Whether to remove leading <@bot> token from inbound content
@@ -46,6 +48,7 @@ type Handler struct {
 func NewHandler(
 	bot *discordbot.Bot,
 	chatService *app.ChatService,
+	schedulerService *schedulerpkg.Service,
 	convStore store.ConversationRepository,
 	useReply bool,
 	stripLeadingBotMentionPrefix bool,
@@ -53,6 +56,7 @@ func NewHandler(
 	return &Handler{
 		bot:                          bot,
 		chatService:                  chatService,
+		schedulerService:             schedulerService,
 		convStore:                    convStore,
 		useReply:                     useReply,
 		stripLeadingBotMentionPrefix: stripLeadingBotMentionPrefix,
@@ -98,10 +102,14 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		return
 	}
 
-	ctx, cancel := h.newDiscordRequestContext(m)
+	personaID := h.bot.PersonaID()
+	ctx, cancel := h.newDiscordRequestContext(m, personaID)
 	defer cancel()
 
-	personaID := h.bot.PersonaID()
+	if h.tryHandleSchedulerStrict(ctx, m, personaID, content) {
+		return
+	}
+
 	historyCutoff, err := h.loadHistoryCutoff(ctx, m.ChannelID, personaID)
 	if err != nil {
 		logHandler.Errorf("conversation state load failed [%s]: %v", m.ChannelID, err)

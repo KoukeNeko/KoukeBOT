@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
@@ -23,6 +24,7 @@ type Router struct {
 func NewRouter(
 	personaService *app.PersonaService,
 	chatService *app.ChatService,
+	schedulerService *schedulerpkg.Service,
 	settingsStore *config.SettingsStore,
 	providerManager *app.ProviderManager,
 	discordPersona DiscordPersonaController,
@@ -31,7 +33,7 @@ func NewRouter(
 	imageStore *store.ImageStore,
 	ctx context.Context,
 ) *Router {
-	handlers := NewHandlers(personaService, chatService, settingsStore, providerManager, discordPersona, oauthFlow, convStore, imageStore, ctx)
+	handlers := NewHandlers(personaService, chatService, schedulerService, settingsStore, providerManager, discordPersona, oauthFlow, convStore, imageStore, ctx)
 	mux := http.NewServeMux()
 
 	r := &Router{mux: mux, handlers: handlers}

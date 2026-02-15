@@ -262,6 +262,8 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	buf.WriteString("- Message envelopes contain timestamps. Use them for context about when messages were sent.\n")
 	buf.WriteString("- If you need the current date, time, or day of week, call the `session_status` tool.\n")
 	buf.WriteString("- Only call `session_status` when you need the precise current time, not for every response.\n")
+	buf.WriteString("- For Discord reminders or timed background checks, call the `schedule_manager` tool.\n")
+	buf.WriteString("- `schedule_manager` supports: create_reminder, create_monitor, list_tasks, cancel_task, cancel_all.\n")
 	buf.WriteString("\n")
 	buf.WriteString("### Memory System\n\n")
 	buf.WriteString("You maintain three tiers of memory:\n")

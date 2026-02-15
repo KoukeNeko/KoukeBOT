@@ -79,6 +79,7 @@ export interface SettingsData {
   transient_recovery_wait_enabled: boolean
   transient_recovery_wait_max_seconds: number
   discord_show_internal_tool_errors: boolean
+  scheduled_monitor_max_per_user: number
 
   // Prompt guard / persona stability settings
   persona_lock_every_turns: number

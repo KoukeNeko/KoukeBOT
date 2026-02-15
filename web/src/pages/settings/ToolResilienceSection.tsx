@@ -86,6 +86,23 @@ export default function ToolResilienceSection({ form, setForm, saving, onSave }:
         <span className="hint">建議 5 秒內。只會等待一次，不會無限重試。</span>
       </label>
 
+      <label className="form-field">
+        <span>每位使用者背景監控上限（同一頻道）</span>
+        <input
+          type="number"
+          min={1}
+          max={20}
+          value={form.scheduled_monitor_max_per_user}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              scheduled_monitor_max_per_user: Number.parseInt(e.target.value || "0", 10),
+            })
+          }
+        />
+        <span className="hint">預設 3。可避免同頻道排程任務過多。</span>
+      </label>
+
       <div className="form-field-checkbox-row">
         <Checkbox
           checked={form.discord_show_internal_tool_errors}

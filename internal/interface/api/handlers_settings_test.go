@@ -205,3 +205,27 @@ func TestValidateMemoryRetentionSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateSchedulerSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   int
+		wantErr bool
+	}{
+		{name: "valid minimum", value: 1, wantErr: false},
+		{name: "valid default", value: config.DefaultScheduledMonitorMaxPerUser, wantErr: false},
+		{name: "valid maximum", value: config.MaxScheduledMonitorMaxPerUser, wantErr: false},
+		{name: "too small", value: 0, wantErr: true},
+		{name: "too large", value: config.MaxScheduledMonitorMaxPerUser + 1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateSchedulerSettings(tt.value)
+		if tt.wantErr && err == nil {
+			t.Fatalf("%s: expected error", tt.name)
+		}
+		if !tt.wantErr && err != nil {
+			t.Fatalf("%s: unexpected error: %v", tt.name, err)
+		}
+	}
+}
