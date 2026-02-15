@@ -14,8 +14,14 @@ import {
   listModels,
   listPersonas,
 } from "../api";
-import Select from "../components/ui/Select";
-import Checkbox from "../components/ui/Checkbox";
+import ProviderSection, { type ProviderTab } from "./settings/ProviderSection";
+import DiscordSection from "./settings/DiscordSection";
+import PromptGuardSection from "./settings/PromptGuardSection";
+import ToolResilienceSection from "./settings/ToolResilienceSection";
+import RuntimeMetricsCard from "./settings/RuntimeMetricsCard";
+import ToolsSection from "./settings/ToolsSection";
+import TimeLocationSection from "./settings/TimeLocationSection";
+import MemorySection from "./settings/MemorySection";
 import type {
   SettingsData,
   ProviderStatus,
@@ -27,8 +33,6 @@ import type {
 } from "../types";
 
 import "./Settings.css"; // Import the new CSS file
-
-type ProviderTab = "api-key" | "oauth" | "pool";
 
 export default function Settings() {
   const [form, setForm] = useState<SettingsData>({
@@ -337,6 +341,30 @@ export default function Settings() {
     }
   };
 
+  const handleRemovePoolAccount = async (email: string) => {
+    setRemovingEmail(email);
+    try {
+      await removeOAuthPoolAccount(email);
+      await refreshOAuthSnapshot();
+      setMessage({ type: "ok", text: `已移除 ${email}` });
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "移除失敗" });
+    } finally {
+      setRemovingEmail(null);
+    }
+  };
+
+  const handleOpenAddAccount = () => {
+    setOAuthFlow(null);
+    setOAuthCallbackURL("");
+    setAddAccountOpen(true);
+  };
+
+  const handleCloseAddAccount = () => {
+    if (oauthStarting || oauthCompleting) return;
+    setAddAccountOpen(false);
+  };
+
   if (loading) return <p>Loading settings...</p>;
 
   const modelOptions =
@@ -368,1049 +396,74 @@ export default function Settings() {
         </p>
       )}
 
-      {runtimeMetrics && (
-        <section className="settings-section runtime-metrics-section">
-          <h3 className="settings-section-title">Runtime Metrics (Guard / Exhausted)</h3>
-          <p className="meta runtime-metrics-updated">
-            Last update: {new Date(runtimeMetrics.timestamp).toLocaleString("zh-TW")}
-          </p>
-
-          <div className="runtime-metrics-grid">
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Guard: duplicate blocked</span>
-              <span className="runtime-metric-value">{runtimeMetrics.tool_guard_duplicate_blocked.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Guard: web_search limit blocked</span>
-              <span className="runtime-metric-value">{runtimeMetrics.tool_guard_limit_blocked.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Guard: max tool rounds</span>
-              <span className="runtime-metric-value">{runtimeMetrics.tool_guard_max_rounds.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Forced final answer (success)</span>
-              <span className="runtime-metric-value">{runtimeMetrics.tool_forced_final_success.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Forced final answer (failed)</span>
-              <span className="runtime-metric-value">{runtimeMetrics.tool_forced_final_failed.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Tool loop fallback used</span>
-              <span className="runtime-metric-value">{runtimeMetrics.tool_loop_fallback.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Pool transient wait retry</span>
-              <span className="runtime-metric-value">{runtimeMetrics.pool_transient_wait_retry.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Pool transient retry success</span>
-              <span className="runtime-metric-value">{runtimeMetrics.pool_transient_wait_retry_succeeded.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Pool transient retry failed</span>
-              <span className="runtime-metric-value">{runtimeMetrics.pool_transient_wait_retry_failed.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Pool exhausted errors (total)</span>
-              <span className="runtime-metric-value">{runtimeMetrics.pool_all_accounts_exhausted.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Pool accounts (current)</span>
-              <span className="runtime-metric-value">{runtimeMetrics.pool_accounts_total.toLocaleString()}</span>
-            </div>
-            <div className="runtime-metric-card">
-              <span className="runtime-metric-label">Pool exhausted accounts (current)</span>
-              <span className="runtime-metric-value">{runtimeMetrics.pool_accounts_exhausted_current.toLocaleString()}</span>
-            </div>
-          </div>
-        </section>
-      )}
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">LLM Provider</h3>
-
-        <div className="provider-tabs">
-          <button
-            className={`provider-tab ${providerTab === "api-key" ? "active" : ""}`}
-            onClick={() => setProviderTab("api-key")}
-          >
-            API Key
-          </button>
-          <button
-            className={`provider-tab ${providerTab === "oauth" ? "active" : ""}`}
-            onClick={() => setProviderTab("oauth")}
-          >
-            Gemini OAuth
-          </button>
-
-        </div>
-
-        <div className="provider-content">
-          {providerTab === "api-key" && (
-            <>
-              <label className="form-field">
-                <span>Gemini API Key</span>
-                <input
-                  type="password"
-                  value={form.gemini_api_key}
-                  onChange={(e) =>
-                    setForm({ ...form, gemini_api_key: e.target.value })
-                  }
-                  placeholder="Enter your Gemini API key"
-                />
-              </label>
-
-              <label className="form-field">
-                <span>Model</span>
-                <Select
-                  value={form.gemini_model}
-                  onChange={(val) => setForm({ ...form, gemini_model: val })}
-                  options={modelOptions}
-                />
-              </label>
-
-              <button onClick={() => handleSave("api-key")} disabled={saving} className="btn-save-bottom">
-                {saving ? "Saving..." : "Save"}
-              </button>
-            </>
-          )}
-
-          {providerTab === "oauth" && (
-            <>
-              <div className="oauth-status-banner">
-                {oauthStatus?.authenticated ? (
-                  <p className="meta">
-                    已驗證帳號：<code>{oauthStatus.email}</code>
-                    {oauthStatus.project_id && (
-                      <>
-                        {" "}| Project: <code>{oauthStatus.project_id}</code>
-                      </>
-                    )}
-                  </p>
-                ) : (
-                  <p className="meta">尚未完成 OAuth 綁定，請先新增帳號。</p>
-                )}
-              </div>
-
-              {/* Pool accounts list */}
-              {pool.length > 0 && (
-                <div className="pool-cards compact">
-                  {pool.map((entry) => (
-                    <div key={entry.email} className={`pool-card ${entry.status === "exhausted" ? "exhausted" : ""} ${entry.current ? "current" : ""}`}>
-                      <div className="pool-card-header">
-                        <div className="pool-card-avatar">
-                          {entry.email.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="pool-card-info">
-                          <div className="pool-card-email">
-                            {entry.email}
-                            {entry.current && <span className="pool-current-badge">使用中</span>}
-                          </div>
-                          <div className={`pool-card-status ${entry.status}`}>
-                            {entry.status === "available" ? (
-                              <><span className="pool-dot available" /> 可用</>
-                            ) : (
-                              <><span className="pool-dot exhausted" /> 配額耗盡
-                                {entry.exhausted_until && (
-                                  <span className="pool-reset-hint">
-                                    (重置於 {new Date(entry.exhausted_until).toLocaleTimeString()})
-                                  </span>
-                                )}
-                              </>
-                            )}
-                          </div>
-                          {(() => {
-                            const attempts24h = entry.attempts_24h ?? entry.request_count ?? 0;
-                            const attemptsTotal = entry.attempts_total ?? entry.total_requests ?? 0;
-                            const successes24h = entry.successes_24h ?? 0;
-                            const failures24h = entry.failures_24h ?? 0;
-                            const successesTotal = entry.successes_total ?? 0;
-                            const failuresTotal = entry.failures_total ?? 0;
-                            const hasUsage =
-                              attempts24h > 0 ||
-                              attemptsTotal > 0 ||
-                              successes24h > 0 ||
-                              failures24h > 0 ||
-                              successesTotal > 0 ||
-                              failuresTotal > 0;
-                            if (!hasUsage) return null;
-                            return (
-                              <div className="pool-card-quota">
-                                <div className="pool-quota-row">
-                                  <span className="pool-quota-label">24h 嘗試:</span>
-                                  <span className="pool-quota-value">{attempts24h}</span>
-                                </div>
-                                <div className="pool-quota-row">
-                                  <span className="pool-quota-label">24h 成功:</span>
-                                  <span className="pool-quota-total">{successes24h}</span>
-                                </div>
-                                <div className="pool-quota-row">
-                                  <span className="pool-quota-label">24h 失敗:</span>
-                                  <span className="pool-quota-total">{failures24h}</span>
-                                </div>
-                                <div className="pool-quota-row">
-                                  <span className="pool-quota-label">總嘗試:</span>
-                                  <span className="pool-quota-total">{attemptsTotal.toLocaleString()}</span>
-                                </div>
-                                <div className="pool-quota-row">
-                                  <span className="pool-quota-label">總成功:</span>
-                                  <span className="pool-quota-total">{successesTotal.toLocaleString()}</span>
-                                </div>
-                                <div className="pool-quota-row">
-                                  <span className="pool-quota-label">總失敗:</span>
-                                  <span className="pool-quota-total">{failuresTotal.toLocaleString()}</span>
-                                </div>
-                                {entry.last_attempt_at && (
-                                  <div className="pool-quota-row">
-                                    <span className="pool-quota-label">最近嘗試:</span>
-                                    <span className="pool-quota-time">
-                                      {new Date(entry.last_attempt_at).toLocaleString("zh-TW")}
-                                    </span>
-                                  </div>
-                                )}
-                                {entry.last_reset_time && (
-                                  <div className="pool-quota-row">
-                                    <span className="pool-quota-label">窗口起點:</span>
-                                    <span className="pool-quota-time">
-                                      {new Date(entry.last_reset_time).toLocaleString("zh-TW", {
-                                        month: "2-digit",
-                                        day: "2-digit",
-                                        hour: "2-digit",
-                                        minute: "2-digit"
-                                      })}
-                                    </span>
-                                  </div>
-                                )}
-                              {(entry.consecutive_failures ?? 0) > 0 && (
-                                <>
-                                  <div className="pool-quota-row">
-                                    <span className="pool-quota-label">連續失敗:</span>
-                                    <span className="pool-quota-total">{entry.consecutive_failures}</span>
-                                  </div>
-                                  {entry.last_error && (
-                                    <div className="pool-quota-row">
-                                      <span className="pool-quota-label">最後錯誤:</span>
-                                      <span className="pool-quota-time">{entry.last_error.slice(0, 64)}</span>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              {entry.last_success_at && (
-                                <div className="pool-quota-row">
-                                  <span className="pool-quota-label">最後成功:</span>
-                                  <span className="pool-quota-time">
-                                    {new Date(entry.last_success_at).toLocaleString("zh-TW")}
-                                  </span>
-                                </div>
-                              )}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                      <button
-                        className="pool-card-remove"
-                        onClick={async () => {
-                          if (!confirm(`確定要移除帳號 ${entry.email}？`)) return;
-                          setRemovingEmail(entry.email);
-                          try {
-                            await removeOAuthPoolAccount(entry.email);
-                            await refreshOAuthSnapshot();
-                            setMessage({ type: "ok", text: `已移除 ${entry.email}` });
-                          } catch (e) {
-                            setMessage({ type: "err", text: e instanceof Error ? e.message : "移除失敗" });
-                          } finally {
-                            setRemovingEmail(null);
-                          }
-                        }}
-                        disabled={removingEmail === entry.email}
-                        title="移除此帳號"
-                      >
-                        {removingEmail === entry.email ? "..." : "×"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Add account button */}
-              <button
-                className="btn-secondary pool-add-account-button"
-                onClick={() => {
-                  setOAuthFlow(null);
-                  setOAuthCallbackURL("");
-                  setAddAccountOpen(true);
-                }}
-                style={{ marginTop: pool.length > 0 ? "0.75rem" : 0 }}
-              >
-                <span style={{ fontSize: "1.1rem" }}>+</span> 新增帳號
-              </button>
-
-              {/* Model selector + activate */}
-              {pool.length > 0 && (
-                <div className="oauth-section-subtle">
-                  <label className="form-field">
-                    <span>Model</span>
-                    <Select
-                      value={form.gemini_model}
-                      onChange={(val) => setForm({ ...form, gemini_model: val })}
-                      options={modelOptions}
-                    />
-                  </label>
-
-                  <button onClick={() => handleSave("oauth")} disabled={saving} className="btn-save-bottom">
-                    {saving ? "Saving..." : "Use OAuth Provider"}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </section>
-
-
-
-      {/* Add Account Modal */}
-      {addAccountOpen && (
-        <div className="modal-overlay" onClick={() => !(oauthStarting || oauthCompleting) && setAddAccountOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">新增 Google 帳號</h3>
-              <button
-                className="modal-close"
-                onClick={() => !(oauthStarting || oauthCompleting) && setAddAccountOpen(false)}
-                disabled={oauthStarting || oauthCompleting}
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="modal-body">
-              {message && (
-                <p className={message.type === "ok" ? "success message" : "error message"}>
-                  {message.text}
-                </p>
-              )}
-
-              {/* Primary: Browser OAuth flow */}
-              <div className="oauth-detect-block">
-                <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
-                  推薦：直接使用 Google OAuth 授權，會自動加入帳號池。
-                </p>
-                <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                  <button
-                    className={oauthMode === "local" ? "btn-primary" : "btn-secondary"}
-                    type="button"
-                    onClick={() => setOAuthMode("local")}
-                    disabled={oauthStarting || oauthCompleting}
-                  >
-                    Local 模式
-                  </button>
-                  <button
-                    className={oauthMode === "remote" ? "btn-primary" : "btn-secondary"}
-                    type="button"
-                    onClick={() => setOAuthMode("remote")}
-                    disabled={oauthStarting || oauthCompleting}
-                  >
-                    Remote 模式
-                  </button>
-                </div>
-                <button
-                  onClick={handleStartOAuth}
-                  disabled={oauthStarting || oauthCompleting}
-                  className="btn-primary"
-                >
-                  {oauthStarting ? "連線中..." : "Connect Google Account"}
-                </button>
-                {oauthFlow && (
-                  <div className="meta oauth-meta" style={{ marginTop: "0.6rem" }}>
-                    <div>
-                      flow_id: <code>{oauthFlow.flow_id}</code>
-                    </div>
-                    <div>
-                      expires: <code>{new Date(oauthFlow.expires_at).toLocaleString("zh-TW")}</code>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {(oauthFlow || oauthMode === "remote") && (
-                <div className="oauth-detect-block">
-                  <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
-                    若無法自動 callback，請把瀏覽器最終網址（含 <code>code</code> 與 <code>state</code>）貼到這裡：
-                  </p>
-                  <textarea
-                    value={oauthCallbackURL}
-                    onChange={(e) => setOAuthCallbackURL(e.target.value)}
-                    placeholder="http://localhost:8080/api/oauth/gemini/callback?code=...&state=..."
-                    rows={3}
-                    style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
-                    disabled={oauthCompleting}
-                  />
-                  <button
-                    onClick={handleCompleteOAuth}
-                    disabled={oauthCompleting || !oauthCallbackURL.trim() || !oauthFlow}
-                    className="btn-secondary"
-                  >
-                    {oauthCompleting ? "完成中..." : "Complete OAuth"}
-                  </button>
-                </div>
-              )}
-
-              <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
-
-              {/* Fallback 1: Paste token JSON */}
-              <div className="oauth-detect-block">
-                <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
-                  Fallback：在本地電腦執行 Gemini CLI 登入後，貼上 Token 檔案內容。
-                </p>
-                <ol className="meta oauth-meta" style={{ margin: "0 0 0.75rem 1.2rem", padding: 0, lineHeight: 1.8 }}>
-                  <li>安裝並登入：<code>npx @google/gemini-cli</code></li>
-                  <li>複製 Token：<code>cat ~/.gemini/oauth_creds.json</code></li>
-                  <li>貼到下方，點擊匯入</li>
-                </ol>
-                <textarea
-                  value={pastedTokenJSON}
-                  onChange={(e) => setPastedTokenJSON(e.target.value)}
-                  placeholder='{"access_token":"ya29...","refresh_token":"1//...","token_type":"Bearer","expiry_date":1234567890000}'
-                  rows={3}
-                  style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
-                  disabled={importingPasted}
-                />
-                <button
-                  onClick={handleImportPastedToken}
-                  disabled={importingPasted || !pastedTokenJSON.trim()}
-                  className="btn-primary"
-                >
-                  {importingPasted ? "匯入中..." : "Import Token"}
-                </button>
-              </div>
-
-              <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
-
-              {/* Fallback 2: Import from server filesystem */}
-              <div className="oauth-detect-block">
-                <button
-                  onClick={handleImportCLIToken}
-                  disabled={importingCLI}
-                  className="btn-secondary"
-                >
-                  {importingCLI ? "匯入中..." : "Import from Server"}
-                </button>
-                <p className="meta oauth-meta">
-                  可 SSH 的環境：在伺服器上執行 <code>gemini</code> 登入後，直接讀取 Token
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">Discord Bot</h3>
-
-        <label className="form-field">
-          <span>Discord Token</span>
-          <input
-            type="password"
-            value={form.discord_token}
-            onChange={(e) =>
-              setForm({ ...form, discord_token: e.target.value })
-            }
-            placeholder="Enter your Discord bot token"
-          />
-          <span className="hint">Discord bot requires restart to apply.</span>
-        </label>
-
-        <label className="form-field">
-          <span>Log Channel ID (可選)</span>
-          <input
-            type="text"
-            value={form.log_channel_id || ""}
-            onChange={(e) =>
-              setForm({ ...form, log_channel_id: e.target.value })
-            }
-            placeholder="例如：1234567890123456789"
-          />
-          <span className="hint">
-            將系統日誌輸出到指定的 Discord 頻道。右鍵頻道 &gt; 複製頻道 ID 取得。留空則不輸出。
-          </span>
-        </label>
-
-        <label className="form-field">
-          <span>Discord Bot 角色</span>
-          <Select
-            value={form.discord_persona_id || ""}
-            onChange={(val) => setForm({ ...form, discord_persona_id: val })}
-            options={personaOptions}
-            placeholder="選擇 Discord bot 預設角色"
-            disabled={personaOptions.length === 0}
-          />
-          <span className="hint">
-            儲存後會立即切換 Discord Bot 使用的角色，可在 /persona 指令選單尚未更新時先使用。
-          </span>
-        </label>
-
-        <div className="form-field-checkbox-row">
-          <Checkbox
-            checked={form.discord_use_reply}
-            onChange={(checked) => setForm({ ...form, discord_use_reply: checked })}
-            label="使用回覆功能回應訊息"
-          />
-          <p className="hint-block">
-            啟用後，BOT 會以 Discord 的「回覆」功能回應使用者訊息（顯示引用關係）
-          </p>
-        </div>
-
-        <div className="form-field-checkbox-row">
-          <Checkbox
-            checked={form.discord_observe_enabled}
-            onChange={(checked) => setForm({ ...form, discord_observe_enabled: checked })}
-            label="啟用 Discord Observe 工具（唯讀）"
-          />
-          <p className="hint-block">
-            讓 LLM 可讀取目前 guild 內的狀態/頻道/訊息（不含任何寫入操作）。預設關閉。
-            變更工具開關後需重啟 bot 套用。
-          </p>
-        </div>
-
-        {form.discord_observe_enabled && (
-          <>
-            <label className="form-field">
-              <span>訊息讀取範圍</span>
-              <Select
-                value={form.discord_observe_message_scope}
-                onChange={(val) =>
-                  setForm({
-                    ...form,
-                    discord_observe_message_scope: val as SettingsData["discord_observe_message_scope"],
-                  })
-                }
-                options={[
-                  { value: "current_guild", label: "current_guild（可讀同 guild 任一頻道）" },
-                  { value: "current_channel", label: "current_channel（僅當前頻道）" },
-                ]}
-              />
-            </label>
-
-            <label className="form-field">
-              <span>單次最大結果數</span>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={form.discord_observe_max_results}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    discord_observe_max_results: Number.parseInt(e.target.value || "25", 10),
-                  })
-                }
-              />
-            </label>
-
-            <div className="form-field-checkbox-row">
-              <Checkbox
-                checked={form.discord_member_intent_enabled}
-                onChange={(checked) => setForm({ ...form, discord_member_intent_enabled: checked })}
-                label="啟用 Member Intent（list_members）"
-              />
-            </div>
-
-            <div className="form-field-checkbox-row">
-              <Checkbox
-                checked={form.discord_presence_intent_enabled}
-                onChange={(checked) => setForm({ ...form, discord_presence_intent_enabled: checked })}
-                label="啟用 Presence Intent（list_presences）"
-              />
-            </div>
-
-            <p className="hint-block">
-              Intents 變更需要同時在 Discord Developer Portal 開啟對應 Privileged Gateway Intents，且重啟 bot 才會生效。
-            </p>
-          </>
-        )}
-
-        <div className="discord-guide-block">
-          <h4 className="discord-guide-title">Discord Bot 設定指引</h4>
-          
-          <div className="settings-group">
-            <h5 className="discord-guide-subtitle">Gateway Intents (開發者後台設定)</h5>
-            <p className="meta discord-guide-meta">
-              請至 <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="link">Discord Developer Portal</a> &gt; Bot &gt; Privileged Gateway Intents 啟用：
-            </p>
-            <ul className="discord-guide-list">
-              <li className="discord-guide-list-item">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                <span>MESSAGE CONTENT INTENT (讀取訊息內容)</span>
-              </li>
-              <li className="discord-guide-list-item">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                <span>SERVER MEMBERS INTENT (如果需要)</span>
-              </li>
-              <li className="discord-guide-list-item">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                <span>PRESENCE INTENT (如果需要)</span>
-              </li>
-            </ul>
-          </div>
-
-          <div className="settings-group">
-            <h5 className="discord-guide-subtitle">必要權限清單 (邀請連結設定)</h5>
-            <div className="discord-permissions-grid">
-              <div>
-                <h6 className="discord-permission-category-title">General Permissions</h6>
-                <div className="discord-permission-item">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  <span>View Channels — 查看頻道內容</span>
-                </div>
-              </div>
-              <div>
-                <h6 className="discord-permission-category-title">Text Permissions</h6>
-                <ul className="discord-guide-list">
-                  {[
-                    ['Send Messages', '發送回覆訊息'],
-                    ['Send Messages in Threads', '在討論串中回覆'],
-                    ['Embed Links', '回覆中包含連結預覽'],
-                    ['Attach Files', '發送圖片或檔案'],
-                    ['Read Message History', '讀取對話歷史'],
-                    ['Use Slash Commands', '支援指令'],
-                    ['Add Reactions', '加表情符號回應 (可選)'],
-                  ].map(([en, zh]) => (
-                    <li key={en} className="discord-permission-item">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                      <span>{en} — {zh}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <div className="discord-min-permissions-card">
-            <h5 className="discord-min-permissions-title">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              最小權限組合（推薦）
-            </h5>
-            <p className="meta discord-min-permissions-hint">如果只是基本對話功能，最少選這些就夠了：</p>
-            <ul className="discord-min-permissions-list">
-              {['View Channels', 'Send Messages', 'Read Message History', 'Use Slash Commands'].map(p => (
-                <li key={p} className="discord-min-permissions-list-item">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  <span>{p}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <button
-          onClick={() => handleSave()}
-          disabled={saving}
-          className="btn-save-bottom"
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
-      </section>
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">Persona Stability / Prompt Guard</h3>
-
-        <label className="form-field">
-          <span>Persona Lock 週期（每 N 個 user turn）</span>
-          <input
-            type="number"
-            min={1}
-            max={16}
-            value={form.persona_lock_every_turns}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                persona_lock_every_turns: Number.parseInt(e.target.value || "0", 10),
-              })
-            }
-          />
-          <span className="hint">建議 4-5。數值越小越穩定，但 token 成本會增加。</span>
-        </label>
-
-        <div className="form-field-checkbox-row">
-          <Checkbox
-            checked={form.triplet_output_enabled}
-            onChange={(checked) => setForm({ ...form, triplet_output_enabled: checked })}
-            label="強制三段輸出 [Status]/[Analysis]/[Response]"
-          />
-        </div>
-
-        <label className="form-field">
-          <span>Analysis 顯示模式</span>
-          <Select
-            value={form.analysis_visibility}
-            onChange={(val) =>
-              setForm({
-                ...form,
-                analysis_visibility: val as SettingsData["analysis_visibility"],
-              })
-            }
-            options={[
-              { value: "visible", label: "visible（完整顯示）" },
-              { value: "hidden", label: "hidden（只顯示 response）" },
-              { value: "debug", label: "debug（除錯加強）" },
-            ]}
-          />
-        </label>
-
-        <div className="form-field-checkbox-row">
-          <Checkbox
-            checked={form.negative_constraint_enabled}
-            onChange={(checked) => setForm({ ...form, negative_constraint_enabled: checked })}
-            label="啟用 Negative Constraint（禁止 generic assistant 漂移）"
-          />
-        </div>
-
-        <label className="form-field">
-          <span>Global Negative Constraint</span>
-          <textarea
-            rows={3}
-            value={form.negative_constraint_default}
-            onChange={(e) => setForm({ ...form, negative_constraint_default: e.target.value })}
-            placeholder="You are FORBIDDEN from switching into a generic assistant tone..."
-            style={{ width: "100%", fontFamily: "monospace", fontSize: "0.88rem" }}
-            disabled={!form.negative_constraint_enabled}
-          />
-          <span className="hint">Persona 若有 style_guard.negative_constraints 會覆蓋此全域值。</span>
-        </label>
-
-        <button
-          onClick={() => handleSave()}
-          disabled={saving}
-          className="btn-save-bottom"
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
-      </section>
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">Tool Loop Guard / Resilience</h3>
-
-        <label className="form-field">
-          <span>最大工具回合數（每次訊息）</span>
-          <input
-            type="number"
-            min={1}
-            max={6}
-            value={form.max_tool_rounds}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                max_tool_rounds: Number.parseInt(e.target.value || "0", 10),
-              })
-            }
-          />
-          <span className="hint">建議 3。超過後會觸發強制最終回答（若已啟用）。</span>
-        </label>
-
-        <label className="form-field">
-          <span>Web Search 每回合上限</span>
-          <input
-            type="number"
-            min={1}
-            max={4}
-            value={form.max_web_search_calls_per_turn}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                max_web_search_calls_per_turn: Number.parseInt(e.target.value || "0", 10),
-              })
-            }
-          />
-          <span className="hint">建議 2，可避免重複搜尋導致 token 暴增。</span>
-        </label>
-
-        <div className="form-field-checkbox-row">
-          <Checkbox
-            checked={form.force_final_answer_after_tool_limit}
-            onChange={(checked) =>
-              setForm({ ...form, force_final_answer_after_tool_limit: checked })
-            }
-            label="工具受限後強制最終回答（禁用工具再呼叫一次）"
-          />
-        </div>
-
-        <div className="form-field-checkbox-row">
-          <Checkbox
-            checked={form.transient_recovery_wait_enabled}
-            onChange={(checked) =>
-              setForm({ ...form, transient_recovery_wait_enabled: checked })
-            }
-            label="全池短暫冷卻時自動等待後重試一次"
-          />
-        </div>
-
-        <label className="form-field">
-          <span>短暫冷卻最大等待秒數</span>
-          <input
-            type="number"
-            min={1}
-            max={15}
-            value={form.transient_recovery_wait_max_seconds}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                transient_recovery_wait_max_seconds: Number.parseInt(e.target.value || "0", 10),
-              })
-            }
-            disabled={!form.transient_recovery_wait_enabled}
-          />
-          <span className="hint">建議 5 秒內。只會等待一次，不會無限重試。</span>
-        </label>
-
-        <div className="form-field-checkbox-row">
-          <Checkbox
-            checked={form.discord_show_internal_tool_errors}
-            onChange={(checked) =>
-              setForm({ ...form, discord_show_internal_tool_errors: checked })
-            }
-            label="Discord 顯示工具內部錯誤/guard 訊息"
-          />
-        </div>
-
-        <button
-          onClick={() => handleSave()}
-          disabled={saving}
-          className="btn-save-bottom"
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
-      </section>
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-wrench"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-2.53 2.53a1 1 0 0 0-1.4 0L6.3 14.7a1 1 0 0 0 0-1.4l.9-.9a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0L1.8 11.37a6 6 0 0 1 7.94-7.94l2.53-2.53a1 1 0 0 0 0-1.4Z"/><path d="m18.17 17.12 1.66 1.66"/></svg>
-          Tools
-        </h3>
-
-        <div className="tool-checkbox-row">
-          <Checkbox
-            checked={form.web_search_enabled}
-            onChange={(checked) => setForm({ ...form, web_search_enabled: checked })}
-            label="Enable Web Search"
-          />
-        </div>
-
-        {form.web_search_enabled && (
-          <div className="tool-settings-indent">
-            <label className="form-field">
-              <span>Brave API Key</span>
-              <input
-                type="password"
-                value={form.brave_api_key}
-                onChange={(e) => setForm({ ...form, brave_api_key: e.target.value })}
-                placeholder="Enter your Brave Search API key"
-              />
-              <span className="hint">
-                Get your API key at{" "}
-                <a
-                  href="https://brave.com/search/api/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="link"
-                >
-                  brave.com/search/api
-                </a>{" "}
-                (Free tier: 2000 queries/month)
-              </span>
-            </label>
-
-            <label className="form-field">
-              <div className="tool-field-header">
-                <span>Perplexity API Key</span>
-                <span className="tool-tag">OpenClaw 相容</span>
-              </div>
-              <input
-                type="password"
-                value={form.perplexity_api_key || ''}
-                onChange={(e) => setForm({ ...form, perplexity_api_key: e.target.value })}
-                placeholder="Enter your Perplexity API key"
-              />
-              <span className="hint">
-                Get your API key at{" "}
-                <a
-                  href="https://www.perplexity.ai/settings/api"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="link"
-                >
-                  perplexity.ai/api
-                </a>{" "}
-                (Paid service, supports Sonar model)
-              </span>
-            </label>
-
-            <label className="form-field">
-              <div className="tool-field-header">
-                <span>Search Provider</span>
-                <span className="tool-tag">OpenClaw 相容</span>
-              </div>
-              <Select
-                value={form.search_provider || 'auto'}
-                onChange={(val) => setForm({ ...form, search_provider: val })}
-                options={[
-                  { value: 'auto', label: 'Auto (預設 Brave)' },
-                  { value: 'brave', label: 'Brave Search' },
-                  { value: 'perplexity', label: 'Perplexity Sonar' },
-                ]}
-              />
-              <span className="hint">
-                選擇搜尋提供商。Auto 模式會優先使用已設定的 Brave，無 Brave 時降級到 Perplexity。
-              </span>
-            </label>
-          </div>
-        )}
-
-        <div className="tool-checkbox-row">
-            <Checkbox
-              checked={form.web_fetch_enabled}
-              onChange={(checked) => setForm({ ...form, web_fetch_enabled: checked })}
-              label="啟用 Web Fetch 工具"
-            />
-            <span className="tool-tag">OpenClaw 相容</span>
-          </div>
-          <p className="hint-block">
-            網頁內容提取工具：取得並轉換網頁為 Markdown 格式。LLM 可以自動使用此工具讀取完整網頁內容。
-          </p>
-
-        <button
-          onClick={() => handleSave()}
-          disabled={saving}
-          className="btn-save-bottom"
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
-      </section>
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-alarm-clock"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/><path d="M10.2 3.2c3.9 3.9 3.9 10.1 0 14l3.8 3.8c3.9-3.9 3.9-10.1 0-14Z"/><path d="M3.2 13.8c3.9-3.9 10.1-3.9 14 0l3.8-3.8c-3.9 3.9-10.1 3.9-14 0Z"/></svg>
-          時間與地區設定
-          <span className="tool-tag">OpenClaw 相容</span>
-        </h3>
-
-        <div style={{ marginBottom: '1.25rem' }}>
-          <label className="form-field">
-            <span>時區</span>
-            <Select
-              value={form.timezone || "auto"}
-              onChange={(val) => setForm({ ...form, timezone: val })}
-              options={[
-                { value: "auto", label: "自動偵測 (Auto)" },
-                { value: "Asia/Taipei", label: "Asia/Taipei (台北)" },
-                { value: "Asia/Tokyo", label: "Asia/Tokyo (東京)" },
-                { value: "Asia/Hong_Kong", label: "Asia/Hong_Kong (香港)" },
-                { value: "Asia/Shanghai", label: "Asia/Shanghai (上海)" },
-                { value: "Asia/Seoul", label: "Asia/Seoul (首爾)" },
-                { value: "Asia/Singapore", label: "Asia/Singapore (新加坡)" },
-                { value: "America/New_York", label: "America/New_York (紐約)" },
-                { value: "America/Los_Angeles", label: "America/Los_Angeles (洛杉磯)" },
-                { value: "America/Chicago", label: "America/Chicago (芝加哥)" },
-                { value: "Europe/London", label: "Europe/London (倫敦)" },
-                { value: "Europe/Paris", label: "Europe/Paris (巴黎)" },
-                { value: "Australia/Sydney", label: "Australia/Sydney (雪梨)" },
-              ]}
-            />
-            <span className="hint">
-              設定時區以確保 AI 正確理解時間。時區資訊會注入 system prompt（靜態，不影響 prompt cache）。
-            </span>
-          </label>
-        </div>
-
-        <div style={{ marginBottom: '1.25rem' }}>
-          <label className="form-field">
-            <span>時間格式</span>
-            <Select
-              value={form.time_format || "auto"}
-              onChange={(val) => setForm({ ...form, time_format: val })}
-              options={[
-                { value: "auto", label: "自動 (Auto)" },
-                { value: "24", label: "24 小時制" },
-                { value: "12", label: "12 小時制 (AM/PM)" },
-              ]}
-            />
-            <span className="hint">
-              選擇時間顯示格式。當 AI 使用 session_status 工具查詢時間時，會使用此格式。
-            </span>
-          </label>
-        </div>
-
-        <div style={{ marginBottom: '1.25rem' }}>
-          <label className="form-field">
-            <span>地區 (可選)</span>
-            <input
-              type="text"
-              placeholder="例如：台北, 台灣"
-              value={form.location || ""}
-              onChange={(e) => setForm({ ...form, location: e.target.value })}
-            />
-            <span className="hint">
-              選填：明確指定你的所在地，幫助 AI 更了解你的地理位置。時區已經隱含地理資訊（如 Asia/Taipei → 台灣）。
-            </span>
-          </label>
-        </div>
-
-        <button
-          onClick={() => handleSave()}
-          disabled={saving}
-          className="btn-save-bottom"
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
-      </section>
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z" opacity="0"/><path d="M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z"/><path d="M12 6v6l4 2"/></svg>
-          記憶系統
-        </h3>
-
-        <div className="tool-checkbox-row">
-          <Checkbox
-            checked={form.memory_extraction_enabled}
-            onChange={(checked) => setForm({ ...form, memory_extraction_enabled: checked })}
-            label="啟用自動記憶提取"
-          />
-        </div>
-        <p className="hint-block">
-          每次對話結束後，背景自動分析對話內容，更新使用者檔案 (user.md)、長期記憶 (MEMORY.md) 和每日紀錄。需要重啟生效。
-        </p>
-
-        {form.memory_extraction_enabled && (
-          <div className="tool-settings-indent">
-            <label className="form-field">
-              <span>記憶提取模型</span>
-              <Select
-                value={form.memory_extraction_model || ""}
-                onChange={(val) => setForm({ ...form, memory_extraction_model: val })}
-                options={[
-                  { value: "", label: "預設 (gemini-2.0-flash)" },
-                  ...modelOptions,
-                ]}
-              />
-              <span className="hint">
-                選擇用於記憶提取的模型。建議使用便宜、快速的模型（如 gemini-2.0-flash）以節省配額。留空使用預設值。
-              </span>
-            </label>
-          </div>
-        )}
-
-        <button
-          onClick={() => handleSave()}
-          disabled={saving}
-          className="btn-save-bottom"
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
-      </section>
+      <RuntimeMetricsCard runtimeMetrics={runtimeMetrics} />
+
+      <ProviderSection
+        form={form}
+        setForm={setForm}
+        modelOptions={modelOptions}
+        providerTab={providerTab}
+        setProviderTab={setProviderTab}
+        oauthStatus={oauthStatus}
+        pool={pool}
+        removingEmail={removingEmail}
+        onRemovePoolAccount={handleRemovePoolAccount}
+        saving={saving}
+        onSave={handleSave}
+        addAccountOpen={addAccountOpen}
+        onOpenAddAccount={handleOpenAddAccount}
+        onCloseAddAccount={handleCloseAddAccount}
+        oauthStarting={oauthStarting}
+        oauthCompleting={oauthCompleting}
+        oauthMode={oauthMode}
+        setOAuthMode={setOAuthMode}
+        oauthFlow={oauthFlow}
+        oauthCallbackURL={oauthCallbackURL}
+        setOAuthCallbackURL={setOAuthCallbackURL}
+        onStartOAuth={handleStartOAuth}
+        onCompleteOAuth={handleCompleteOAuth}
+        message={message}
+        pastedTokenJSON={pastedTokenJSON}
+        setPastedTokenJSON={setPastedTokenJSON}
+        importingPasted={importingPasted}
+        onImportPastedToken={handleImportPastedToken}
+        importingCLI={importingCLI}
+        onImportCLIToken={handleImportCLIToken}
+      />
+
+      <DiscordSection
+        form={form}
+        setForm={setForm}
+        personaOptions={personaOptions}
+        saving={saving}
+        onSave={() => handleSave()}
+      />
+
+      <PromptGuardSection
+        form={form}
+        setForm={setForm}
+        saving={saving}
+        onSave={() => handleSave()}
+      />
+
+      <ToolResilienceSection
+        form={form}
+        setForm={setForm}
+        saving={saving}
+        onSave={() => handleSave()}
+      />
+
+      <ToolsSection form={form} setForm={setForm} saving={saving} onSave={() => handleSave()} />
+
+      <TimeLocationSection form={form} setForm={setForm} saving={saving} onSave={() => handleSave()} />
+
+      <MemorySection
+        form={form}
+        setForm={setForm}
+        modelOptions={modelOptions}
+        saving={saving}
+        onSave={() => handleSave()}
+      />
     </div>
   );
 }
