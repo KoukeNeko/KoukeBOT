@@ -856,11 +856,13 @@ func (s *ChatService) handleToolCallingStream(
 		defer close(outputCh)
 
 		toolPolicy := s.toolExecutionPolicySnapshot()
-		var allToolCalls []domain.ToolCall
+		var executedToolCalls []domain.ToolCall
 		var allToolResultsText string
 		var totalTokens int
 		toolCallAttempts := make(map[string]int)
 		toolCountsByName := make(map[string]int)
+		emittedToolErrors := make(map[string]struct{})
+		hadToolCallAttempt := false
 		guardSummary := toolGuardSummary{}
 		promptPolicy := s.assembler.PromptGuardPolicy()
 		hideAnalysis := promptPolicy.TripletOutputEnabled && promptPolicy.AnalysisVisibility == AnalysisVisibilityHidden
@@ -916,7 +918,7 @@ func (s *ChatService) handleToolCallingStream(
 				names[i] = c.Name
 			}
 			logChat.Logf("tool calls (round %d/%d): %s", round+1, toolPolicy.MaxToolRounds, strings.Join(names, ", "))
-			allToolCalls = append(allToolCalls, pendingToolCalls...)
+			hadToolCallAttempt = true
 
 			// Max rounds reached → force finalize on next step.
 			if round == toolPolicy.MaxToolRounds {
@@ -969,6 +971,7 @@ func (s *ChatService) handleToolCallingStream(
 			if len(executableCalls) > 0 {
 				executed := s.executeTools(ctx, executableCalls, personaID)
 				toolResults = append(toolResults, executed...)
+				executedToolCalls = append(executedToolCalls, executableCalls...)
 			}
 			toolCallMap := make(map[string]domain.ToolCall, len(pendingToolCalls))
 			for _, call := range pendingToolCalls {
@@ -980,11 +983,17 @@ func (s *ChatService) handleToolCallingStream(
 				}
 				call := toolCallMap[result.ToolCallID]
 				if toolPolicy.DiscordShowInternalToolErrors {
+					errSummary := truncateLog(result.Content, 240)
+					dedupeKey := call.Name + "|" + toolCallSignature(call) + "|" + errSummary
+					if _, exists := emittedToolErrors[dedupeKey]; exists {
+						continue
+					}
+					emittedToolErrors[dedupeKey] = struct{}{}
 					outputCh <- llm.StreamChunk{
 						ToolStatus: "tool_error",
 						ToolName:   call.Name,
 						ToolInput:  call.Input,
-						ToolError:  truncateLog(result.Content, 240),
+						ToolError:  errSummary,
 					}
 				}
 			}
@@ -1045,7 +1054,7 @@ func (s *ChatService) handleToolCallingStream(
 			}
 		}
 
-		if strings.TrimSpace(fullResponse) == "" && len(allToolCalls) > 0 && guardSummary.shouldForceFinalAnswer(toolPolicy) {
+		if strings.TrimSpace(fullResponse) == "" && hadToolCallAttempt && guardSummary.shouldForceFinalAnswer(toolPolicy) {
 			guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
 			forcedResponse, forcedTokens, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, guardSummary)
 			totalTokens += forcedTokens
@@ -1059,14 +1068,14 @@ func (s *ChatService) handleToolCallingStream(
 					outputCh <- llm.StreamChunk{Content: forcedResponse}
 					finalTextSent = true
 				}
-				logChat.Logf("tool loop forced final answer generated after %d tool call(s)", len(allToolCalls))
+				logChat.Logf("tool loop forced final answer generated after %d tool call(s)", len(executedToolCalls))
 			}
 		}
 
-		if strings.TrimSpace(fullResponse) == "" && len(allToolCalls) > 0 {
+		if strings.TrimSpace(fullResponse) == "" && hadToolCallAttempt {
 			atomic.AddUint64(&s.metricToolLoopFallback, 1)
 			fullResponse = buildToolLoopFallbackResponse(promptPolicy)
-			logChat.Warnf("tool loop fallback response generated after %d tool call(s)", len(allToolCalls))
+			logChat.Warnf("tool loop fallback response generated after %d tool call(s)", len(executedToolCalls))
 		}
 
 		finalView := s.prepareAssistantOutputForStorage(fullResponse)
@@ -1081,9 +1090,9 @@ func (s *ChatService) handleToolCallingStream(
 		}
 
 		// Save conversation and emit final signals
-		if len(allToolCalls) > 0 {
+		if len(executedToolCalls) > 0 {
 			// Tool calls were executed — append annotation and save
-			toolUsageAnnotation := formatToolUsageAnnotation(allToolCalls)
+			toolUsageAnnotation := formatToolUsageAnnotation(executedToolCalls)
 			display := finalView.Display
 			if display == "" {
 				display = finalView.Content
