@@ -5,7 +5,7 @@ export default function HowItWorks() {
     <div className="how-page">
       <h2>How KoukeBOT Works</h2>
       <p className="how-intro">
-        這頁整理目前 KoukeBOT 的對話資料流、帳號池容錯、Token 節流策略，以及 OAuth 新增帳號流程。
+        這頁整理目前 KoukeBOT 的對話資料流、帳號池容錯、Token 節流策略、Persona 編輯儲存機制，以及 OAuth 新增帳號流程。
       </p>
 
       <section className="how-section">
@@ -65,7 +65,29 @@ export default function HowItWorks() {
       </section>
 
       <section className="how-section">
-        <h3>4) OAuth 新增帳號（本機 + 遠端）</h3>
+        <h3>4) Persona 編輯與儲存（config.yaml 原文模式）</h3>
+        <div className="how-flow">
+          <pre>{`Persona Detail Page
+  -> GET /api/personas/{id}
+  -> 回傳：config_yaml + lore + user_profile + anchors
+  -> 核心欄位表單（meta/system_template/generation/variables）與 YAML 編輯器雙向同步
+  -> 前端 YAML 驗證通過才可儲存
+  -> PUT /api/personas/{id}
+  -> 後端解析 + 驗證 config_yaml
+  -> 以 raw 原文寫回 config.yaml（保留自訂 root keys）
+  -> 直接更新記憶體 persona（不需 reload）`}</pre>
+        </div>
+        <ol className="how-list">
+          <li>核心必填鍵：<code>meta</code>、<code>system_template</code>、<code>generation</code>、<code>variables</code>。</li>
+          <li><code>meta.id</code> 與 <code>meta.name</code> 必填且不可空白。</li>
+          <li><code>timezone</code> 是可選欄位，不是必填。</li>
+          <li>除了核心欄位外，其它自訂鍵可自由放在 root level，儲存時不會被吃掉。</li>
+          <li>如果 YAML 不合法：前端會禁止儲存，後端也會回 <code>400</code> 做第二層保護。</li>
+        </ol>
+      </section>
+
+      <section className="how-section">
+        <h3>5) OAuth 新增帳號（本機 + 遠端）</h3>
         <ol className="how-list">
           <li>
             <code>POST /api/oauth/gemini/start</code> 回傳 <code>flow_id</code>、<code>auth_url</code>、<code>expires_at</code>、
@@ -80,7 +102,7 @@ export default function HowItWorks() {
       </section>
 
       <section className="how-section">
-        <h3>5) 觀察與除錯資料</h3>
+        <h3>6) 觀察與除錯資料</h3>
         <div className="how-grid">
           <article className="how-card">
             <h4>Pool 狀態</h4>
@@ -98,7 +120,7 @@ export default function HowItWorks() {
       </section>
 
       <section className="how-section">
-        <h3>6) 長對話為何會「掉角色感」？（已修正）</h3>
+        <h3>7) 長對話為何會「掉角色感」？（已修正）</h3>
         <div className="how-grid">
           <article className="how-card">
             <h4>先釐清：System Prompt 仍是每回合注入</h4>
