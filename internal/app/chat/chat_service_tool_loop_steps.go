@@ -244,17 +244,39 @@ func (s *ChatService) finalizeToolLoopResponse(
 		state.guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
 		forcedResponse, forcedTokens, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, state.guardSummary)
 		state.totalTokens += forcedTokens
+		forcedFinalReady := false
 		if err != nil {
-			s.incrementToolForcedFinalFailed()
 			logChat.Warnf("forced final answer failed: %v", err)
-		} else if strings.TrimSpace(forcedResponse) != "" {
-			s.incrementToolForcedFinalSuccess()
-			state.fullResponse = forcedResponse
-			if !state.hideAnalysis {
-				outputCh <- llm.StreamChunk{Content: forcedResponse}
-				state.finalTextSent = true
+		} else if strings.TrimSpace(forcedResponse) == "" {
+			logChat.Warnf("forced final answer returned empty output")
+		} else {
+			candidate := strings.TrimSpace(forcedResponse)
+			if shouldRepairForcedFinalOutput(candidate, state.promptPolicy) {
+				logChat.Warnf("forced final answer output malformed; attempting one repair pass")
+				repairedResponse, repairedTokens, repairErr := s.regenerateForcedFinalOnceWithoutTools(ctx, conv, persona, candidate)
+				state.totalTokens += repairedTokens
+				if repairErr != nil {
+					logChat.Warnf("forced final answer repair failed: %v", repairErr)
+				} else if strings.TrimSpace(repairedResponse) == "" {
+					logChat.Warnf("forced final answer repair returned empty output")
+				} else {
+					candidate = strings.TrimSpace(repairedResponse)
+					logChat.Logf("forced final answer repair pass completed")
+				}
 			}
+			if isForcedFinalOutputValid(candidate, state.promptPolicy) {
+				state.fullResponse = candidate
+				forcedFinalReady = true
+			} else {
+				logChat.Warnf("forced final answer still invalid after repair pass")
+			}
+		}
+		if forcedFinalReady {
+			s.incrementToolForcedFinalSuccess()
 			logChat.Logf("tool loop forced final answer generated after %d tool call(s)", len(state.executedToolCalls))
+		} else {
+			s.incrementToolForcedFinalFailed()
+			logChat.Warnf("forced final answer unavailable after guard stop; fallback path engaged")
 		}
 	}
 

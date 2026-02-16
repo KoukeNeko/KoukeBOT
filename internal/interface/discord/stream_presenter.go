@@ -12,8 +12,16 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
+type messageSender interface {
+	SendMessage(channelID, content string) error
+	SendMessageWithReturn(channelID, content string) (*discordgo.Message, error)
+	SendMessageReply(channelID, content, replyToMessageID string) (*discordgo.Message, error)
+	EditMessage(channelID, messageID, newContent string) error
+}
+
 type discordStreamPresenter struct {
 	handler          *Handler
+	sender           messageSender
 	channelID        string
 	replyToMessageID string
 	fullResponse     strings.Builder
@@ -22,8 +30,17 @@ type discordStreamPresenter struct {
 }
 
 func newDiscordStreamPresenter(handler *Handler, channelID, replyToMessageID string) *discordStreamPresenter {
+	var sender messageSender
+	if handler != nil {
+		sender = handler.bot
+	}
+	return newDiscordStreamPresenterWithSender(handler, channelID, replyToMessageID, sender)
+}
+
+func newDiscordStreamPresenterWithSender(handler *Handler, channelID, replyToMessageID string, sender messageSender) *discordStreamPresenter {
 	return &discordStreamPresenter{
 		handler:          handler,
+		sender:           sender,
 		channelID:        channelID,
 		replyToMessageID: replyToMessageID,
 	}
@@ -61,11 +78,27 @@ func (p *discordStreamPresenter) processChunk(chunk llm.StreamChunk) (done bool,
 func (p *discordStreamPresenter) handleStreamError(err error) {
 	logHandler.Errorf("stream error [%s]: %v", p.channelID, err)
 	errorMsg := formatDiscordError(err)
-	if p.messageID != "" {
-		_ = p.handler.bot.EditMessage(p.channelID, p.messageID, errorMsg)
+	if p.sender == nil {
+		logHandler.Errorf("stream error delivery skipped [%s]: sender unavailable", p.channelID)
 		return
 	}
-	_ = p.handler.bot.SendMessage(p.channelID, errorMsg)
+	if p.messageID != "" {
+		if editErr := p.sender.EditMessage(p.channelID, p.messageID, errorMsg); editErr != nil {
+			logHandler.Warnf(
+				"stream error edit failed [%s]: message=%s err=%v; trying send fallback",
+				p.channelID,
+				p.messageID,
+				editErr,
+			)
+			if sendErr := p.sender.SendMessage(p.channelID, errorMsg); sendErr != nil {
+				logHandler.Errorf("stream error fallback send failed [%s]: %v", p.channelID, sendErr)
+			}
+		}
+		return
+	}
+	if sendErr := p.sender.SendMessage(p.channelID, errorMsg); sendErr != nil {
+		logHandler.Errorf("stream error send failed [%s]: %v", p.channelID, sendErr)
+	}
 }
 
 func (p *discordStreamPresenter) handleLegacyToolCallIndicator(toolCalls []domain.ToolCall) {
@@ -83,10 +116,22 @@ func (p *discordStreamPresenter) handleLegacyToolCallIndicator(toolCalls []domai
 	}
 	currentContent := p.fullResponse.String()
 	if currentContent != "" {
-		_ = p.handler.bot.EditMessage(p.channelID, p.messageID, currentContent+"\n\n"+toolIndicator)
+		if p.sender == nil {
+			logHandler.Errorf("edit tool indicator [%s]: sender unavailable", p.channelID)
+			return
+		}
+		if err := p.sender.EditMessage(p.channelID, p.messageID, currentContent+"\n\n"+toolIndicator); err != nil {
+			logHandler.Errorf("edit tool indicator [%s]: %v", p.channelID, err)
+		}
 		return
 	}
-	_ = p.handler.bot.EditMessage(p.channelID, p.messageID, toolIndicator)
+	if p.sender == nil {
+		logHandler.Errorf("edit tool indicator [%s]: sender unavailable", p.channelID)
+		return
+	}
+	if err := p.sender.EditMessage(p.channelID, p.messageID, toolIndicator); err != nil {
+		logHandler.Errorf("edit tool indicator [%s]: %v", p.channelID, err)
+	}
 }
 
 func (p *discordStreamPresenter) handleToolStatus(chunk llm.StreamChunk) {
@@ -105,7 +150,13 @@ func (p *discordStreamPresenter) handleToolStatus(chunk llm.StreamChunk) {
 			}
 			return
 		}
-		_ = p.handler.bot.EditMessage(p.channelID, p.messageID, toolMsg)
+		if p.sender == nil {
+			logHandler.Errorf("edit tool status [%s]: sender unavailable", p.channelID)
+			return
+		}
+		if err := p.sender.EditMessage(p.channelID, p.messageID, toolMsg); err != nil {
+			logHandler.Errorf("edit tool status [%s]: %v", p.channelID, err)
+		}
 	case "tool_error":
 		logHandler.Warnf(
 			"tool status [%s]: error name=%s input=%s err=%s",
@@ -115,7 +166,11 @@ func (p *discordStreamPresenter) handleToolStatus(chunk llm.StreamChunk) {
 			truncateDiscordToolLog(chunk.ToolError, 180),
 		)
 		errMsg := formatToolStatusError(chunk.ToolName, chunk.ToolInput, chunk.ToolError)
-		if err := p.handler.bot.SendMessage(p.channelID, errMsg); err != nil {
+		if p.sender == nil {
+			logHandler.Errorf("send tool error [%s]: sender unavailable", p.channelID)
+			return
+		}
+		if err := p.sender.SendMessage(p.channelID, errMsg); err != nil {
 			logHandler.Errorf("send tool error [%s]: %v", p.channelID, err)
 		}
 	case "tool_done":
@@ -145,18 +200,36 @@ func (p *discordStreamPresenter) sendOrUpdate(content string) error {
 		_, err := p.sendInitial(segments[0])
 		return err
 	}
-	return p.handler.bot.EditMessage(p.channelID, p.messageID, segments[0])
+	if p.sender == nil {
+		return fmt.Errorf("discord sender unavailable")
+	}
+	if err := p.sender.EditMessage(p.channelID, p.messageID, segments[0]); err != nil {
+		logHandler.Warnf(
+			"stream edit failed [%s]: message=%s err=%v; trying send fallback",
+			p.channelID,
+			p.messageID,
+			err,
+		)
+		if _, sendErr := p.sendInitial(segments[0]); sendErr != nil {
+			return fmt.Errorf("edit failed (%w), fallback send failed (%v)", err, sendErr)
+		}
+		logHandler.Warnf("stream edit fallback send succeeded [%s]: new_message=%s", p.channelID, p.messageID)
+	}
+	return nil
 }
 
 func (p *discordStreamPresenter) sendInitial(content string) (*discordgo.Message, error) {
-	if p.handler.useReply {
-		msg, err := p.handler.bot.SendMessageReply(p.channelID, content, p.replyToMessageID)
+	if p.sender == nil {
+		return nil, fmt.Errorf("discord sender unavailable")
+	}
+	if p.usesReply() {
+		msg, err := p.sender.SendMessageReply(p.channelID, content, p.replyToMessageID)
 		if err == nil {
 			p.messageID = msg.ID
 		}
 		return msg, err
 	}
-	msg, err := p.handler.bot.SendMessageWithReturn(p.channelID, content)
+	msg, err := p.sender.SendMessageWithReturn(p.channelID, content)
 	if err == nil {
 		p.messageID = msg.ID
 	}
@@ -167,7 +240,13 @@ func (p *discordStreamPresenter) sendFinal() {
 	finalContent := p.fullResponse.String()
 	if finalContent == "" {
 		if p.messageID == "" {
-			_ = p.handler.bot.SendMessage(p.channelID, "(No response generated)")
+			if p.sender == nil {
+				logHandler.Errorf("send final noop failed [%s]: sender unavailable", p.channelID)
+				return
+			}
+			if err := p.sender.SendMessage(p.channelID, "(No response generated)"); err != nil {
+				logHandler.Errorf("send final noop failed [%s]: %v", p.channelID, err)
+			}
 		}
 		return
 	}
@@ -178,27 +257,44 @@ func (p *discordStreamPresenter) sendFinal() {
 	}
 
 	if p.messageID != "" {
-		_ = p.handler.bot.EditMessage(p.channelID, p.messageID, segments[0])
+		if p.sender == nil {
+			logHandler.Errorf("send final failed [%s]: sender unavailable", p.channelID)
+			return
+		}
+		if err := p.sender.EditMessage(p.channelID, p.messageID, segments[0]); err != nil {
+			logHandler.Warnf(
+				"send final edit failed [%s]: message=%s err=%v; trying send fallback",
+				p.channelID,
+				p.messageID,
+				err,
+			)
+			if _, sendErr := p.sendInitial(segments[0]); sendErr != nil {
+				logHandler.Errorf("send final fallback failed [%s]: %v", p.channelID, sendErr)
+				return
+			}
+			logHandler.Warnf("send final fallback succeeded [%s]: new_message=%s", p.channelID, p.messageID)
+		}
 		for i := 1; i < len(segments); i++ {
-			_ = p.handler.bot.SendMessage(p.channelID, segments[i])
+			if err := p.sender.SendMessage(p.channelID, segments[i]); err != nil {
+				logHandler.Errorf("send final segment failed [%s]: idx=%d err=%v", p.channelID, i, err)
+			}
 		}
 		return
 	}
 
-	if p.handler.useReply {
-		msg, err := p.handler.bot.SendMessageReply(p.channelID, segments[0], p.replyToMessageID)
-		if err == nil {
-			p.messageID = msg.ID
-		}
-		for i := 1; i < len(segments); i++ {
-			_ = p.handler.bot.SendMessage(p.channelID, segments[i])
-		}
+	if _, err := p.sendInitial(segments[0]); err != nil {
+		logHandler.Errorf("send final initial failed [%s]: %v", p.channelID, err)
 		return
 	}
-
-	for _, segment := range segments {
-		_ = p.handler.bot.SendMessage(p.channelID, segment)
+	for i := 1; i < len(segments); i++ {
+		if err := p.sender.SendMessage(p.channelID, segments[i]); err != nil {
+			logHandler.Errorf("send final segment failed [%s]: idx=%d err=%v", p.channelID, i, err)
+		}
 	}
+}
+
+func (p *discordStreamPresenter) usesReply() bool {
+	return p.handler != nil && p.handler.useReply
 }
 
 func summarizeToolCallsForLog(toolCalls []domain.ToolCall) string {

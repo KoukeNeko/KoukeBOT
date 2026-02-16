@@ -2,6 +2,9 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -108,5 +111,160 @@ func TestFinalizeToolLoopResponseBuildsFallback(t *testing.T) {
 	chunk := <-outputCh
 	if chunk.Content == "" {
 		t.Fatalf("expected non-empty chunk content")
+	}
+}
+
+func TestFinalizeToolLoopResponseRepairsMalformedForcedFinalOnce(t *testing.T) {
+	provider := &forcedFinalTestProvider{
+		streamResponses: [][]llm.StreamChunk{
+			{
+				{
+					Content:    "[Status]: Analytical\n[Analysis]: Missing response tag.\nThis is malformed output.",
+					TokensUsed: 11,
+				},
+				{Done: true},
+			},
+			{
+				{
+					Content:    "[Status]: Analytical\n[Analysis]: Rewritten into valid output.\n[Response]: 已修復完成。",
+					TokensUsed: 7,
+				},
+				{Done: true},
+			},
+		},
+	}
+	assembler := NewContextAssembler()
+	service := &ChatService{
+		assembler: assembler,
+		provider:  provider,
+	}
+	state := newToolLoopState(DefaultToolExecutionPolicy(), assembler.PromptGuardPolicy())
+	state.hadToolCallAttempt = true
+	state.guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached", "max_tool_rounds=3")
+	outputCh := make(chan llm.StreamChunk, 2)
+	conv := &domain.Conversation{
+		ID:        "conv-1",
+		ChannelID: "ch",
+		PersonaID: "persona-a",
+	}
+
+	view := service.finalizeToolLoopResponse(context.Background(), conv, forcedFinalTestPersona("persona-a"), outputCh, state)
+	if provider.streamCallCount != 2 {
+		t.Fatalf("stream call count = %d, want 2", provider.streamCallCount)
+	}
+	if !view.Parsed {
+		t.Fatalf("expected repaired output to parse as triplet")
+	}
+	if view.Content != "已修復完成。" {
+		t.Fatalf("view content = %q, want repaired response", view.Content)
+	}
+	if !strings.Contains(state.fullResponse, "[Response]: 已修復完成。") {
+		t.Fatalf("full response should contain repaired triplet, got: %s", state.fullResponse)
+	}
+	if len(outputCh) == 0 {
+		t.Fatalf("expected repaired final chunk to be emitted")
+	}
+	chunk := <-outputCh
+	if !strings.Contains(chunk.Content, "[Response]: 已修復完成。") {
+		t.Fatalf("chunk content should include repaired response, got: %s", chunk.Content)
+	}
+}
+
+func TestFinalizeToolLoopResponseFallsBackWhenRepairFails(t *testing.T) {
+	provider := &forcedFinalTestProvider{
+		streamResponses: [][]llm.StreamChunk{
+			{
+				{
+					Content:    "[Status]: Analytical\n[Analysis]: Missing response tag.\nMalformed.",
+					TokensUsed: 5,
+				},
+				{Done: true},
+			},
+			{
+				{
+					Error: errors.New("repair stream failed"),
+				},
+			},
+		},
+	}
+	assembler := NewContextAssembler()
+	service := &ChatService{
+		assembler: assembler,
+		provider:  provider,
+	}
+	state := newToolLoopState(DefaultToolExecutionPolicy(), assembler.PromptGuardPolicy())
+	state.hadToolCallAttempt = true
+	state.guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached", "max_tool_rounds=3")
+	outputCh := make(chan llm.StreamChunk, 2)
+	conv := &domain.Conversation{
+		ID:        "conv-2",
+		ChannelID: "ch",
+		PersonaID: "persona-b",
+	}
+
+	view := service.finalizeToolLoopResponse(context.Background(), conv, forcedFinalTestPersona("persona-b"), outputCh, state)
+	if provider.streamCallCount != 2 {
+		t.Fatalf("stream call count = %d, want 2", provider.streamCallCount)
+	}
+	if !strings.Contains(view.Display, "Tool Loop Stopped") {
+		t.Fatalf("expected fallback display, got: %s", view.Display)
+	}
+	if !strings.Contains(state.fullResponse, "Tool Loop Stopped") {
+		t.Fatalf("expected fallback full response, got: %s", state.fullResponse)
+	}
+	if len(outputCh) == 0 {
+		t.Fatalf("expected fallback chunk to be emitted")
+	}
+	chunk := <-outputCh
+	if !strings.Contains(chunk.Content, "Tool Loop Stopped") {
+		t.Fatalf("expected fallback chunk content, got: %s", chunk.Content)
+	}
+}
+
+type forcedFinalTestProvider struct {
+	streamResponses [][]llm.StreamChunk
+	streamCallCount int
+}
+
+func (p *forcedFinalTestProvider) Chat(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+	return nil, fmt.Errorf("unexpected Chat call")
+}
+
+func (p *forcedFinalTestProvider) StreamChat(_ context.Context, _ llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+	if p.streamCallCount >= len(p.streamResponses) {
+		return nil, fmt.Errorf("unexpected StreamChat call #%d", p.streamCallCount+1)
+	}
+	chunks := p.streamResponses[p.streamCallCount]
+	p.streamCallCount++
+	ch := make(chan llm.StreamChunk, len(chunks))
+	for _, chunk := range chunks {
+		ch <- chunk
+	}
+	close(ch)
+	return ch, nil
+}
+
+func (p *forcedFinalTestProvider) StreamChatMultimodal(_ context.Context, _ string, _ []domain.MultimodalMessage, _ domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
+	return nil, fmt.Errorf("unexpected StreamChatMultimodal call")
+}
+
+func (p *forcedFinalTestProvider) ModelInfo() llm.ModelCapabilities {
+	return llm.ModelCapabilities{
+		SupportsThinking:  true,
+		ContextWindow:     1_000_000,
+		SupportsStreaming: true,
+		ProviderName:      "forced-final-test",
+	}
+}
+
+func (p *forcedFinalTestProvider) RegisterTools(_ []domain.Tool) {}
+
+func forcedFinalTestPersona(id string) *domain.PersonaModule {
+	return &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			Meta:           domain.PersonaMeta{ID: id, Name: "Test Persona"},
+			SystemTemplate: "You are test persona.\n{{.Lore}}\n{{.Anchors}}\n{{.Time}}",
+		},
+		Lore: "test lore",
 	}
 }

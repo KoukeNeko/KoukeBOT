@@ -1,9 +1,13 @@
 package discord
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bwmarrin/discordgo"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
@@ -57,4 +61,111 @@ func TestFormatToolStartStatusMessage(t *testing.T) {
 	if !strings.Contains(msg, "golang") {
 		t.Fatalf("unexpected tool status message: %q", msg)
 	}
+}
+
+func TestDiscordStreamPresenterSendFinalFallsBackToSendWhenEditFails(t *testing.T) {
+	sender := &fakeMessageSender{
+		editErr: errors.New("edit failed"),
+	}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+	presenter.messageID = "existing-msg"
+	presenter.fullResponse.WriteString("hello world")
+
+	presenter.sendFinal()
+
+	if sender.editCalls != 1 {
+		t.Fatalf("edit calls = %d, want 1", sender.editCalls)
+	}
+	if len(sender.sendWithReturnContents) != 1 {
+		t.Fatalf("fallback sendWithReturn calls = %d, want 1", len(sender.sendWithReturnContents))
+	}
+	if presenter.messageID == "existing-msg" || presenter.messageID == "" {
+		t.Fatalf("expected presenter messageID to update after fallback, got %q", presenter.messageID)
+	}
+}
+
+func TestDiscordStreamPresenterSendOrUpdateFallsBackToSendWhenEditFails(t *testing.T) {
+	sender := &fakeMessageSender{
+		editErr: errors.New("edit failed"),
+	}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+	presenter.messageID = "existing-msg"
+
+	if err := presenter.sendOrUpdate("updated content"); err != nil {
+		t.Fatalf("sendOrUpdate error = %v, want nil", err)
+	}
+	if sender.editCalls != 1 {
+		t.Fatalf("edit calls = %d, want 1", sender.editCalls)
+	}
+	if len(sender.sendWithReturnContents) != 1 {
+		t.Fatalf("fallback sendWithReturn calls = %d, want 1", len(sender.sendWithReturnContents))
+	}
+}
+
+func TestDiscordStreamPresenterProcessChunkStopsWhenFallbackSendFails(t *testing.T) {
+	sender := &fakeMessageSender{
+		editErr:           errors.New("edit failed"),
+		sendWithReturnErr: errors.New("send failed"),
+	}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+	presenter.messageID = "existing-msg"
+	presenter.lastUpdate = time.Now().Add(-2 * time.Second)
+
+	done, stop := presenter.processChunk(llm.StreamChunk{Content: "partial"})
+	if done {
+		t.Fatalf("done = true, want false")
+	}
+	if !stop {
+		t.Fatalf("stop = false, want true")
+	}
+	if sender.editCalls != 1 {
+		t.Fatalf("edit calls = %d, want 1", sender.editCalls)
+	}
+	if len(sender.sendWithReturnContents) != 0 {
+		t.Fatalf("expected no successful fallback sends, got %d", len(sender.sendWithReturnContents))
+	}
+}
+
+type fakeMessageSender struct {
+	editErr           error
+	sendErr           error
+	sendWithReturnErr error
+	replyErr          error
+
+	editCalls              int
+	sendContents           []string
+	sendWithReturnContents []string
+	replyContents          []string
+	nextID                 int
+}
+
+func (f *fakeMessageSender) SendMessage(_ string, content string) error {
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sendContents = append(f.sendContents, content)
+	return nil
+}
+
+func (f *fakeMessageSender) SendMessageWithReturn(_ string, content string) (*discordgo.Message, error) {
+	if f.sendWithReturnErr != nil {
+		return nil, f.sendWithReturnErr
+	}
+	f.sendWithReturnContents = append(f.sendWithReturnContents, content)
+	f.nextID++
+	return &discordgo.Message{ID: fmt.Sprintf("msg-%d", f.nextID)}, nil
+}
+
+func (f *fakeMessageSender) SendMessageReply(_ string, content, _ string) (*discordgo.Message, error) {
+	if f.replyErr != nil {
+		return nil, f.replyErr
+	}
+	f.replyContents = append(f.replyContents, content)
+	f.nextID++
+	return &discordgo.Message{ID: fmt.Sprintf("reply-%d", f.nextID)}, nil
+}
+
+func (f *fakeMessageSender) EditMessage(_, _, _ string) error {
+	f.editCalls++
+	return f.editErr
 }
