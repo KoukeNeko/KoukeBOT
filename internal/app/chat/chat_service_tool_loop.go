@@ -202,8 +202,6 @@ func (s *ChatService) handleToolCallingStream(
 	messageToStore, contextForLLM string,
 	persona *domain.PersonaModule,
 	personaID string,
-	rawLLMInput string,
-	rawLLMInputHuman string,
 	imageRefs []domain.ImageRef, // nil for text-only messages
 	multimodalHistory []domain.MultimodalMessage, // nil for text-only; includes images for multimodal
 ) <-chan llm.StreamChunk {
@@ -264,7 +262,7 @@ func (s *ChatService) handleToolCallingStream(
 		}
 
 		finalView := s.finalizeToolLoopResponse(ctx, conv, persona, outputCh, state)
-		s.persistToolLoopConversation(ctx, conv, messageToStore, contextForLLM, rawLLMInput, rawLLMInputHuman, imageRefs, finalView, outputCh, state)
+		s.persistToolLoopConversation(ctx, conv, messageToStore, contextForLLM, persona, personaID, imageRefs, finalView, outputCh, state)
 
 		// Send final Done signal to indicate stream completion
 		outputCh <- llm.StreamChunk{Done: true}

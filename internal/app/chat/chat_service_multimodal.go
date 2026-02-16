@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
@@ -84,32 +83,12 @@ func (s *ChatService) streamWithMultimodalHistory(
 	}
 	logChat.Logf("multimodal history: %d messages, %d total images → LLM", len(multimodalHistory), totalImages)
 
-	// Build raw LLM input for transparency
-	var textOnlyMessages []domain.Message
-	for _, mm := range multimodalHistory {
-		var textParts []string
-		for _, part := range mm.Parts {
-			if part.Text != "" {
-				textParts = append(textParts, part.Text)
-			}
-			if part.ImageData != nil {
-				textParts = append(textParts, fmt.Sprintf("[Image: %s]", part.ImageData.Filename))
-			}
-		}
-		textOnlyMessages = append(textOnlyMessages, domain.Message{
-			Role:    mm.Role,
-			Content: strings.Join(textParts, "\n"),
-		})
-	}
-	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, textOnlyMessages)
-	rawLLMInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, textOnlyMessages)
-
 	streamCh, err := s.provider.StreamChatMultimodal(ctx, assembled.SystemPrompt, multimodalHistory, assembled.Generation)
 	if err != nil {
 		return nil, fmt.Errorf("llm multimodal stream: %w", err)
 	}
 
-	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, rawLLMInput, rawLLMInputHuman, currentImageRefs, multimodalHistory), nil
+	return s.handleToolCallingStream(ctx, streamCh, conv, messageToStore, contextForLLM, persona, personaID, currentImageRefs, multimodalHistory), nil
 }
 
 func buildTextMultimodalHistory(messages []domain.Message) []domain.MultimodalMessage {

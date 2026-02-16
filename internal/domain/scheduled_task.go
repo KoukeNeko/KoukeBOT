@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -65,5 +66,8 @@ type ScheduledActivityMessage struct {
 }
 
 func NewScheduledTaskID() string {
-	return fmt.Sprintf("task_%d", time.Now().UnixNano())
+	seq := atomic.AddUint64(&scheduledTaskIDSeq, 1)
+	return fmt.Sprintf("task_%d_%d", time.Now().UnixNano(), seq)
 }
+
+var scheduledTaskIDSeq uint64

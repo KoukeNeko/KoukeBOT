@@ -10,6 +10,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 func TestHandleMessagePreflightBackfillsDigestAndCompactsLegacyHistory(t *testing.T) {
@@ -73,8 +74,12 @@ func TestHandleMessagePreflightBackfillsDigestAndCompactsLegacyHistory(t *testin
 	if len(got.Messages) != 102 {
 		t.Fatalf("messages len = %d, want 102", len(got.Messages))
 	}
-	if got.Messages[0].Content != "historic-136" {
-		t.Fatalf("unexpected first kept history message: %q", got.Messages[0].Content)
+	firstText, ok := tooncodec.ExtractMessageText(got.Messages[0].Content)
+	if !ok {
+		t.Fatalf("expected first kept history message to be TOON msg, got: %q", got.Messages[0].Content)
+	}
+	if firstText != "historic-136" {
+		t.Fatalf("unexpected first kept history text: %q", firstText)
 	}
 	last := got.Messages[len(got.Messages)-1]
 	if last.Role != domain.RoleAssistant {

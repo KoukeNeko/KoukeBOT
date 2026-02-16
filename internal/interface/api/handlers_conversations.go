@@ -9,6 +9,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 // --- Conversation endpoints ---
@@ -80,7 +81,15 @@ func (h *Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
 
 		if messageCount > 0 {
 			lastMsg := conv.Messages[messageCount-1]
-			lastMessage = truncate(lastMsg.Content, 100)
+			display := strings.TrimSpace(lastMsg.DisplayText)
+			if display == "" {
+				if text, ok := tooncodec.ExtractMessageText(lastMsg.Content); ok {
+					display = strings.TrimSpace(text)
+				} else {
+					display = strings.TrimSpace(tooncodec.HumanizeTOON(lastMsg.Content))
+				}
+			}
+			lastMessage = truncate(display, 100)
 			lastTimestamp = lastMsg.Timestamp
 		} else {
 			// Keep reset conversations visible in Web list.

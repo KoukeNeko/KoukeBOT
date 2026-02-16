@@ -11,6 +11,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 var logCtx = logger.New("context", logger.Yellow)
@@ -204,7 +205,7 @@ func (cm *ContextManager) buildDigest(messages []domain.Message, persona *domain
 		start = len(messages) - 24
 	}
 	for _, msg := range messages[start:] {
-		text := normalizeText(msg.Content)
+		text := normalizeText(humanizeConversationTextForDigest(msg.Content))
 		if text == "" {
 			continue
 		}
@@ -407,6 +408,17 @@ func normalizeText(s string) string {
 		s = strings.ReplaceAll(s, "  ", " ")
 	}
 	return s
+}
+
+func humanizeConversationTextForDigest(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return ""
+	}
+	if _, ok := tooncodec.DecodeEventType(trimmed); ok {
+		return strings.TrimSpace(tooncodec.HumanizeTOON(trimmed))
+	}
+	return trimmed
 }
 
 func extractTopKeywords(text string, max int) []string {

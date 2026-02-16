@@ -108,6 +108,33 @@ func TestHumanizeTOONFallback(t *testing.T) {
 	}
 }
 
+func TestExtractMessageText(t *testing.T) {
+	encoded, err := EncodeMessageEvent(MessageEventInput{
+		Source:    "api",
+		UserID:    "u1",
+		ChannelID: "ch",
+		PersonaID: "persona-a",
+		Timestamp: time.Unix(10, 0).UTC(),
+		Text:      "hello extract",
+		Priority:  PriorityNormal,
+	})
+	if err != nil {
+		t.Fatalf("EncodeMessageEvent: %v", err)
+	}
+
+	text, ok := ExtractMessageText(encoded)
+	if !ok {
+		t.Fatalf("ExtractMessageText should succeed")
+	}
+	if text != "hello extract" {
+		t.Fatalf("ExtractMessageText = %q, want %q", text, "hello extract")
+	}
+
+	if _, ok := ExtractMessageText("not-toon"); ok {
+		t.Fatalf("ExtractMessageText should fail for plain text")
+	}
+}
+
 func TestEncodeMessageEventEscapesSpecialCharacters(t *testing.T) {
 	txt := "line1\nline2,with,comma"
 	encoded, err := EncodeMessageEvent(MessageEventInput{Source: "api", Text: txt, Timestamp: time.Unix(10, 0).UTC()})

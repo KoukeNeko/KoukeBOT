@@ -7,6 +7,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 type toolLoopState struct {
@@ -304,18 +305,33 @@ func (s *ChatService) persistToolLoopConversation(
 	conv *domain.Conversation,
 	messageToStore string,
 	contextForLLM string,
-	rawLLMInput string,
-	rawLLMInputHuman string,
+	persona *domain.PersonaModule,
+	personaID string,
 	imageRefs []domain.ImageRef,
 	finalView assistantOutputView,
 	outputCh chan<- llm.StreamChunk,
 	state *toolLoopState,
 ) {
+	userContent := s.encodeUserMessageForStorage(ctx, conv.ChannelID, personaID, messageToStore, contextForLLM)
+	userDisplay := strings.TrimSpace(messageToStore)
+	if userDisplay == "" {
+		userDisplay = strings.TrimSpace(tooncodec.HumanizeTOON(userContent))
+	}
+	if userDisplay == "" {
+		userDisplay = messageToStore
+	}
+
+	assistantText := finalView.Content
+	if strings.TrimSpace(assistantText) == "" {
+		assistantText = strings.TrimSpace(state.fullResponse)
+	}
+	assistantContent := s.encodeAssistantMessageForStorage(ctx, conv.ChannelID, persona, personaID, assistantText)
+
 	if len(state.executedToolCalls) > 0 {
 		toolUsageAnnotation := formatToolUsageAnnotation(state.executedToolCalls)
 		display := finalView.Display
-		if display == "" {
-			display = finalView.Content
+		if strings.TrimSpace(display) == "" {
+			display = assistantText
 		}
 		finalResponseWithAnnotation := display + "\n\n" + toolUsageAnnotation
 		outputCh <- llm.StreamChunk{Content: "\n\n" + toolUsageAnnotation}
@@ -325,15 +341,11 @@ func (s *ChatService) persistToolLoopConversation(
 			conv.Messages = conv.Messages[:state.baseMessageCount]
 		}
 		if len(imageRefs) > 0 {
-			conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
+			conv.AppendUserMessageWithImages(userContent, userDisplay, imageRefs)
 		} else {
-			conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
+			conv.AppendUserMessageWithDisplay(userContent, userDisplay)
 		}
-		content := finalView.Content
-		if content == "" {
-			content = strings.TrimSpace(state.fullResponse)
-		}
-		conv.AppendAssistantMessageWithDisplayAndRawViews(content, finalResponseWithAnnotation, rawLLMInput, rawLLMInputHuman, rawLLMOutput)
+		conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, finalResponseWithAnnotation, "", "", rawLLMOutput)
 		s.applyTokenAccounting(conv, state.totalTokens)
 		if err := s.store.Save(ctx, conv); err != nil {
 			logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
@@ -348,11 +360,11 @@ func (s *ChatService) persistToolLoopConversation(
 		conv.Messages = conv.Messages[:state.baseMessageCount]
 	}
 	if len(imageRefs) > 0 {
-		conv.AppendUserMessageWithImages(messageToStore, contextForLLM, imageRefs)
+		conv.AppendUserMessageWithImages(userContent, userDisplay, imageRefs)
 	} else {
-		conv.AppendUserMessageWithDisplay(messageToStore, contextForLLM)
+		conv.AppendUserMessageWithDisplay(userContent, userDisplay)
 	}
-	conv.AppendAssistantMessageWithDisplayAndRawViews(finalView.Content, finalView.Display, rawLLMInput, rawLLMInputHuman, finalView.RawOutput)
+	conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, finalView.Display, "", "", finalView.RawOutput)
 	s.applyTokenAccounting(conv, state.totalTokens)
 	if err := s.store.Save(ctx, conv); err != nil {
 		logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)

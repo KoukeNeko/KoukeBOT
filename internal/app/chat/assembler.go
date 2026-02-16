@@ -260,7 +260,7 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	// Append system-level tool usage instructions (non-persona-specific)
 	buf.WriteString("\n\n---\n\n")
 	buf.WriteString("## System Instructions\n\n")
-	buf.WriteString("- User-side conversation events are encoded in TOON (`t=msg`, `t=ctx`, `t=toolr`).\n")
+	buf.WriteString("- Conversation events are encoded in TOON (`t=msg`, `t=ctx`, `t=toolr`).\n")
 	buf.WriteString("- For identity resolution, trust `uid` over `name`. If they conflict, `uid` is authoritative.\n")
 	buf.WriteString("- `pri=reply_high` marks high-priority reply context and should be prioritized.\n")
 	buf.WriteString("- `ts` is a UTC Unix timestamp for temporal ordering.\n")
@@ -325,7 +325,10 @@ func (a *ContextAssembler) assembleThinkingModel(
 	currentUserContent := ""
 	for i := len(conv.Messages) - 1; i >= 0; i-- {
 		if conv.Messages[i].Role == domain.RoleUser {
-			currentUserContent = conv.Messages[i].Content
+			currentUserContent = humanizeConversationContent(conv.Messages[i].Content)
+			if strings.TrimSpace(currentUserContent) == "" {
+				currentUserContent = conv.Messages[i].Content
+			}
 			break
 		}
 	}
@@ -470,6 +473,17 @@ func isInternalToolHistoryMessage(content string) bool {
 		return true
 	}
 	return strings.HasPrefix(trimmed, "Tool execution results:")
+}
+
+func humanizeConversationContent(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+	if _, ok := tooncodec.DecodeEventType(trimmed); ok {
+		return strings.TrimSpace(tooncodec.HumanizeTOON(trimmed))
+	}
+	return trimmed
 }
 
 func (a *ContextAssembler) selectRelevantDigests(digests []domain.ConversationDigest, currentMessage string, maxDigests int) []domain.ConversationDigest {

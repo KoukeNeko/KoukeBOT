@@ -57,14 +57,14 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 
 	fmt.Printf("[ChatService] LLM response received - Length: %d chars\n", len(resp.Content))
 
-	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
-	rawLLMInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 	view := s.prepareAssistantOutputForStorage(resp.Content)
 	if len(conv.Messages) > 0 {
 		conv.Messages = conv.Messages[:len(conv.Messages)-1]
 	}
-	conv.AppendUserMessageWithDisplay(userMessage, contextForLLM)
-	conv.AppendAssistantMessageWithDisplayAndRawViews(view.Content, view.Display, rawLLMInput, rawLLMInputHuman, view.RawOutput)
+	userContent := s.encodeUserMessageForStorage(ctx, conv.ChannelID, resolvedPersonaID, userMessage, contextForLLM)
+	assistantContent := s.encodeAssistantMessageForStorage(ctx, conv.ChannelID, persona, resolvedPersonaID, view.Content)
+	conv.AppendUserMessageWithDisplay(userContent, userMessage)
+	conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, view.Display, "", "", view.RawOutput)
 	s.applyTokenAccounting(conv, resp.TokensUsed)
 
 	if err := s.store.Save(ctx, conv); err != nil {
@@ -130,10 +130,6 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 	// Remove the temporary message - we'll store the clean version later
 	conv.Messages = conv.Messages[:len(conv.Messages)-1]
 
-	// Build raw LLM input for transparency (before streaming)
-	rawLLMInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
-	rawLLMInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
-
 	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
 		Messages:     assembled.Messages,
@@ -146,14 +142,12 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 
 	// Handle tool calling loop and wrap stream for persistence
 	return s.toolLoopRunner.Run(ctx, ToolLoopRunRequest{
-		StreamCh:         streamCh,
-		Conversation:     conv,
-		MessageToStore:   messageToStore,
-		ContextForLLM:    contextForLLM,
-		Persona:          persona,
-		PersonaID:        resolvedPersonaID,
-		RawLLMInput:      rawLLMInput,
-		RawLLMInputHuman: rawLLMInputHuman,
+		StreamCh:       streamCh,
+		Conversation:   conv,
+		MessageToStore: messageToStore,
+		ContextForLLM:  contextForLLM,
+		Persona:        persona,
+		PersonaID:      resolvedPersonaID,
 	}), nil
 }
 
@@ -168,7 +162,7 @@ func (s *ChatService) HandleMessageStreamWithImagesByConversationID(ctx context.
 }
 
 // HandleMessageStreamWithImagesAndContext processes a user message with images and separate display/storage versions.
-// contextForLLM: the full message (with channel history) sent to LLM — also used for persistence
+// contextForLLM: the full message (with channel history) sent to LLM
 // messageToStore: the clean message (without channel history markers) saved to conversation store
 // images: direct attachment images — persisted to disk and sent to LLM
 // historyEntries: structured channel history entries with per-message images (ephemeral, not persisted)

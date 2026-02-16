@@ -33,6 +33,7 @@ func (m *MemoryStore) Get(_ context.Context, channelID, personaID string) (*doma
 	key := compositeKey(channelID, personaID)
 	if id, ok := m.active[key]; ok && id != "" {
 		if conv, exists := m.convs[id]; exists {
+			hydrateConversation(conv, time.Now().UTC())
 			return conv, nil
 		}
 		delete(m.active, key)
@@ -61,6 +62,7 @@ func (m *MemoryStore) GetByID(_ context.Context, conversationID string) (*domain
 	if !exists {
 		return nil, fmt.Errorf("%w: %s", ErrConversationNotFound, conversationID)
 	}
+	hydrateConversation(conv, time.Now().UTC())
 	return conv, nil
 }
 
@@ -77,10 +79,7 @@ func (m *MemoryStore) Save(_ context.Context, conv *domain.Conversation) error {
 	if conv.ID == "" {
 		conv.ID = NewConversationID()
 	}
-	if conv.CreatedAt.IsZero() {
-		conv.CreatedAt = time.Now().UTC()
-	}
-	conv.UpdatedAt = time.Now().UTC()
+	normalizeConversation(conv, time.Now().UTC())
 	m.convs[conv.ID] = conv
 	m.created[conv.ID] = conv.CreatedAt
 
@@ -175,6 +174,7 @@ func (m *MemoryStore) List(_ context.Context) ([]*domain.Conversation, error) {
 
 	conversations := make([]*domain.Conversation, 0, len(m.convs))
 	for _, conv := range m.convs {
+		hydrateConversation(conv, time.Now().UTC())
 		conversations = append(conversations, conv)
 	}
 

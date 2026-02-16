@@ -399,9 +399,7 @@ func (f *FileStore) readConversationFile(path string) (*domain.Conversation, err
 	if err := json.Unmarshal(data, &conv); err != nil {
 		return nil, fmt.Errorf("parse conversation JSON: %w", err)
 	}
-	if conv.Messages == nil {
-		conv.Messages = make([]domain.Message, 0)
-	}
+	hydrateConversation(&conv, time.Now().UTC())
 	return &conv, nil
 }
 
@@ -559,15 +557,7 @@ func encodeConversationID(conversationID string) string {
 }
 
 func normalizeConversation(conv *domain.Conversation, now time.Time) {
-	if conv.ID == "" {
-		conv.ID = NewConversationID()
-	}
-	if conv.Messages == nil {
-		conv.Messages = make([]domain.Message, 0)
-	}
-	if conv.CreatedAt.IsZero() {
-		conv.CreatedAt = now
-	}
+	hydrateConversation(conv, now)
 	conv.UpdatedAt = now
 }
 

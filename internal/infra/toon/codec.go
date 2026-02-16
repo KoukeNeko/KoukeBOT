@@ -178,6 +178,14 @@ func DecodeEventType(text string) (string, bool) {
 	return t, true
 }
 
+func ExtractMessageText(text string) (string, bool) {
+	msg, err := decodeMessageEvent(strings.TrimSpace(text))
+	if err != nil {
+		return "", false
+	}
+	return msg.Text, true
+}
+
 func HumanizeTOON(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {

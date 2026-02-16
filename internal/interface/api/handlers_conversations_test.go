@@ -12,6 +12,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 func TestCreateConversationCreatesNewSessionAndActivatesLatest(t *testing.T) {
@@ -222,5 +223,101 @@ func TestDeleteConversationByIDActiveCreatesReplacementSession(t *testing.T) {
 	}
 	if activeID != newID {
 		t.Fatalf("active id = %s, want %s", activeID, newID)
+	}
+}
+
+func TestListConversationsLastMessageUsesDisplayTextOrHumanizedTOON(t *testing.T) {
+	convStore := store.NewMemoryStore()
+	now := time.Date(2026, time.February, 15, 13, 0, 0, 0, time.UTC)
+
+	toonContent, err := tooncodec.EncodeMessageEvent(tooncodec.MessageEventInput{
+		Source:    "web",
+		UserID:    "bot:persona-a",
+		Name:      "persona-a",
+		ChannelID: "web-test",
+		PersonaID: "persona-a",
+		Timestamp: now,
+		Text:      "TOON fallback text",
+		Priority:  tooncodec.PriorityNormal,
+	})
+	if err != nil {
+		t.Fatalf("EncodeMessageEvent failed: %v", err)
+	}
+
+	if err := convStore.Save(context.Background(), &domain.Conversation{
+		ID:        "conv-display",
+		ChannelID: "ch-display",
+		PersonaID: "persona-display",
+		Messages: []domain.Message{
+			{
+				Role:        domain.RoleAssistant,
+				Content:     toonContent,
+				DisplayText: "Display wins",
+				Timestamp:   now,
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("save display conversation: %v", err)
+	}
+
+	if err := convStore.Save(context.Background(), &domain.Conversation{
+		ID:        "conv-toon",
+		ChannelID: "ch-toon",
+		PersonaID: "persona-a",
+		Messages: []domain.Message{
+			{
+				Role:      domain.RoleAssistant,
+				Content:   toonContent,
+				Timestamp: now,
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("save toon conversation: %v", err)
+	}
+
+	h := &Handlers{
+		convStore: convStore,
+		ctx:       context.Background(),
+	}
+
+	req := httptest.NewRequest("GET", "/api/conversations", nil)
+	rec := httptest.NewRecorder()
+	h.ListConversations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got []ConversationSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	foundDisplay := false
+	foundTOON := false
+	for _, item := range got {
+		if item.ID == "conv-display" {
+			foundDisplay = true
+			if item.LastMessage != "Display wins" {
+				t.Fatalf("display summary = %q, want %q", item.LastMessage, "Display wins")
+			}
+		}
+		if item.ID == "conv-toon" {
+			foundTOON = true
+			if item.LastMessage != "TOON fallback text" {
+				t.Fatalf("toon summary = %q, want %q", item.LastMessage, "TOON fallback text")
+			}
+		}
+	}
+
+	if !foundDisplay {
+		t.Fatalf("expected conv-display in summaries")
+	}
+	if !foundTOON {
+		t.Fatalf("expected conv-toon in summaries")
 	}
 }

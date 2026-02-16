@@ -7,6 +7,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 func TestRotateResetSessionCreatesNewActiveAndPreservesOld(t *testing.T) {
@@ -61,7 +62,11 @@ func TestRotateResetSessionCreatesNewActiveAndPreservesOld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID old session failed: %v", err)
 	}
-	if len(preserved.Messages) != 1 || preserved.Messages[0].Content != "hello" {
+	if len(preserved.Messages) != 1 {
+		t.Fatalf("expected old session message count=1, got %+v", preserved.Messages)
+	}
+	text, ok := tooncodec.ExtractMessageText(preserved.Messages[0].Content)
+	if !ok || text != "hello" {
 		t.Fatalf("expected old session messages preserved, got %+v", preserved.Messages)
 	}
 }
