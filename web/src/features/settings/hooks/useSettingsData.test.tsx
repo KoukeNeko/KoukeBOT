@@ -11,7 +11,6 @@ vi.mock('../../../api', () => ({
   getSettings: vi.fn(),
   listModels: vi.fn(),
   listPersonas: vi.fn(),
-  listScheduledTasks: vi.fn(),
   updateSettings: vi.fn(),
 }))
 
@@ -105,7 +104,6 @@ describe('useSettingsData', () => {
       { id: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro' },
     ])
     vi.mocked(api.listPersonas).mockResolvedValue([])
-    vi.mocked(api.listScheduledTasks).mockResolvedValue([])
     vi.mocked(api.updateSettings).mockResolvedValue({ status: 'ok' })
   })
 

@@ -5,7 +5,6 @@ import MemorySection from '../../../pages/settings/MemorySection'
 import PromptGuardSection from '../../../pages/settings/PromptGuardSection'
 import ProviderSection from '../../../pages/settings/ProviderSection'
 import RuntimeMetricsCard from '../../../pages/settings/RuntimeMetricsCard'
-import ScheduledTasksSection from '../../../pages/settings/ScheduledTasksSection'
 import TimeLocationSection from '../../../pages/settings/TimeLocationSection'
 import ToolResilienceSection from '../../../pages/settings/ToolResilienceSection'
 import ToolsSection from '../../../pages/settings/ToolsSection'
@@ -19,7 +18,6 @@ type Props = {
 
 type SettingsSectionID =
   | 'runtime_metrics'
-  | 'scheduled_tasks'
   | 'provider'
   | 'discord'
   | 'tools'
@@ -38,10 +36,7 @@ const settingsNav: SettingsNavGroup[] = [
   {
     id: 'overview',
     label: '總覽',
-    items: [
-      { id: 'runtime_metrics', label: 'Runtime Metrics' },
-      { id: 'scheduled_tasks', label: '排程任務' },
-    ],
+    items: [{ id: 'runtime_metrics', label: 'Runtime Metrics' }],
   },
   {
     id: 'provider',
@@ -103,17 +98,6 @@ export default function SettingsPage({ vm }: Props) {
     switch (section) {
       case 'runtime_metrics':
         return <RuntimeMetricsCard runtimeMetrics={vm.runtimeMetrics} />
-      case 'scheduled_tasks':
-        return (
-          <ScheduledTasksSection
-            tasks={vm.scheduledTasks}
-            loading={vm.scheduledTasksLoading}
-            error={vm.scheduledTasksError}
-            onRefresh={() => {
-              void vm.refreshScheduledTasks()
-            }}
-          />
-        )
       case 'provider':
         return (
           <ProviderSection

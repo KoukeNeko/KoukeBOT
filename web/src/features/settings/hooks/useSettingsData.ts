@@ -6,7 +6,6 @@ import {
   getSettings,
   listModels,
   listPersonas,
-  listScheduledTasks,
   updateSettings,
 } from '../../../api'
 import type {
@@ -14,7 +13,6 @@ import type {
   PersonaSummary,
   ProviderStatus,
   RuntimeMetrics,
-  ScheduledTask,
   SettingsData,
 } from '../../../types'
 import { useOAuthActions, type StatusMessage } from './useOAuthActions'
@@ -73,9 +71,6 @@ export function useSettingsData() {
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
   const [status, setStatus] = useState<ProviderStatus | null>(null)
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null)
-  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
-  const [scheduledTasksLoading, setScheduledTasksLoading] = useState(false)
-  const [scheduledTasksError, setScheduledTasksError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<StatusMessage>(null)
@@ -91,20 +86,6 @@ export function useSettingsData() {
       setRuntimeMetrics(metrics)
     } catch {
       // Ignore metrics errors for settings UX.
-    }
-  }, [])
-
-  const refreshScheduledTasks = useCallback(async () => {
-    setScheduledTasksLoading(true)
-    try {
-      const items = await listScheduledTasks({ includeInactive: true })
-      setScheduledTasks(items)
-      setScheduledTasksError(null)
-    } catch (error) {
-      setScheduledTasks([])
-      setScheduledTasksError(error instanceof Error ? error.message : 'Failed to load scheduled tasks')
-    } finally {
-      setScheduledTasksLoading(false)
     }
   }, [])
 
@@ -145,10 +126,6 @@ export function useSettingsData() {
     }, 10_000)
     return () => window.clearInterval(id)
   }, [refreshRuntimeMetrics])
-
-  useEffect(() => {
-    void refreshScheduledTasks()
-  }, [refreshScheduledTasks])
 
   const handleSave = useCallback(async (overrideProviderType?: string) => {
     setSaving(true)
@@ -201,15 +178,11 @@ export function useSettingsData() {
     personas,
     status,
     runtimeMetrics,
-    scheduledTasks,
-    scheduledTasksLoading,
-    scheduledTasksError,
     loading,
     saving,
     message,
     modelOptions,
     personaOptions,
-    refreshScheduledTasks,
     handleSave,
     oauth,
   }
