@@ -145,6 +145,15 @@ func buildDuplicateToolGuardResult(call domain.ToolCall) domain.ToolResult {
 	}
 }
 
+func buildSessionStatusRepeatGuardResult(call domain.ToolCall) domain.ToolResult {
+	return domain.ToolResult{
+		ToolCallID: call.ID,
+		Content: "Tool guard: `session_status` can be called at most once per turn. " +
+			"Reuse the existing `session_status` result in this turn and answer directly without calling it again.",
+		IsError: true,
+	}
+}
+
 func buildToolLimitGuardResult(call domain.ToolCall, limit int) domain.ToolResult {
 	return domain.ToolResult{
 		ToolCallID: call.ID,

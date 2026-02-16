@@ -48,8 +48,3 @@ generation:
 # Custom variables (accessible in code, not in template)
 variables:
   example_var: "value"
-
-# Time and locale settings (optional)
-# timezone: "Asia/Taipei"
-# time_format: "24"
-# location: "Taipei, Taiwan"

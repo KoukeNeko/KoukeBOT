@@ -92,13 +92,12 @@ func TestRenderSystemPromptIncludesTOONSchemaReference(t *testing.T) {
 	}
 }
 
-func TestRenderSystemPromptUsesGlobalTimezoneEvenWhenPersonaTimezoneExists(t *testing.T) {
+func TestRenderSystemPromptUsesGlobalTimezone(t *testing.T) {
 	assembler := NewContextAssembler()
 	assembler.UpdateGlobalTimezone("Asia/Taipei")
 	persona := &domain.PersonaModule{
 		Config: domain.PersonaConfig{
 			SystemTemplate: "Current Time: {{.Time}}",
-			Timezone:       "Asia/Tokyo",
 		},
 	}
 
@@ -108,9 +107,6 @@ func TestRenderSystemPromptUsesGlobalTimezoneEvenWhenPersonaTimezoneExists(t *te
 	}
 	if !strings.Contains(got, "Time zone: Asia/Taipei") {
 		t.Fatalf("expected global timezone in system prompt, got:\n%s", got)
-	}
-	if strings.Contains(got, "Asia/Tokyo") {
-		t.Fatalf("persona timezone should not override global timezone, got:\n%s", got)
 	}
 }
 

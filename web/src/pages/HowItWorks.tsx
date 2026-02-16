@@ -80,7 +80,7 @@ export default function HowItWorks() {
         <ol className="how-list">
           <li>核心必填鍵：<code>meta</code>、<code>system_template</code>、<code>generation</code>、<code>variables</code>。</li>
           <li><code>meta.id</code> 與 <code>meta.name</code> 必填且不可空白。</li>
-          <li><code>timezone</code> 是可選欄位，不是必填。</li>
+          <li>時區改為由系統設定統一管理，不再使用 persona 的 <code>config.yaml</code> 欄位。</li>
           <li>除了核心欄位外，其它自訂鍵可自由放在 root level，儲存時不會被吃掉。</li>
           <li>如果 YAML 不合法：前端會禁止儲存，後端也會回 <code>400</code> 做第二層保護。</li>
         </ol>

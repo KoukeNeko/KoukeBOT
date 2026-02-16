@@ -177,7 +177,7 @@ generation:
 	}
 }
 
-func TestUpdatePersonaAllowsMissingTimezone(t *testing.T) {
+func TestUpdatePersonaAllowsConfigWithoutTimezoneField(t *testing.T) {
 	baseDir := t.TempDir()
 	writePersonaFixture(t, baseDir, "persona_a", defaultPersonaConfigYAML())
 
@@ -259,7 +259,6 @@ generation:
   presence_penalty: 0.1
 variables:
   foo: "bar"
-timezone: "Asia/Taipei"
 custom_root:
   nested: true
 `

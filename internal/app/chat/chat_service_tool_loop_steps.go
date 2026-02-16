@@ -82,17 +82,35 @@ func (s *ChatService) filterExecutableToolCalls(
 	executableCalls := make([]domain.ToolCall, 0, len(pendingToolCalls))
 	guardResults := make([]domain.ToolResult, 0, len(pendingToolCalls))
 
-	if !state.toolPolicy.ToolGuardEnabled {
-		for _, call := range pendingToolCalls {
+	for _, call := range pendingToolCalls {
+		// Hard guard: session_status can be called at most once per turn, regardless of ToolGuardEnabled.
+		if call.Name == "session_status" && state.toolCountsByName[call.Name] >= 1 {
+			state.guardSummary.Add(
+				toolGuardKindDuplicate,
+				call.Name,
+				"session_status_already_called_in_turn",
+				"max_session_status_calls_per_turn=1",
+			)
+			s.incrementToolGuardDuplicateBlocked()
+			guardResults = append(guardResults, buildSessionStatusRepeatGuardResult(call))
+			logChat.Warnf(
+				"%s [SESSION_STATUS_REPEAT] round=%d tool=%s%s",
+				toolLogPrefixGuard,
+				round+1,
+				call.Name,
+				summarizeToolTarget(call, personaID),
+			)
+			continue
+		}
+
+		if !state.toolPolicy.ToolGuardEnabled {
 			signature := toolCallSignature(call)
 			state.toolCallAttempts[signature]++
 			state.toolCountsByName[call.Name]++
 			executableCalls = append(executableCalls, call)
+			continue
 		}
-		return executableCalls, guardResults
-	}
 
-	for _, call := range pendingToolCalls {
 		if call.Name == "web_search" && state.toolCountsByName[call.Name] >= state.toolPolicy.MaxWebSearchCallsPerTurn {
 			state.guardSummary.Add(
 				toolGuardKindLimit,

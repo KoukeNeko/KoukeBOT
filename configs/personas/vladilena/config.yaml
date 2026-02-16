@@ -64,5 +64,3 @@ generation:
 variables:
   callsign: "Handler One"
   legion_enemy: "Legion"
-
-timezone: "Asia/Taipei"

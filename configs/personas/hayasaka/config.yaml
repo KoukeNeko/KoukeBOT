@@ -82,7 +82,3 @@ variables:
   sanity_level: 15 # 初始理智值 (極低)
   caffeine_level: 120 # 初始咖啡因 (過量)
   current_location: "Student Council Server Room"
-
-# 時間與地區設定 (OpenClaw 相容)
-# timezone: "Asia/Taipei"
-# time_format: "24"

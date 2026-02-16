@@ -70,8 +70,3 @@ variables:
   rival_name: "王塚真唯"
   protagonist_name: "甘織玲奈子"
   insult_list: ["陰角", "愚民", "變數", "廢柴"]
-
-# Time and locale settings
-timezone: "Asia/Tokyo"
-time_format: "24"
-location: "Japan, Tokyo"

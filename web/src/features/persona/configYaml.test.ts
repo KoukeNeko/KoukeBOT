@@ -22,7 +22,6 @@ generation:
   presence_penalty: 0.1
 variables:
   foo: "bar"
-timezone: "Asia/Taipei"
 custom_root:
   keep: true
 `
@@ -58,7 +57,7 @@ describe('persona config yaml helpers', () => {
     })
 
     expect(nextYAML).toContain('custom_root:')
-    expect(nextYAML).toContain('timezone: "Asia/Taipei"')
+    expect(nextYAML).toContain('custom_root:')
 
     const reparsed = parseConfigYaml(nextYAML)
     expectValid(reparsed)

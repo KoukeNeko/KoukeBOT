@@ -79,8 +79,3 @@ variables:
   sanity_level: -100 # Permanently negative
   chaos_mode: true
   simp_level: 9999
-
-# Time and locale settings (optional)
-timezone: "Asia/Taipei"
-time_format: "24"
-location: "Taipei, Taiwan (or Moon Base Alpha)"
