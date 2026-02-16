@@ -141,7 +141,7 @@ func TestHandleMessageStreamPersistsLastRoundRawLLMInput(t *testing.T) {
 	}
 }
 
-func TestHandleMessageStreamStopsAtMaxRoundsEvenWhenToolGuardDisabled(t *testing.T) {
+func TestHandleMessageStreamBreaksEarlyWhenAllToolCallsBlocked(t *testing.T) {
 	ctx := context.Background()
 	provider := &loopingToolCallProvider{}
 	convStore := store.NewMemoryStore()
@@ -184,8 +184,8 @@ func TestHandleMessageStreamStopsAtMaxRoundsEvenWhenToolGuardDisabled(t *testing
 	if provider.disabledCalls != 1 {
 		t.Fatalf("disabled StreamChat calls = %d, want 1", provider.disabledCalls)
 	}
-	if provider.normalCalls != 3 {
-		t.Fatalf("normal StreamChat calls = %d, want 3 (max rounds + 1)", provider.normalCalls)
+	if provider.normalCalls != 2 {
+		t.Fatalf("normal StreamChat calls = %d, want 2 (initial + 1 continuation before all-blocked early break)", provider.normalCalls)
 	}
 }
 

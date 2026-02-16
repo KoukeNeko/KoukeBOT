@@ -171,7 +171,7 @@ func isToolGuardResultMessage(content string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(content)), "tool guard:")
 }
 
-func buildForcedFinalAnswerPrompt(summary toolGuardSummary) string {
+func buildForcedFinalAnswerPrompt(summary toolGuardSummary, promptPolicy PromptGuardPolicy) string {
 	var b strings.Builder
 	b.WriteString("[Tool guard continuation]\n")
 	b.WriteString("Tool execution was intentionally limited to prevent loops. ")
@@ -180,6 +180,10 @@ func buildForcedFinalAnswerPrompt(summary toolGuardSummary) string {
 	b.WriteString("- Do NOT call any tool again.\n")
 	b.WriteString("- If evidence is partial, state uncertainty briefly and still provide a concrete answer.\n")
 	b.WriteString("- Do not ask the user to repeat unless absolutely necessary.\n")
+	if promptPolicy.TripletOutputEnabled {
+		b.WriteString("- Output MUST contain exactly these sections in order: [Status], [Analysis], [Response].\n")
+		b.WriteString("- [Response] must be non-empty and user-facing.\n")
+	}
 	if details := summary.buildPromptText(); details != "" {
 		b.WriteString("\n")
 		b.WriteString(details)
@@ -193,8 +197,9 @@ func (s *ChatService) forceFinalAnswerWithoutTools(
 	conv *domain.Conversation,
 	persona *domain.PersonaModule,
 	summary toolGuardSummary,
+	promptPolicy PromptGuardPolicy,
 ) (string, int, string, string, error) {
-	forcedPrompt := buildForcedFinalAnswerPrompt(summary)
+	forcedPrompt := buildForcedFinalAnswerPrompt(summary, promptPolicy)
 	conv.Messages = append(conv.Messages, domain.Message{
 		Role:    domain.RoleUser,
 		Content: forcedPrompt,
@@ -315,6 +320,21 @@ func (s *ChatService) handleToolCallingStream(
 
 			emitToolStatuses(outputCh, "tool_start", pendingToolCalls)
 			executableCalls, guardResults := s.filterExecutableToolCalls(pendingToolCalls, personaID, round, state)
+
+			// Early break: all requested tool calls were blocked by guards.
+			// Continuing would only burn rounds as the LLM will likely repeat the same blocked calls.
+			if len(executableCalls) == 0 && len(guardResults) > 0 {
+				s.emitToolErrors(outputCh, pendingToolCalls, guardResults, state)
+				emitToolStatuses(outputCh, "tool_done", nil)
+				logChat.Warnf(
+					"%s [ALL_BLOCKED] round=%d all %d tool call(s) blocked by guard, breaking tool loop early",
+					toolLogPrefixGuard,
+					round+1,
+					len(guardResults),
+				)
+				break
+			}
+
 			nextStream, nextMultimodalHistory, ok := s.continueWithToolResults(
 				ctx, conv, persona, personaID, pendingToolCalls, executableCalls, guardResults, multimodalHistory, outputCh, state, round,
 			)

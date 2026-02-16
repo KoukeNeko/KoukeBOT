@@ -311,7 +311,7 @@ func (s *ChatService) finalizeToolLoopResponse(
 ) assistantOutputView {
 	if strings.TrimSpace(state.fullResponse) == "" && state.hadToolCallAttempt && state.guardSummary.shouldForceFinalAnswer(state.toolPolicy) {
 		state.guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
-		forcedResponse, forcedTokens, forcedRawInput, forcedRawInputHuman, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, state.guardSummary)
+		forcedResponse, forcedTokens, forcedRawInput, forcedRawInputHuman, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, state.guardSummary, state.promptPolicy)
 		state.totalTokens += forcedTokens
 		if strings.TrimSpace(forcedRawInput) != "" {
 			state.lastRawLLMInput = forcedRawInput

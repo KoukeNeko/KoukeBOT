@@ -411,3 +411,54 @@ func forcedFinalTestPersona(id string) *domain.PersonaModule {
 		Lore: "test lore",
 	}
 }
+
+func TestFilterExecutableToolCallsAllBlockedReturnsZeroExecutable(t *testing.T) {
+	service := &ChatService{}
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = true
+	state := newToolLoopState(policy, PromptGuardPolicy{})
+
+	// Simulate round 0: session_status executes successfully
+	firstRoundCalls := []domain.ToolCall{
+		{ID: "1", Name: "session_status", Input: map[string]interface{}{}},
+	}
+	exec, guards := service.filterExecutableToolCalls(firstRoundCalls, "persona", 0, state)
+	if len(exec) != 1 || len(guards) != 0 {
+		t.Fatalf("round 0: exec=%d guards=%d, want exec=1 guards=0", len(exec), len(guards))
+	}
+
+	// Simulate round 1: session_status blocked (already called once)
+	secondRoundCalls := []domain.ToolCall{
+		{ID: "2", Name: "session_status", Input: map[string]interface{}{}},
+	}
+	exec, guards = service.filterExecutableToolCalls(secondRoundCalls, "persona", 1, state)
+	if len(exec) != 0 {
+		t.Fatalf("round 1: exec=%d, want 0 (all blocked)", len(exec))
+	}
+	if len(guards) != 1 {
+		t.Fatalf("round 1: guards=%d, want 1", len(guards))
+	}
+}
+
+func TestBuildForcedFinalAnswerPromptIncludesTripletWhenEnabled(t *testing.T) {
+	summary := toolGuardSummary{}
+	summary.Add(toolGuardKindDuplicate, "session_status", "session_status_already_called_in_turn", "max_session_status_calls_per_turn=1")
+
+	prompt := buildForcedFinalAnswerPrompt(summary, PromptGuardPolicy{TripletOutputEnabled: true})
+	if !strings.Contains(prompt, "[Status], [Analysis], [Response]") {
+		t.Fatalf("expected triplet format instruction in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "[Response] must be non-empty") {
+		t.Fatalf("expected non-empty response instruction in prompt, got:\n%s", prompt)
+	}
+}
+
+func TestBuildForcedFinalAnswerPromptOmitsTripletWhenDisabled(t *testing.T) {
+	summary := toolGuardSummary{}
+	summary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached", "max_tool_rounds=5")
+
+	prompt := buildForcedFinalAnswerPrompt(summary, PromptGuardPolicy{TripletOutputEnabled: false})
+	if strings.Contains(prompt, "[Status], [Analysis], [Response]") {
+		t.Fatalf("should not include triplet format instruction when disabled, got:\n%s", prompt)
+	}
+}
