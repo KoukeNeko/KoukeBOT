@@ -26,28 +26,31 @@ func ParseLLMError(err error) ParsedError {
 		return ParsedError{}
 	}
 	errMsg := err.Error()
+	lower := strings.ToLower(errMsg)
 	out := ParsedError{RawMessage: errMsg, Kind: ErrorKindUnknown}
 
-	if strings.Contains(errMsg, "429") ||
-		strings.Contains(errMsg, "QUOTA_EXHAUSTED") ||
-		strings.Contains(errMsg, "exhausted your capacity") {
+	if strings.Contains(lower, "429") ||
+		strings.Contains(lower, "quota_exhausted") ||
+		strings.Contains(lower, "exhausted your capacity") {
 		out.Kind = ErrorKindQuota
 		out.ResetAfter = extractResetAfter(errMsg)
 		return out
 	}
-	if strings.Contains(errMsg, "401") ||
-		strings.Contains(errMsg, "Unauthorized") ||
-		strings.Contains(errMsg, "UNAUTHENTICATED") {
+	if strings.Contains(lower, "401") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "unauthenticated") {
 		out.Kind = ErrorKindAuth
 		return out
 	}
-	if strings.Contains(errMsg, "connection refused") ||
-		strings.Contains(errMsg, "timeout") ||
-		strings.Contains(errMsg, "network") {
+	if strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "network") ||
+		strings.Contains(lower, "context deadline exceeded") ||
+		strings.Contains(lower, "context canceled") {
 		out.Kind = ErrorKindNetwork
 		return out
 	}
-	if strings.Contains(errMsg, "rate limit") || strings.Contains(errMsg, "too many requests") {
+	if strings.Contains(lower, "rate limit") || strings.Contains(lower, "too many requests") {
 		out.Kind = ErrorKindRateLimit
 		return out
 	}
@@ -56,15 +59,16 @@ func ParseLLMError(err error) ParsedError {
 }
 
 func extractResetAfter(errMsg string) string {
-	if !strings.Contains(errMsg, "quota will reset after") {
+	lower := strings.ToLower(errMsg)
+	if !strings.Contains(lower, "quota will reset after") {
 		return ""
 	}
-	start := strings.Index(errMsg, "reset after ")
+	start := strings.Index(lower, "reset after ")
 	if start < 0 {
 		return ""
 	}
 	start += len("reset after ")
-	end := strings.Index(errMsg[start:], ".")
+	end := strings.Index(lower[start:], ".")
 	if end <= 0 {
 		return ""
 	}

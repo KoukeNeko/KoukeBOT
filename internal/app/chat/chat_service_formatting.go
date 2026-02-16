@@ -209,6 +209,11 @@ func (s *ChatService) prepareAssistantOutputForStorage(raw string) assistantOutp
 	if policy.TripletOutputEnabled && strings.TrimSpace(raw) != "" && !view.Parsed {
 		count := atomic.AddUint64(&tripletParseFailedCount, 1)
 		logChat.Warnf("metric prompt_guard.triplet_parse_failed=%d", count)
+		reason := strings.TrimSpace(view.Reason)
+		if reason == "" {
+			reason = "unknown"
+		}
+		logChat.Warnf("prompt_guard.triplet_parse_failed reason=%s salvaged=%t", reason, view.Salvaged)
 	}
 	if view.Content == "" {
 		view.Content = strings.TrimSpace(raw)
