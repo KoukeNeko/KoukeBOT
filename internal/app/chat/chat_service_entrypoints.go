@@ -41,6 +41,8 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 		return "", fmt.Errorf("assemble context: %w", err)
 	}
 	s.logPromptSnapshot("chat", conv.ChannelID, resolvedPersonaID, conv.ID, assembled)
+	rawInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	rawInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 
 	fmt.Printf("[ChatService] Calling LLM - System prompt length: %d, Messages: %d\n",
 		len(assembled.SystemPrompt), len(assembled.Messages))
@@ -64,7 +66,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	userContent := s.encodeUserMessageForStorage(ctx, conv.ChannelID, resolvedPersonaID, userMessage, contextForLLM)
 	assistantContent := s.encodeAssistantMessageForStorage(ctx, conv.ChannelID, persona, resolvedPersonaID, view.Content)
 	conv.AppendUserMessageWithDisplay(userContent, userMessage)
-	conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, view.Display, "", "", view.RawOutput)
+	conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, view.Display, rawInput, rawInputHuman, view.RawOutput)
 	s.applyTokenAccounting(conv, resp.TokensUsed)
 
 	if err := s.store.Save(ctx, conv); err != nil {
@@ -126,6 +128,8 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
 	s.logPromptSnapshot("stream", conv.ChannelID, resolvedPersonaID, conv.ID, assembled)
+	initialRawInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	initialRawInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 
 	// Remove the temporary message - we'll store the clean version later
 	conv.Messages = conv.Messages[:len(conv.Messages)-1]
@@ -142,12 +146,14 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 
 	// Handle tool calling loop and wrap stream for persistence
 	return s.toolLoopRunner.Run(ctx, ToolLoopRunRequest{
-		StreamCh:       streamCh,
-		Conversation:   conv,
-		MessageToStore: messageToStore,
-		ContextForLLM:  contextForLLM,
-		Persona:        persona,
-		PersonaID:      resolvedPersonaID,
+		StreamCh:                streamCh,
+		Conversation:            conv,
+		MessageToStore:          messageToStore,
+		ContextForLLM:           contextForLLM,
+		Persona:                 persona,
+		PersonaID:               resolvedPersonaID,
+		InitialRawLLMInput:      initialRawInput,
+		InitialRawLLMInputHuman: initialRawInputHuman,
 	}), nil
 }
 

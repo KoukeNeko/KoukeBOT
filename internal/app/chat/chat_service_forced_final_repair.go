@@ -49,7 +49,7 @@ func (s *ChatService) regenerateForcedFinalOnceWithoutTools(
 	conv *domain.Conversation,
 	persona *domain.PersonaModule,
 	previousResponse string,
-) (string, int, error) {
+) (string, int, string, string, error) {
 	repairPrompt := buildForcedFinalRepairPrompt(previousResponse)
 	conv.Messages = append(conv.Messages, domain.Message{
 		Role:    domain.RoleUser,
@@ -63,9 +63,11 @@ func (s *ChatService) regenerateForcedFinalOnceWithoutTools(
 
 	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
 	if err != nil {
-		return "", 0, fmt.Errorf("assemble forced final repair: %w", err)
+		return "", 0, "", "", fmt.Errorf("assemble forced final repair: %w", err)
 	}
 	s.logPromptSnapshot("stream-forced-final-repair", conv.ChannelID, conv.PersonaID, conv.ID, assembled)
+	rawInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	rawInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 
 	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
@@ -74,7 +76,7 @@ func (s *ChatService) regenerateForcedFinalOnceWithoutTools(
 		ToolMode:     llm.ToolModeDisabled,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("forced final repair llm call: %w", err)
+		return "", 0, rawInput, rawInputHuman, fmt.Errorf("forced final repair llm call: %w", err)
 	}
 
 	var fullResponse strings.Builder
@@ -84,13 +86,13 @@ func (s *ChatService) regenerateForcedFinalOnceWithoutTools(
 			tokensUsed += chunk.TokensUsed
 		}
 		if chunk.Error != nil {
-			return "", tokensUsed, chunk.Error
+			return "", tokensUsed, rawInput, rawInputHuman, chunk.Error
 		}
 		if len(chunk.ToolCalls) > 0 {
-			return "", tokensUsed, fmt.Errorf("forced final repair unexpectedly requested tool calls")
+			return "", tokensUsed, rawInput, rawInputHuman, fmt.Errorf("forced final repair unexpectedly requested tool calls")
 		}
 		fullResponse.WriteString(chunk.Content)
 	}
 
-	return strings.TrimSpace(fullResponse.String()), tokensUsed, nil
+	return strings.TrimSpace(fullResponse.String()), tokensUsed, rawInput, rawInputHuman, nil
 }

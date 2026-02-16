@@ -74,3 +74,37 @@ func TestFormatToolResultsEncodesTOONToolResultsEvent(t *testing.T) {
 		t.Fatalf("event type = %s, want %s", eventType, tooncodec.EventTypeToolResults)
 	}
 }
+
+func TestFormatMultimodalLLMPromptUsesImagePlaceholders(t *testing.T) {
+	messages := []domain.MultimodalMessage{
+		{
+			Role: domain.RoleUser,
+			Parts: []domain.MessagePart{
+				{Text: "plain text"},
+				{
+					ImageData: &domain.ImageInput{
+						Data:     []byte{1, 2, 3},
+						MimeType: "image/jpeg",
+						Filename: "sample.jpg",
+					},
+				},
+			},
+		},
+	}
+
+	raw := formatMultimodalLLMPrompt("system prompt", messages)
+	if !strings.Contains(raw, "=== CONVERSATION HISTORY (MULTIMODAL) ===") {
+		t.Fatalf("expected multimodal history header, got: %s", raw)
+	}
+	if !strings.Contains(raw, "<image mime=image/jpeg size=3 filename=sample.jpg>") {
+		t.Fatalf("expected image placeholder, got: %s", raw)
+	}
+	if strings.Contains(raw, "AQID") {
+		t.Fatalf("raw prompt should not include base64 payload")
+	}
+
+	human := formatMultimodalLLMPromptHuman("system prompt", messages)
+	if !strings.Contains(human, "<image mime=image/jpeg size=3 filename=sample.jpg>") {
+		t.Fatalf("expected image placeholder in humanized view, got: %s", human)
+	}
+}

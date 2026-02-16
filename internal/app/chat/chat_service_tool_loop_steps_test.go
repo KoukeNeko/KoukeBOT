@@ -245,6 +245,9 @@ func TestFinalizeToolLoopResponseRepairsMalformedForcedFinalOnce(t *testing.T) {
 	if provider.streamCallCount != 2 {
 		t.Fatalf("stream call count = %d, want 2", provider.streamCallCount)
 	}
+	if len(provider.streamRequests) != 2 {
+		t.Fatalf("stream requests = %d, want 2", len(provider.streamRequests))
+	}
 	if !view.Parsed {
 		t.Fatalf("expected repaired output to parse as triplet")
 	}
@@ -260,6 +263,13 @@ func TestFinalizeToolLoopResponseRepairsMalformedForcedFinalOnce(t *testing.T) {
 	chunk := <-outputCh
 	if !strings.Contains(chunk.Content, "[Response]: 已修復完成。") {
 		t.Fatalf("chunk content should include repaired response, got: %s", chunk.Content)
+	}
+	lastReq := provider.streamRequests[len(provider.streamRequests)-1]
+	if state.lastRawLLMInput != formatLLMPrompt(lastReq.SystemPrompt, lastReq.Messages) {
+		t.Fatalf("last raw input should match final repair prompt snapshot")
+	}
+	if state.lastRawLLMInputHuman != formatLLMPromptHuman(lastReq.SystemPrompt, lastReq.Messages) {
+		t.Fatalf("last human raw input should match final repair prompt snapshot")
 	}
 }
 
@@ -301,6 +311,9 @@ func TestFinalizeToolLoopResponseFallsBackWhenRepairFails(t *testing.T) {
 	if provider.streamCallCount != 2 {
 		t.Fatalf("stream call count = %d, want 2", provider.streamCallCount)
 	}
+	if len(provider.streamRequests) != 2 {
+		t.Fatalf("stream requests = %d, want 2", len(provider.streamRequests))
+	}
 	if !strings.Contains(view.Display, "Tool Loop Stopped") {
 		t.Fatalf("expected fallback display, got: %s", view.Display)
 	}
@@ -314,21 +327,30 @@ func TestFinalizeToolLoopResponseFallsBackWhenRepairFails(t *testing.T) {
 	if !strings.Contains(chunk.Content, "Tool Loop Stopped") {
 		t.Fatalf("expected fallback chunk content, got: %s", chunk.Content)
 	}
+	lastReq := provider.streamRequests[len(provider.streamRequests)-1]
+	if state.lastRawLLMInput != formatLLMPrompt(lastReq.SystemPrompt, lastReq.Messages) {
+		t.Fatalf("last raw input should match failed repair prompt snapshot")
+	}
+	if state.lastRawLLMInputHuman != formatLLMPromptHuman(lastReq.SystemPrompt, lastReq.Messages) {
+		t.Fatalf("last human raw input should match failed repair prompt snapshot")
+	}
 }
 
 type forcedFinalTestProvider struct {
 	streamResponses [][]llm.StreamChunk
 	streamCallCount int
+	streamRequests  []llm.ChatRequest
 }
 
 func (p *forcedFinalTestProvider) Chat(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
 	return nil, fmt.Errorf("unexpected Chat call")
 }
 
-func (p *forcedFinalTestProvider) StreamChat(_ context.Context, _ llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+func (p *forcedFinalTestProvider) StreamChat(_ context.Context, req llm.ChatRequest) (<-chan llm.StreamChunk, error) {
 	if p.streamCallCount >= len(p.streamResponses) {
 		return nil, fmt.Errorf("unexpected StreamChat call #%d", p.streamCallCount+1)
 	}
+	p.streamRequests = append(p.streamRequests, req)
 	chunks := p.streamResponses[p.streamCallCount]
 	p.streamCallCount++
 	ch := make(chan llm.StreamChunk, len(chunks))

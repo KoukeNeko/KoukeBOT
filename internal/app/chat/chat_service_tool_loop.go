@@ -184,7 +184,7 @@ func (s *ChatService) forceFinalAnswerWithoutTools(
 	conv *domain.Conversation,
 	persona *domain.PersonaModule,
 	summary toolGuardSummary,
-) (string, int, error) {
+) (string, int, string, string, error) {
 	forcedPrompt := buildForcedFinalAnswerPrompt(summary)
 	conv.Messages = append(conv.Messages, domain.Message{
 		Role:    domain.RoleUser,
@@ -198,9 +198,11 @@ func (s *ChatService) forceFinalAnswerWithoutTools(
 
 	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
 	if err != nil {
-		return "", 0, fmt.Errorf("assemble forced final answer: %w", err)
+		return "", 0, "", "", fmt.Errorf("assemble forced final answer: %w", err)
 	}
 	s.logPromptSnapshot("stream-forced-final", conv.ChannelID, conv.PersonaID, conv.ID, assembled)
+	rawInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	rawInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 
 	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
@@ -209,7 +211,7 @@ func (s *ChatService) forceFinalAnswerWithoutTools(
 		ToolMode:     llm.ToolModeDisabled,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("forced final answer llm call: %w", err)
+		return "", 0, rawInput, rawInputHuman, fmt.Errorf("forced final answer llm call: %w", err)
 	}
 
 	var fullResponse strings.Builder
@@ -219,15 +221,15 @@ func (s *ChatService) forceFinalAnswerWithoutTools(
 			tokensUsed += chunk.TokensUsed
 		}
 		if chunk.Error != nil {
-			return "", tokensUsed, chunk.Error
+			return "", tokensUsed, rawInput, rawInputHuman, chunk.Error
 		}
 		if len(chunk.ToolCalls) > 0 {
-			return "", tokensUsed, fmt.Errorf("forced final answer unexpectedly requested tool calls")
+			return "", tokensUsed, rawInput, rawInputHuman, fmt.Errorf("forced final answer unexpectedly requested tool calls")
 		}
 		fullResponse.WriteString(chunk.Content)
 	}
 
-	return strings.TrimSpace(fullResponse.String()), tokensUsed, nil
+	return strings.TrimSpace(fullResponse.String()), tokensUsed, rawInput, rawInputHuman, nil
 }
 
 // handleToolCallingStream handles the tool calling loop with streaming.
@@ -244,6 +246,8 @@ func (s *ChatService) handleToolCallingStream(
 	personaID string,
 	imageRefs []domain.ImageRef, // nil for text-only messages
 	multimodalHistory []domain.MultimodalMessage, // nil for text-only; includes images for multimodal
+	initialRawLLMInput string,
+	initialRawLLMInputHuman string,
 ) <-chan llm.StreamChunk {
 	outputCh := make(chan llm.StreamChunk, 16)
 
@@ -251,6 +255,8 @@ func (s *ChatService) handleToolCallingStream(
 		defer close(outputCh)
 
 		state := newToolLoopState(s.toolExecutionPolicySnapshot(), s.assembler.PromptGuardPolicy())
+		state.lastRawLLMInput = initialRawLLMInput
+		state.lastRawLLMInputHuman = initialRawLLMInputHuman
 		currentStream := streamCh
 		state.baseMessageCount = len(conv.Messages)
 		conv.AppendUserMessage(contextForLLM)

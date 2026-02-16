@@ -24,14 +24,16 @@ type MultimodalRunner interface {
 
 // ToolLoopRunRequest is the full state required for one tool-loop stream lifecycle.
 type ToolLoopRunRequest struct {
-	StreamCh          <-chan llm.StreamChunk
-	Conversation      *domain.Conversation
-	MessageToStore    string
-	ContextForLLM     string
-	Persona           *domain.PersonaModule
-	PersonaID         string
-	ImageRefs         []domain.ImageRef
-	MultimodalHistory []domain.MultimodalMessage
+	StreamCh                <-chan llm.StreamChunk
+	Conversation            *domain.Conversation
+	MessageToStore          string
+	ContextForLLM           string
+	Persona                 *domain.PersonaModule
+	PersonaID               string
+	ImageRefs               []domain.ImageRef
+	MultimodalHistory       []domain.MultimodalMessage
+	InitialRawLLMInput      string
+	InitialRawLLMInputHuman string
 }
 
 // MemoryFlushRequest is the input for a pre-compaction flush pass.
@@ -70,6 +72,8 @@ func (r defaultToolLoopRunner) Run(ctx context.Context, req ToolLoopRunRequest) 
 		req.PersonaID,
 		req.ImageRefs,
 		req.MultimodalHistory,
+		req.InitialRawLLMInput,
+		req.InitialRawLLMInputHuman,
 	)
 }
 

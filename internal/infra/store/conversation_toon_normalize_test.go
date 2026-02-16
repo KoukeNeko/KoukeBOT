@@ -63,8 +63,13 @@ func TestFileStoreGetByIDLazyNormalizesLegacyConversationToTOON(t *testing.T) {
 		if !ok || eventType != tooncodec.EventTypeMessage {
 			t.Fatalf("message[%d] should be TOON msg, got: %s", i, msg.Content)
 		}
-		if msg.RawLLMInput != "" || msg.RawLLMInputHuman != "" {
-			t.Fatalf("message[%d] raw llm snapshots should be cleared", i)
+		if i == 1 {
+			if msg.RawLLMInput != "=== SYSTEM PROMPT === very long prompt" {
+				t.Fatalf("assistant raw input should be preserved, got: %q", msg.RawLLMInput)
+			}
+			if msg.RawLLMInputHuman != "human snapshot" {
+				t.Fatalf("assistant human raw input should be preserved, got: %q", msg.RawLLMInputHuman)
+			}
 		}
 		if msg.DisplayText == "" {
 			t.Fatalf("message[%d] display_text should be populated", i)
@@ -148,7 +153,10 @@ func TestNormalizeConversationMessagesToTOONIsIdempotent(t *testing.T) {
 	if first != second {
 		t.Fatalf("expected idempotent normalized content, got first=%q second=%q", first, second)
 	}
-	if conv.Messages[0].RawLLMInput != "" || conv.Messages[0].RawLLMInputHuman != "" {
-		t.Fatalf("expected raw input snapshots to be cleared")
+	if conv.Messages[0].RawLLMInput != "old prompt snapshot" {
+		t.Fatalf("expected raw input snapshots to be preserved")
+	}
+	if conv.Messages[0].RawLLMInputHuman != "old prompt snapshot human" {
+		t.Fatalf("expected human raw input snapshots to be preserved")
 	}
 }

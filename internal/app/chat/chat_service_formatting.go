@@ -203,6 +203,62 @@ func formatLLMPromptHuman(systemPrompt string, messages []domain.Message) string
 	return prompt.String()
 }
 
+// formatMultimodalLLMPrompt builds a complete multimodal LLM prompt snapshot.
+// Image parts are represented as placeholders to avoid persisting base64 blobs.
+func formatMultimodalLLMPrompt(systemPrompt string, messages []domain.MultimodalMessage) string {
+	return formatMultimodalLLMPromptInternal(systemPrompt, messages, false)
+}
+
+// formatMultimodalLLMPromptHuman builds a humanized multimodal prompt snapshot.
+func formatMultimodalLLMPromptHuman(systemPrompt string, messages []domain.MultimodalMessage) string {
+	return formatMultimodalLLMPromptInternal(systemPrompt, messages, true)
+}
+
+func formatMultimodalLLMPromptInternal(systemPrompt string, messages []domain.MultimodalMessage, humanize bool) string {
+	var prompt strings.Builder
+
+	prompt.WriteString("=== SYSTEM PROMPT ===\n")
+	prompt.WriteString(systemPrompt)
+	prompt.WriteString("\n\n=== CONVERSATION HISTORY (MULTIMODAL) ===\n")
+
+	for i, msg := range messages {
+		prompt.WriteString(fmt.Sprintf("\n[Message %d - %s]\n", i+1, msg.Role))
+		if len(msg.Parts) == 0 {
+			prompt.WriteString("(no parts)\n")
+			continue
+		}
+		for j, part := range msg.Parts {
+			if part.Text != "" {
+				text := part.Text
+				if humanize {
+					text = tooncodec.HumanizeTOON(text)
+				}
+				prompt.WriteString(fmt.Sprintf("[Part %d - text]\n%s\n", j+1, text))
+			}
+			if part.ImageData != nil {
+				prompt.WriteString(fmt.Sprintf("[Part %d - image]\n%s\n", j+1, formatMultimodalImagePlaceholder(part.ImageData)))
+			}
+		}
+	}
+
+	return prompt.String()
+}
+
+func formatMultimodalImagePlaceholder(img *domain.ImageInput) string {
+	if img == nil {
+		return "<image>"
+	}
+	mime := strings.TrimSpace(img.MimeType)
+	if mime == "" {
+		mime = "unknown"
+	}
+	filename := strings.TrimSpace(img.Filename)
+	if filename == "" {
+		filename = "unknown"
+	}
+	return fmt.Sprintf("<image mime=%s size=%d filename=%s>", mime, len(img.Data), filename)
+}
+
 func (s *ChatService) prepareAssistantOutputForStorage(raw string) assistantOutputView {
 	policy := s.assembler.PromptGuardPolicy()
 	view := prepareAssistantOutput(raw, policy)

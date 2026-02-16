@@ -46,9 +46,6 @@ func normalizeConversationMessagesToTOON(conv *domain.Conversation, now time.Tim
 		if msg.Timestamp.IsZero() {
 			msg.Timestamp = now
 		}
-		// Prevent system prompt snapshots from persisting in conversation history.
-		msg.RawLLMInput = ""
-		msg.RawLLMInputHuman = ""
 
 		if strings.TrimSpace(msg.DisplayText) == "" {
 			msg.DisplayText = humanizeMessageContent(msg.Content)

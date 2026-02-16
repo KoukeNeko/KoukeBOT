@@ -64,6 +64,8 @@ func (s *ChatService) streamWithMultimodalHistory(
 		true,
 	)
 	fullMultimodalHistory := appendCurrentMultimodalMessage(multimodalHistory, fullUserParts)
+	fullRawInput := formatMultimodalLLMPrompt(assembled.SystemPrompt, fullMultimodalHistory)
+	fullRawInputHuman := formatMultimodalLLMPromptHuman(assembled.SystemPrompt, fullMultimodalHistory)
 	logChat.Logf(
 		"multimodal history: mode=full messages=%d images=%d → LLM",
 		len(fullMultimodalHistory),
@@ -74,17 +76,18 @@ func (s *ChatService) streamWithMultimodalHistory(
 	streamCh, err := s.provider.StreamChatMultimodal(initialCtx, assembled.SystemPrompt, fullMultimodalHistory, assembled.Generation)
 	if err == nil {
 		streamCh = withStreamContextCancel(streamCh, initialCancel)
-		return s.handleToolCallingStream(
-			ctx,
-			streamCh,
-			conv,
-			messageToStore,
-			contextForLLM,
-			persona,
-			personaID,
-			currentImageRefs,
-			fullMultimodalHistory,
-		), nil
+		return s.toolLoopRunner.Run(ctx, ToolLoopRunRequest{
+			StreamCh:                streamCh,
+			Conversation:            conv,
+			MessageToStore:          messageToStore,
+			ContextForLLM:           contextForLLM,
+			Persona:                 persona,
+			PersonaID:               personaID,
+			ImageRefs:               currentImageRefs,
+			MultimodalHistory:       fullMultimodalHistory,
+			InitialRawLLMInput:      fullRawInput,
+			InitialRawLLMInputHuman: fullRawInputHuman,
+		}), nil
 	}
 	if initialCancel != nil {
 		initialCancel()
@@ -114,6 +117,8 @@ func (s *ChatService) streamWithMultimodalHistory(
 		false,
 	)
 	reducedMultimodalHistory := appendCurrentMultimodalMessage(multimodalHistory, reducedUserParts)
+	reducedRawInput := formatMultimodalLLMPrompt(assembled.SystemPrompt, reducedMultimodalHistory)
+	reducedRawInputHuman := formatMultimodalLLMPromptHuman(assembled.SystemPrompt, reducedMultimodalHistory)
 	logChat.Logf(
 		"multimodal history: mode=reduced_context messages=%d images=%d → LLM",
 		len(reducedMultimodalHistory),
@@ -129,17 +134,18 @@ func (s *ChatService) streamWithMultimodalHistory(
 	}
 	streamCh = withStreamContextCancel(streamCh, retryCancel)
 
-	return s.handleToolCallingStream(
-		ctx,
-		streamCh,
-		conv,
-		messageToStore,
-		contextForLLM,
-		persona,
-		personaID,
-		currentImageRefs,
-		reducedMultimodalHistory,
-	), nil
+	return s.toolLoopRunner.Run(ctx, ToolLoopRunRequest{
+		StreamCh:                streamCh,
+		Conversation:            conv,
+		MessageToStore:          messageToStore,
+		ContextForLLM:           contextForLLM,
+		Persona:                 persona,
+		PersonaID:               personaID,
+		ImageRefs:               currentImageRefs,
+		MultimodalHistory:       reducedMultimodalHistory,
+		InitialRawLLMInput:      reducedRawInput,
+		InitialRawLLMInputHuman: reducedRawInputHuman,
+	}), nil
 }
 
 func buildTextMultimodalHistory(messages []domain.Message) []domain.MultimodalMessage {

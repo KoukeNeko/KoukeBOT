@@ -15,18 +15,20 @@ type toolLoopState struct {
 	promptPolicy PromptGuardPolicy
 	hideAnalysis bool
 
-	executedToolCalls  []domain.ToolCall
-	allToolResultsText string
-	totalTokens        int
-	toolCallAttempts   map[string]int
-	toolCountsByName   map[string]int
-	emittedToolErrors  map[string]struct{}
-	hadToolCallAttempt bool
-	guardSummary       toolGuardSummary
-	fallbackCause      string
-	fullResponse       string
-	finalTextSent      bool
-	baseMessageCount   int
+	executedToolCalls    []domain.ToolCall
+	allToolResultsText   string
+	totalTokens          int
+	toolCallAttempts     map[string]int
+	toolCountsByName     map[string]int
+	emittedToolErrors    map[string]struct{}
+	hadToolCallAttempt   bool
+	guardSummary         toolGuardSummary
+	fallbackCause        string
+	fullResponse         string
+	finalTextSent        bool
+	baseMessageCount     int
+	lastRawLLMInput      string
+	lastRawLLMInputHuman string
 }
 
 func newToolLoopState(toolPolicy ToolExecutionPolicy, promptPolicy PromptGuardPolicy) *toolLoopState {
@@ -262,8 +264,12 @@ func (s *ChatService) continueWithToolResults(
 
 	var nextStream <-chan llm.StreamChunk
 	if multimodalHistory != nil {
+		state.lastRawLLMInput = formatMultimodalLLMPrompt(assembled.SystemPrompt, multimodalHistory)
+		state.lastRawLLMInputHuman = formatMultimodalLLMPromptHuman(assembled.SystemPrompt, multimodalHistory)
 		nextStream, err = s.provider.StreamChatMultimodal(ctx, assembled.SystemPrompt, multimodalHistory, assembled.Generation)
 	} else {
+		state.lastRawLLMInput = formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+		state.lastRawLLMInputHuman = formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 		nextStream, err = s.provider.StreamChat(ctx, llm.ChatRequest{
 			SystemPrompt: assembled.SystemPrompt,
 			Messages:     assembled.Messages,
@@ -287,8 +293,12 @@ func (s *ChatService) finalizeToolLoopResponse(
 ) assistantOutputView {
 	if strings.TrimSpace(state.fullResponse) == "" && state.hadToolCallAttempt && state.guardSummary.shouldForceFinalAnswer(state.toolPolicy) {
 		state.guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
-		forcedResponse, forcedTokens, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, state.guardSummary)
+		forcedResponse, forcedTokens, forcedRawInput, forcedRawInputHuman, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, state.guardSummary)
 		state.totalTokens += forcedTokens
+		if strings.TrimSpace(forcedRawInput) != "" {
+			state.lastRawLLMInput = forcedRawInput
+			state.lastRawLLMInputHuman = forcedRawInputHuman
+		}
 		forcedFinalReady := false
 		if err != nil {
 			state.fallbackCause = fmt.Sprintf("forced_final_error=%v", err)
@@ -300,8 +310,12 @@ func (s *ChatService) finalizeToolLoopResponse(
 			candidate := strings.TrimSpace(forcedResponse)
 			if shouldRepairForcedFinalOutput(candidate, state.promptPolicy) {
 				logChat.Warnf("%s [FORCED_FINAL] output malformed; attempting one repair pass", toolLogPrefixGuard)
-				repairedResponse, repairedTokens, repairErr := s.regenerateForcedFinalOnceWithoutTools(ctx, conv, persona, candidate)
+				repairedResponse, repairedTokens, repairedRawInput, repairedRawInputHuman, repairErr := s.regenerateForcedFinalOnceWithoutTools(ctx, conv, persona, candidate)
 				state.totalTokens += repairedTokens
+				if strings.TrimSpace(repairedRawInput) != "" {
+					state.lastRawLLMInput = repairedRawInput
+					state.lastRawLLMInputHuman = repairedRawInputHuman
+				}
 				if repairErr != nil {
 					state.fallbackCause = fmt.Sprintf("forced_final_repair_error=%v", repairErr)
 					logChat.Warnf("%s [FORCED_FINAL] repair failed: %v", toolLogPrefixGuard, repairErr)
@@ -403,7 +417,13 @@ func (s *ChatService) persistToolLoopConversation(
 		} else {
 			conv.AppendUserMessageWithDisplay(userContent, userDisplay)
 		}
-		conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, finalResponseWithAnnotation, "", "", rawLLMOutput)
+		conv.AppendAssistantMessageWithDisplayAndRawViews(
+			assistantContent,
+			finalResponseWithAnnotation,
+			state.lastRawLLMInput,
+			state.lastRawLLMInputHuman,
+			rawLLMOutput,
+		)
 		s.applyTokenAccounting(conv, state.totalTokens)
 		if err := s.store.Save(ctx, conv); err != nil {
 			logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
@@ -422,7 +442,13 @@ func (s *ChatService) persistToolLoopConversation(
 	} else {
 		conv.AppendUserMessageWithDisplay(userContent, userDisplay)
 	}
-	conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, finalView.Display, "", "", finalView.RawOutput)
+	conv.AppendAssistantMessageWithDisplayAndRawViews(
+		assistantContent,
+		finalView.Display,
+		state.lastRawLLMInput,
+		state.lastRawLLMInputHuman,
+		finalView.RawOutput,
+	)
 	s.applyTokenAccounting(conv, state.totalTokens)
 	if err := s.store.Save(ctx, conv); err != nil {
 		logChat.Errorf("save conversation failed [%s/%s]: %v", conv.ChannelID, conv.PersonaID, err)
