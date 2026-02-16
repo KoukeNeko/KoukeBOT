@@ -1032,6 +1032,7 @@ section h3 {
   align-items: center;
   gap: 0.75rem;
   min-width: 0;
+  flex: 1; /* Allow header to expand */
 }
 
 .pool-card-avatar {
@@ -1057,6 +1058,7 @@ section h3 {
   flex-direction: column;
   gap: 0.2rem;
   min-width: 0;
+  flex: 1; /* Allow info to expand */
 }
 
 .pool-card-email {
