@@ -240,8 +240,8 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 
 	anchorsText := formatAnchorsForTemplate(persona.Anchors)
 
-	// Determine timezone (persona-level overrides global, default to "auto")
-	timezone := resolveEffectiveTimezone(persona.Config.Timezone, a.snapshotGlobalTimezone())
+	// Determine timezone from global settings only (default to "auto")
+	timezone := resolveEffectiveTimezone(a.snapshotGlobalTimezone())
 
 	data := map[string]string{
 		"Lore":    persona.Lore,
@@ -289,6 +289,8 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	buf.WriteString("- Use `ts` for temporal ordering (newer events have larger values).\n")
 	buf.WriteString("- If you need the current date, time, or day of week, call the `session_status` tool.\n")
 	buf.WriteString("- Only call `session_status` when you need the precise current time, not for every response.\n")
+	buf.WriteString("- Treat `session_status` output (`current_time`, `timezone`, `unix_timestamp`) as authoritative for this turn.\n")
+	buf.WriteString("- Do NOT recompute timezone conversion from `unix_timestamp` unless the user explicitly asks for it.\n")
 	buf.WriteString("- For Discord reminders or timed background checks, call the `schedule_manager` tool.\n")
 	buf.WriteString("- `schedule_manager` supports: create_reminder, create_monitor, list_tasks, cancel_task, cancel_all.\n")
 	buf.WriteString("\n")
@@ -700,10 +702,7 @@ func normalizeTimezoneValue(timezone string) string {
 	return strings.TrimSpace(timezone)
 }
 
-func resolveEffectiveTimezone(personaTimezone, globalTimezone string) string {
-	if tz := normalizeTimezoneValue(personaTimezone); tz != "" {
-		return tz
-	}
+func resolveEffectiveTimezone(globalTimezone string) string {
 	if tz := normalizeTimezoneValue(globalTimezone); tz != "" {
 		return tz
 	}

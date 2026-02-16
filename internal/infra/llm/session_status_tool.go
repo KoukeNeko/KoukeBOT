@@ -74,6 +74,7 @@ func (t *SessionStatusTool) Execute(ctx context.Context, input map[string]interf
 
 	result := fmt.Sprintf(
 		"🕒 Current Session Status\n\n%s\n\nNote: This is the current time when you called this tool.\n"+
+			"Instruction: Treat `current_time`/`timezone` as authoritative for this turn; do NOT recompute timezone from `unix_timestamp` unless the user explicitly asks.\n"+
 			"Instruction: Use this result directly and do NOT call `session_status` again in this turn unless the user explicitly asks for refreshed current time.",
 		string(statusJSON),
 	)

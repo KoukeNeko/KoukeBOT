@@ -32,7 +32,8 @@ type PersonaConfig struct {
 	Variables      map[string]any   `yaml:"variables" json:"variables"`
 	StyleGuard     StyleGuardConfig `yaml:"style_guard,omitempty" json:"style_guard,omitempty"`
 
-	// Time and location settings (optional, overrides global settings)
+	// Legacy per-persona time/location fields retained for config compatibility.
+	// Runtime timezone/timeformat/location now use global system settings.
 	Timezone   string `yaml:"timezone,omitempty" json:"timezone,omitempty"`       // "Asia/Taipei", "America/New_York", "auto"
 	TimeFormat string `yaml:"time_format,omitempty" json:"time_format,omitempty"` // "auto", "12", "24"
 	Location   string `yaml:"location,omitempty" json:"location,omitempty"`       // Optional: explicit location "台北, 台灣"

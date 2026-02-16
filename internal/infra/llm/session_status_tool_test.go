@@ -19,6 +19,7 @@ func TestSessionStatusToolOutputIncludesNoRepeatInstruction(t *testing.T) {
 	wants := []string{
 		`"timezone": "Asia/Taipei"`,
 		`"unix_timestamp":`,
+		"do NOT recompute timezone from `unix_timestamp`",
 		"do NOT call `session_status` again in this turn",
 	}
 	for _, want := range wants {
