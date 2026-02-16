@@ -1,32 +1,60 @@
-import { useEffect, useState, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { getPersona, updatePersona } from '../api'
-import type { PersonaDetail as PersonaDetailType, Anchor } from '../types'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+
 import EditorModal from '../components/EditorModal'
+import { getPersona, updatePersona } from '../api'
 import { useIsMobile } from '../hooks/useMediaQuery'
+import type {
+  Anchor,
+  GenerationConfig,
+  PersonaCoreConfig,
+  PersonaDetail as PersonaDetailType,
+  PersonaMeta,
+} from '../types'
+import {
+  applyCoreConfigToYAML,
+  DEFAULT_PERSONA_CORE_CONFIG,
+  parseConfigYaml,
+} from '../features/persona/configYaml'
+
+type EditingField =
+  | { type: 'config_yaml' | 'lore' | 'system_template' | 'user_profile' }
+  | { type: 'anchor_input' | 'anchor_response'; index: number }
 
 export default function PersonaDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const isMobile = useIsMobile()
+
   const [persona, setPersona] = useState<PersonaDetailType | null>(null)
+  const [coreConfig, setCoreConfig] = useState<PersonaCoreConfig | null>(null)
+  const [yamlError, setYamlError] = useState<string | null>(null)
+  const [lastEditedSource, setLastEditedSource] = useState<'form' | 'yaml' | null>(null)
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [dirty, setDirty] = useState(false)
-
-  // Track which field is open in the modal
-  const [editingField, setEditingField] = useState<{
-    type: 'lore' | 'system_template' | 'user_profile' | 'anchor_input' | 'anchor_response'
-    index?: number
-  } | null>(null)
+  const [editingField, setEditingField] = useState<EditingField | null>(null)
 
   useEffect(() => {
     if (!id) return
+
     setLoading(true)
+    setError('')
+    setMessage(null)
+    setDirty(false)
+    setLastEditedSource(null)
+    setYamlError(null)
+
     getPersona(id)
-      .then(setPersona)
+      .then((detail) => {
+        setPersona(detail)
+        const parsed = parseConfigYaml(detail.config_yaml)
+        setCoreConfig(parsed.core)
+        setYamlError(parsed.error)
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Load failed'))
       .finally(() => setLoading(false))
   }, [id])
@@ -36,20 +64,103 @@ export default function PersonaDetail() {
     setMessage(null)
   }, [])
 
-  const updateMeta = (field: string, value: string) => {
-    if (!persona) return
-    setPersona({ ...persona, meta: { ...persona.meta, [field]: value } })
-    markDirty()
+  const applyCoreUpdate = useCallback(
+    (updater: (current: PersonaCoreConfig) => PersonaCoreConfig) => {
+      if (!persona || !coreConfig || yamlError) return
+
+      const nextCore = updater(coreConfig)
+      try {
+        const nextConfigYaml = applyCoreConfigToYAML(persona.config_yaml, nextCore)
+        setPersona({ ...persona, config_yaml: nextConfigYaml })
+        setCoreConfig(nextCore)
+        setYamlError(null)
+        setLastEditedSource('form')
+        markDirty()
+      } catch (e) {
+        setYamlError(e instanceof Error ? e.message : 'Invalid config.yaml')
+      }
+    },
+    [coreConfig, markDirty, persona, yamlError],
+  )
+
+  const updateConfigYAML = useCallback(
+    (value: string | undefined) => {
+      if (!persona) return
+
+      const nextConfigYaml = value ?? ''
+      setPersona({ ...persona, config_yaml: nextConfigYaml })
+      setLastEditedSource('yaml')
+      markDirty()
+
+      const parsed = parseConfigYaml(nextConfigYaml)
+      setYamlError(parsed.error)
+      if (parsed.core) {
+        setCoreConfig(parsed.core)
+      }
+    },
+    [markDirty, persona],
+  )
+
+  const updateMeta = (field: keyof PersonaMeta, value: string) => {
+    applyCoreUpdate((current) => ({
+      ...current,
+      meta: {
+        ...current.meta,
+        [field]: value,
+      },
+    }))
   }
 
-  const updateGeneration = (field: string, value: string) => {
-    if (!persona) return
-    const num = parseFloat(value)
-    setPersona({
-      ...persona,
-      generation: { ...persona.generation, [field]: isNaN(num) ? 0 : num },
+  const updateGeneration = (field: keyof GenerationConfig, value: string) => {
+    const parsedNumber =
+      field === 'max_tokens'
+        ? Number.parseInt(value || '0', 10)
+        : Number.parseFloat(value || '0')
+    const safeNumber = Number.isFinite(parsedNumber) ? parsedNumber : 0
+
+    applyCoreUpdate((current) => ({
+      ...current,
+      generation: {
+        ...current.generation,
+        [field]: field === 'max_tokens' ? Math.trunc(safeNumber) : safeNumber,
+      },
+    }))
+  }
+
+  const updateSystemTemplate = (value: string | undefined) => {
+    applyCoreUpdate((current) => ({
+      ...current,
+      system_template: value ?? '',
+    }))
+  }
+
+  const updateVariable = (key: string, raw: string) => {
+    const num = Number(raw)
+    const value: unknown = raw !== '' && !Number.isNaN(num) ? num : raw
+    applyCoreUpdate((current) => ({
+      ...current,
+      variables: { ...current.variables, [key]: value },
+    }))
+  }
+
+  const addVariable = () => {
+    if (yamlError || !coreConfig) return
+    const key = prompt('Variable name:')
+    if (!key) return
+    const trimmed = key.trim()
+    if (!trimmed) return
+    applyCoreUpdate((current) => ({
+      ...current,
+      variables: { ...current.variables, [trimmed]: '' },
+    }))
+  }
+
+  const removeVariable = (key: string) => {
+    applyCoreUpdate((current) => {
+      const next = { ...current.variables }
+      delete next[key]
+      return { ...current, variables: next }
     })
-    markDirty()
   }
 
   const updateLore = (value: string | undefined) => {
@@ -61,36 +172,6 @@ export default function PersonaDetail() {
   const updateUserProfile = (value: string | undefined) => {
     if (!persona) return
     setPersona({ ...persona, user_profile: value ?? '' })
-    markDirty()
-  }
-
-  const updateSystemTemplate = (value: string | undefined) => {
-    if (!persona) return
-    setPersona({ ...persona, system_template: value ?? '' })
-    markDirty()
-  }
-
-  const updateVariable = (key: string, raw: string) => {
-    if (!persona) return
-    const num = Number(raw)
-    const value: unknown = raw !== '' && !isNaN(num) ? num : raw
-    setPersona({ ...persona, variables: { ...persona.variables, [key]: value } })
-    markDirty()
-  }
-
-  const addVariable = () => {
-    if (!persona) return
-    const key = prompt('Variable name:')
-    if (!key) return
-    setPersona({ ...persona, variables: { ...persona.variables, [key]: '' } })
-    markDirty()
-  }
-
-  const removeVariable = (key: string) => {
-    if (!persona) return
-    const next = { ...persona.variables }
-    delete next[key]
-    setPersona({ ...persona, variables: next })
     markDirty()
   }
 
@@ -122,7 +203,8 @@ export default function PersonaDetail() {
   }
 
   const handleSave = async () => {
-    if (!id || !persona) return
+    if (!id || !persona || yamlError) return
+
     setSaving(true)
     setMessage(null)
     try {
@@ -140,47 +222,144 @@ export default function PersonaDetail() {
   if (error) return <p className="error">Error: {error}</p>
   if (!persona) return <p>Not found.</p>
 
-  const { meta, generation, anchors, variables, lore, system_template, user_profile } = persona
+  const core = coreConfig ?? DEFAULT_PERSONA_CORE_CONFIG
+  const { meta, generation, variables } = core
+  const { anchors, lore, user_profile, config_yaml: configYaml } = persona
+
+  const coreFormDisabled = Boolean(yamlError) || !coreConfig
+  let modalTitle = ''
+  let modalLanguage = 'plaintext'
+  let modalValue = ''
+
+  if (editingField) {
+    switch (editingField.type) {
+      case 'config_yaml':
+        modalTitle = 'Edit config.yaml'
+        modalLanguage = 'yaml'
+        modalValue = configYaml
+        break
+      case 'lore':
+        modalTitle = 'Edit Lore'
+        modalLanguage = 'markdown'
+        modalValue = lore
+        break
+      case 'user_profile':
+        modalTitle = 'Edit User Profile (user.md)'
+        modalLanguage = 'markdown'
+        modalValue = user_profile
+        break
+      case 'system_template':
+        modalTitle = 'Edit System Template'
+        modalLanguage = 'yaml'
+        modalValue = core.system_template
+        break
+      case 'anchor_input':
+        modalTitle = `Edit Anchor Input (${anchors[editingField.index].id})`
+        modalLanguage = 'plaintext'
+        modalValue = anchors[editingField.index].user_input
+        break
+      case 'anchor_response':
+        modalTitle = `Edit Anchor Response (${anchors[editingField.index].id})`
+        modalLanguage = 'plaintext'
+        modalValue = anchors[editingField.index].bot_response
+        break
+      default:
+        break
+    }
+  }
 
   return (
     <div>
       <div className="page-header" style={{ justifyContent: isMobile ? 'space-between' : 'flex-end' }}>
         {isMobile && (
           <button className="btn-secondary" onClick={() => navigate('/personas')}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px', verticalAlign: 'text-bottom' }}>
-              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              style={{ marginRight: '4px', verticalAlign: 'text-bottom' }}
+            >
+              <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
             Back
           </button>
         )}
-        <button onClick={handleSave} disabled={saving || !dirty}>
+        <button onClick={handleSave} disabled={saving || !dirty || Boolean(yamlError)}>
           {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
 
-      {message && (
-        <p className={message.type === 'ok' ? 'success' : 'error'}>{message.text}</p>
-      )}
+      {message && <p className={message.type === 'ok' ? 'success' : 'error'}>{message.text}</p>}
+      {yamlError && <p className="error">config.yaml invalid: {yamlError}</p>}
+
+      {/* Config YAML */}
+      <section>
+        <h3>Config YAML</h3>
+        <p className="hint" style={{ marginBottom: '0.75rem', color: '#666' }}>
+          Core fields can be edited from the form below. Any custom keys should be edited in raw YAML.
+        </p>
+        <button className="btn-secondary" onClick={() => setEditingField({ type: 'config_yaml' })}>
+          Edit config.yaml
+        </button>
+        {lastEditedSource && (
+          <p className="meta" style={{ marginTop: '0.5rem' }}>
+            Last config edit source: {lastEditedSource === 'form' ? 'Form' : 'YAML editor'}
+          </p>
+        )}
+      </section>
 
       {/* Meta */}
       <section>
         <h3>Meta</h3>
         <label className="form-field">
+          <span>ID</span>
+          <input
+            value={meta.id}
+            onChange={(e) => updateMeta('id', e.target.value)}
+            disabled={coreFormDisabled}
+          />
+        </label>
+        <label className="form-field">
           <span>Name</span>
-          <input value={meta.name} onChange={(e) => updateMeta('name', e.target.value)} />
+          <input
+            value={meta.name}
+            onChange={(e) => updateMeta('name', e.target.value)}
+            disabled={coreFormDisabled}
+          />
         </label>
         <label className="form-field">
           <span>Description</span>
-          <input value={meta.description} onChange={(e) => updateMeta('description', e.target.value)} />
+          <input
+            value={meta.description}
+            onChange={(e) => updateMeta('description', e.target.value)}
+            disabled={coreFormDisabled}
+          />
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '0' : '1rem' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+            gap: isMobile ? '0' : '1rem',
+          }}
+        >
           <label className="form-field">
             <span>Version</span>
-            <input value={meta.version} onChange={(e) => updateMeta('version', e.target.value)} />
+            <input
+              value={meta.version}
+              onChange={(e) => updateMeta('version', e.target.value)}
+              disabled={coreFormDisabled}
+            />
           </label>
           <label className="form-field">
             <span>Author</span>
-            <input value={meta.author} onChange={(e) => updateMeta('author', e.target.value)} />
+            <input
+              value={meta.author}
+              onChange={(e) => updateMeta('author', e.target.value)}
+              disabled={coreFormDisabled}
+            />
           </label>
         </div>
       </section>
@@ -188,7 +367,13 @@ export default function PersonaDetail() {
       {/* Generation Config */}
       <section>
         <h3>Generation Config</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '0' : '1rem' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+            gap: isMobile ? '0' : '1rem',
+          }}
+        >
           {(
             [
               ['temperature', 'Temperature'],
@@ -205,6 +390,7 @@ export default function PersonaDetail() {
                 step={key === 'max_tokens' ? 1 : 0.01}
                 value={generation[key]}
                 onChange={(e) => updateGeneration(key, e.target.value)}
+                disabled={coreFormDisabled}
               />
             </label>
           ))}
@@ -215,7 +401,11 @@ export default function PersonaDetail() {
       <section>
         <h3>
           Variables
-          <button onClick={addVariable} style={{ marginLeft: '0.75rem', fontSize: '0.8rem' }}>
+          <button
+            onClick={addVariable}
+            style={{ marginLeft: '0.75rem', fontSize: '0.8rem' }}
+            disabled={coreFormDisabled}
+          >
             + Add
           </button>
         </h3>
@@ -229,11 +419,25 @@ export default function PersonaDetail() {
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         <input
-                          style={{ flex: 1, background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', padding: '0.35rem 0.6rem', color: '#e0e0e0', fontSize: '0.85rem', minWidth: 0 }}
+                          style={{
+                            flex: 1,
+                            background: '#0f0f1a',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            borderRadius: '6px',
+                            padding: '0.35rem 0.6rem',
+                            color: '#e0e0e0',
+                            fontSize: '0.85rem',
+                            minWidth: 0,
+                          }}
                           value={String(v)}
                           onChange={(e) => updateVariable(k, e.target.value)}
+                          disabled={coreFormDisabled}
                         />
-                        <button onClick={() => removeVariable(k)} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#f44' }}>
+                        <button
+                          onClick={() => removeVariable(k)}
+                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#f44' }}
+                          disabled={coreFormDisabled}
+                        >
                           {isMobile ? '×' : 'Remove'}
                         </button>
                       </div>
@@ -260,10 +464,20 @@ export default function PersonaDetail() {
           <details key={`${a.id}-${i}`} className="anchor-item">
             <summary>
               <strong>{a.id}</strong>
-              {a.tags?.map((t) => <span key={t} className="tag">{t}</span>)}
+              {a.tags?.map((t) => (
+                <span key={t} className="tag">
+                  {t}
+                </span>
+              ))}
             </summary>
             <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '0.75rem' : '1rem' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+                  gap: isMobile ? '0.75rem' : '1rem',
+                }}
+              >
                 <label className="form-field">
                   <span>ID</span>
                   <input value={a.id} onChange={(e) => updateAnchor(i, 'id', e.target.value)} />
@@ -272,7 +486,16 @@ export default function PersonaDetail() {
                   <span>Tags (comma-separated)</span>
                   <input
                     value={a.tags?.join(', ') ?? ''}
-                    onChange={(e) => updateAnchor(i, 'tags', e.target.value.split(',').map((t) => t.trim()).filter(Boolean))}
+                    onChange={(e) =>
+                      updateAnchor(
+                        i,
+                        'tags',
+                        e.target.value
+                          .split(',')
+                          .map((t) => t.trim())
+                          .filter(Boolean),
+                      )
+                    }
                   />
                 </label>
               </div>
@@ -284,7 +507,9 @@ export default function PersonaDetail() {
                     onClick={() => setEditingField({ type: 'anchor_input', index: i })}
                     title="Click to edit"
                   >
-                    {a.user_input || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty (Click to edit)</span>}
+                    {a.user_input || (
+                      <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty (Click to edit)</span>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -294,7 +519,9 @@ export default function PersonaDetail() {
                     onClick={() => setEditingField({ type: 'anchor_response', index: i })}
                     title="Click to edit"
                   >
-                    {a.bot_response || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty (Click to edit)</span>}
+                    {a.bot_response || (
+                      <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty (Click to edit)</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -312,7 +539,11 @@ export default function PersonaDetail() {
         <p className="hint" style={{ marginBottom: '0.75rem', color: '#666' }}>
           Available placeholders: <code>{'{{.Lore}}'}</code>, <code>{'{{.Anchors}}'}</code>
         </p>
-        <button className="btn-secondary" onClick={() => setEditingField({ type: 'system_template' })}>
+        <button
+          className="btn-secondary"
+          onClick={() => setEditingField({ type: 'system_template' })}
+          disabled={coreFormDisabled}
+        >
           Edit System Template
         </button>
       </section>
@@ -339,37 +570,16 @@ export default function PersonaDetail() {
       {/* Editor Modal */}
       {editingField && (
         <EditorModal
-          title={
-            editingField.type === 'lore'
-              ? 'Edit Lore'
-              : editingField.type === 'user_profile'
-              ? 'Edit User Profile (user.md)'
-              : editingField.type === 'system_template'
-              ? 'Edit System Template'
-              : editingField.type === 'anchor_input'
-              ? `Edit Anchor Input (${anchors[editingField.index!].id})`
-              : `Edit Anchor Response (${anchors[editingField.index!].id})`
-          }
-          language={
-            editingField.type === 'lore' || editingField.type === 'user_profile' ? 'markdown' : editingField.type === 'system_template' ? 'yaml' : 'plaintext'
-          }
-          value={
-            editingField.type === 'lore'
-              ? lore
-              : editingField.type === 'user_profile'
-              ? user_profile
-              : editingField.type === 'system_template'
-              ? system_template
-              : editingField.type === 'anchor_input'
-              ? anchors[editingField.index!].user_input
-              : anchors[editingField.index!].bot_response
-          }
+          title={modalTitle}
+          language={modalLanguage}
+          value={modalValue}
           onChange={(v) => {
-            if (editingField.type === 'lore') updateLore(v)
+            if (editingField.type === 'config_yaml') updateConfigYAML(v)
+            else if (editingField.type === 'lore') updateLore(v)
             else if (editingField.type === 'user_profile') updateUserProfile(v)
             else if (editingField.type === 'system_template') updateSystemTemplate(v)
-            else if (editingField.type === 'anchor_input') updateAnchor(editingField.index!, 'user_input', v ?? '')
-            else if (editingField.type === 'anchor_response') updateAnchor(editingField.index!, 'bot_response', v ?? '')
+            else if (editingField.type === 'anchor_input') updateAnchor(editingField.index, 'user_input', v ?? '')
+            else if (editingField.type === 'anchor_response') updateAnchor(editingField.index, 'bot_response', v ?? '')
           }}
           onClose={() => setEditingField(null)}
           hint={

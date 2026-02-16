@@ -36,6 +36,20 @@ func (s *PersonaService) Get(id string) (*domain.PersonaModule, bool) {
 	return p, ok
 }
 
+// GetConfigRaw returns the raw config.yaml content for the persona.
+func (s *PersonaService) GetConfigRaw(id string) (string, error) {
+	p, ok := s.personas[id]
+	if !ok {
+		return "", fmt.Errorf("persona not found: %q", id)
+	}
+
+	raw, err := persona.LoadPersonaConfigRaw(s.baseDir, p.DirName)
+	if err != nil {
+		return "", fmt.Errorf("load raw config for persona %q: %w", id, err)
+	}
+	return raw, nil
+}
+
 // Reload re-reads all persona folders from disk.
 func (s *PersonaService) Reload() error {
 	personas, err := persona.LoadAllPersonas(s.baseDir)
@@ -61,6 +75,29 @@ func (s *PersonaService) Update(id string, module *domain.PersonaModule) error {
 
 	if err := persona.SavePersona(s.baseDir, module.DirName, module); err != nil {
 		return fmt.Errorf("save persona %q: %w", id, err)
+	}
+
+	if module.Config.Meta.ID != id {
+		delete(s.personas, id)
+	}
+	s.personas[module.Config.Meta.ID] = module
+	return nil
+}
+
+// UpdateWithRawConfig persists persona files while writing config.yaml as raw text.
+func (s *PersonaService) UpdateWithRawConfig(id, rawConfig string, module *domain.PersonaModule) error {
+	existing, ok := s.personas[id]
+	if !ok {
+		return fmt.Errorf("persona not found: %q", id)
+	}
+
+	module.DirName = existing.DirName
+	if module.Config.Meta.ID == "" {
+		module.Config.Meta.ID = id
+	}
+
+	if err := persona.SavePersonaWithRawConfig(s.baseDir, module.DirName, rawConfig, module); err != nil {
+		return fmt.Errorf("save persona %q with raw config: %w", id, err)
 	}
 
 	if module.Config.Meta.ID != id {

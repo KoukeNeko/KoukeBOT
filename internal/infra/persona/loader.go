@@ -241,6 +241,16 @@ func loadAnchors(path string) ([]domain.Anchor, error) {
 	return file.Anchors, nil
 }
 
+// LoadPersonaConfigRaw reads the persona config.yaml as raw text.
+func LoadPersonaConfigRaw(baseDir, id string) (string, error) {
+	path := filepath.Join(baseDir, id, configFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read config for persona %q: %w", id, err)
+	}
+	return string(data), nil
+}
+
 // SavePersona writes the persona module back to disk:
 // config.yaml, lore.md, and anchors.yaml.
 func SavePersona(baseDir, id string, module *domain.PersonaModule) error {
@@ -269,8 +279,40 @@ func SavePersona(baseDir, id string, module *domain.PersonaModule) error {
 	return nil
 }
 
+// SavePersonaWithRawConfig writes the persona module while persisting
+// config.yaml exactly as provided in rawConfig.
+func SavePersonaWithRawConfig(baseDir, id, rawConfig string, module *domain.PersonaModule) error {
+	personaDir := filepath.Join(baseDir, id)
+
+	if err := os.MkdirAll(personaDir, 0o755); err != nil {
+		return fmt.Errorf("ensure persona dir for %q: %w", id, err)
+	}
+
+	if err := saveRawConfig(filepath.Join(personaDir, configFileName), rawConfig); err != nil {
+		return fmt.Errorf("save raw config for persona %q: %w", id, err)
+	}
+
+	if err := saveLore(filepath.Join(personaDir, loreFileName), module.Lore); err != nil {
+		return fmt.Errorf("save lore for persona %q: %w", id, err)
+	}
+
+	if err := saveUserProfile(filepath.Join(personaDir, userProfileFileName), module.UserProfile); err != nil {
+		return fmt.Errorf("save user profile for persona %q: %w", id, err)
+	}
+
+	if err := saveAnchors(filepath.Join(personaDir, anchorsFileName), module.Anchors); err != nil {
+		return fmt.Errorf("save anchors for persona %q: %w", id, err)
+	}
+
+	return nil
+}
+
 func saveConfig(path string, cfg *domain.PersonaConfig) error {
 	return writeYAMLPreservingComments(path, cfg)
+}
+
+func saveRawConfig(path, rawConfig string) error {
+	return os.WriteFile(path, []byte(rawConfig), 0o644)
 }
 
 func saveLore(path, lore string) error {

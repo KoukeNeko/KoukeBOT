@@ -88,13 +88,10 @@ type PersonaSummary struct {
 
 // PersonaDetail is the full API representation of a persona.
 type PersonaDetail struct {
-	Meta           domain.PersonaMeta      `json:"meta"`
-	SystemTemplate string                  `json:"system_template"`
-	Lore           string                  `json:"lore"`
-	UserProfile    string                  `json:"user_profile"`
-	Anchors        []domain.Anchor         `json:"anchors"`
-	Generation     domain.GenerationConfig `json:"generation"`
-	Variables      map[string]any          `json:"variables"`
+	ConfigYAML  string          `json:"config_yaml"`
+	Lore        string          `json:"lore"`
+	UserProfile string          `json:"user_profile"`
+	Anchors     []domain.Anchor `json:"anchors"`
 }
 
 func (h *Handlers) ListPersonas(w http.ResponseWriter, r *http.Request) {
@@ -116,15 +113,17 @@ func (h *Handlers) GetPersona(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return full detail using explicit DTO
+	configYAML, err := h.personaService.GetConfigRaw(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load persona config: "+err.Error())
+		return
+	}
+
 	detail := PersonaDetail{
-		Meta:           persona.Config.Meta,
-		SystemTemplate: persona.Config.SystemTemplate,
-		Lore:           persona.Lore,
-		UserProfile:    persona.UserProfile,
-		Anchors:        persona.Anchors,
-		Generation:     persona.Config.Generation,
-		Variables:      persona.Config.Variables,
+		ConfigYAML:  configYAML,
+		Lore:        persona.Lore,
+		UserProfile: persona.UserProfile,
+		Anchors:     persona.Anchors,
 	}
 
 	writeJSON(w, http.StatusOK, detail)
@@ -143,19 +142,20 @@ func (h *Handlers) UpdatePersona(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cfg, err := parseAndValidatePersonaConfigYAML(req.ConfigYAML)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	updated := &domain.PersonaModule{
-		Config: domain.PersonaConfig{
-			Meta:           req.Meta,
-			SystemTemplate: req.SystemTemplate,
-			Generation:     req.Generation,
-			Variables:      req.Variables,
-		},
+		Config:      cfg,
 		Lore:        req.Lore,
 		UserProfile: req.UserProfile,
 		Anchors:     req.Anchors,
 	}
 
-	if err := h.personaService.Update(id, updated); err != nil {
+	if err := h.personaService.UpdateWithRawConfig(id, req.ConfigYAML, updated); err != nil {
 		writeError(w, http.StatusInternalServerError, "save persona: "+err.Error())
 		return
 	}
