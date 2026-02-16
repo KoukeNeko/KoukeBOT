@@ -73,6 +73,35 @@ function toolStartMessage(payload: ToolEventPayload): string {
   return `🔧 正在使用工具：${payload.name}`
 }
 
+function toolGuardMessage(payload: ToolEventPayload): string {
+  const detail = typeof payload.error === 'string' && payload.error.trim() !== ''
+    ? payload.error
+    : 'tool guard triggered without details'
+  const name = payload.name?.trim() || 'unknown'
+  return `⚠️ [TOOL_GUARD_DETAIL] tool=${name} detail=${detail}`
+}
+
+function toolErrorMessage(payload: ToolEventPayload): string {
+  const detail = typeof payload.error === 'string' && payload.error.trim() !== ''
+    ? payload.error
+    : 'unknown tool error'
+  const name = payload.name?.trim() || 'unknown'
+  return `❌ [TOOL_ERROR] tool=${name} detail=${detail}`
+}
+
+function toolStatusMessage(payload: ToolEventPayload): string | null {
+  switch (payload.status) {
+    case 'tool_start':
+      return toolStartMessage(payload)
+    case 'tool_guard':
+      return toolGuardMessage(payload)
+    case 'tool_error':
+      return toolErrorMessage(payload)
+    default:
+      return null
+  }
+}
+
 export function useChatController() {
   const navigate = useNavigate()
   const { id: urlPersonaId } = useParams<{ id: string }>()
@@ -251,8 +280,9 @@ export function useChatController() {
 
         await streamMultipartChat(formData, (event) => {
           if (event.type === 'tool') {
-            if (event.payload.status === 'tool_start') {
-              appendAssistantText(assistantMsgIndex, toolStartMessage(event.payload))
+            const statusText = toolStatusMessage(event.payload)
+            if (statusText) {
+              appendAssistantText(assistantMsgIndex, statusText)
             } else if (event.payload.status === 'tool_done') {
               accumulatedContent = ''
             }
@@ -280,8 +310,9 @@ export function useChatController() {
             },
             (event) => {
               if (event.type === 'tool') {
-                if (event.payload.status === 'tool_start') {
-                  appendAssistantText(assistantMsgIndex, toolStartMessage(event.payload))
+                const statusText = toolStatusMessage(event.payload)
+                if (statusText) {
+                  appendAssistantText(assistantMsgIndex, statusText)
                 } else if (event.payload.status === 'tool_done') {
                   accumulatedContent = ''
                 }
