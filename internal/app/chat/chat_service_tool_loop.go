@@ -16,6 +16,10 @@ const (
 	toolGuardKindLimit       toolGuardKind = "tool_limit"
 	toolGuardKindMaxRounds   toolGuardKind = "max_tool_rounds"
 	toolGuardKindForcedFinal toolGuardKind = "forced_final_answer"
+
+	toolLogPrefixGuard    = "[TOOL_GUARD]"
+	toolLogPrefixError    = "[TOOL_ERROR]"
+	toolLogPrefixFallback = "[TOOL_LOOP_FALLBACK]"
 )
 
 type toolGuardEvent struct {
@@ -55,7 +59,7 @@ func (s toolGuardSummary) Has(kind toolGuardKind) bool {
 }
 
 func (s toolGuardSummary) shouldForceFinalAnswer(policy ToolExecutionPolicy) bool {
-	if !policy.ForceFinalAnswerAfterToolLimit {
+	if !policy.ToolGuardEnabled || !policy.ForceFinalAnswerAfterToolLimit {
 		return false
 	}
 	return s.Has(toolGuardKindMaxRounds) || s.Has(toolGuardKindLimit) || s.Has(toolGuardKindDuplicate)
@@ -82,15 +86,51 @@ func (s toolGuardSummary) buildPromptText() string {
 	return strings.TrimSpace(b.String())
 }
 
-func buildToolLoopFallbackResponse(policy PromptGuardPolicy) string {
+func (s toolGuardSummary) buildUserFacingDetails() string {
+	if len(s.Events) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(s.Events))
+	for _, event := range s.Events {
+		tool := strings.TrimSpace(event.Tool)
+		if tool == "" {
+			tool = "unknown"
+		}
+		line := fmt.Sprintf("kind=%s tool=%s reason=%s", event.Kind, tool, event.Reason)
+		if strings.TrimSpace(event.Details) != "" {
+			line += " details=" + event.Details
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildToolLoopFallbackResponse(policy PromptGuardPolicy, summary toolGuardSummary, fallbackCause string) string {
+	detailParts := make([]string, 0, 2)
+	if guardDetails := strings.TrimSpace(summary.buildUserFacingDetails()); guardDetails != "" {
+		detailParts = append(detailParts, guardDetails)
+	}
+	if cause := strings.TrimSpace(fallbackCause); cause != "" {
+		detailParts = append(detailParts, "cause="+cause)
+	}
+	if len(detailParts) == 0 {
+		detailParts = append(detailParts, "cause=unknown_tool_loop_failure")
+	}
+	details := strings.Join(detailParts, "\n")
+	detailsOneLine := strings.ReplaceAll(details, "\n", " | ")
+	prefix := toolLogPrefixError
+	if !summary.Empty() {
+		prefix = toolLogPrefixGuard
+	}
+
 	if policy.TripletOutputEnabled {
 		return strings.TrimSpace(
 			"[Status]: Degraded / Tool Loop Stopped\n" +
-				"[Analysis]: Repeated tool calls were blocked to prevent infinite recursion.\n" +
-				"[Response]: 抱歉，我剛剛在工具呼叫流程卡住了，已自動停止重複呼叫。請再說一次你的需求，我會直接回覆重點，不再重複呼叫工具。",
+				fmt.Sprintf("[Analysis]: %s %s\n", prefix, detailsOneLine) +
+				"[Response]: 抱歉，工具呼叫流程中止。以下是完整錯誤訊息：\n" + details,
 		)
 	}
-	return "抱歉，我剛剛在工具呼叫流程卡住了，已自動停止重複呼叫。請再說一次你的需求，我會直接回覆重點。"
+	return fmt.Sprintf("%s 工具呼叫流程中止。完整錯誤訊息：\n%s", prefix, details)
 }
 
 func buildDuplicateToolGuardResult(call domain.ToolCall) domain.ToolResult {
@@ -192,7 +232,7 @@ func (s *ChatService) forceFinalAnswerWithoutTools(
 
 // handleToolCallingStream handles the tool calling loop with streaming.
 // When the LLM requests tool calls, this executes them and continues the conversation.
-// Supports up to maxToolRounds of chained tool calls.
+// When guard is enabled, supports up to maxToolRounds of chained tool calls.
 // multimodalHistory is non-nil when the conversation includes images; the continuation
 // will use StreamChatMultimodal to preserve image context.
 func (s *ChatService) handleToolCallingStream(
@@ -220,7 +260,7 @@ func (s *ChatService) handleToolCallingStream(
 			}
 		}()
 
-		for round := 0; round <= state.toolPolicy.MaxToolRounds; round++ {
+		for round := 0; ; round++ {
 			pendingToolCalls, visibleRoundContent, ok := s.consumeRoundStream(currentStream, outputCh, state)
 			if !ok {
 				return
@@ -239,13 +279,17 @@ func (s *ChatService) handleToolCallingStream(
 			for i, c := range pendingToolCalls {
 				names[i] = c.Name
 			}
-			logChat.Logf("tool calls (round %d/%d): %s", round+1, state.toolPolicy.MaxToolRounds, strings.Join(names, ", "))
+			if state.toolPolicy.ToolGuardEnabled {
+				logChat.Logf("tool calls (round %d/%d): %s", round+1, state.toolPolicy.MaxToolRounds, strings.Join(names, ", "))
+			} else {
+				logChat.Logf("tool calls (round %d, guard disabled): %s", round+1, strings.Join(names, ", "))
+			}
 
-			if round == state.toolPolicy.MaxToolRounds {
+			if state.toolPolicy.ToolGuardEnabled && round == state.toolPolicy.MaxToolRounds {
 				state.guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached",
 					fmt.Sprintf("max_tool_rounds=%d", state.toolPolicy.MaxToolRounds))
 				s.incrementToolGuardMaxRounds()
-				logChat.Warnf("max tool rounds (%d) reached, stopping", state.toolPolicy.MaxToolRounds)
+				logChat.Warnf("%s [MAX_ROUNDS] max tool rounds (%d) reached, stopping", toolLogPrefixGuard, state.toolPolicy.MaxToolRounds)
 				break
 			}
 

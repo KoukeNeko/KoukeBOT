@@ -14,6 +14,16 @@ export default function ToolResilienceSection({ form, setForm, saving, onSave }:
     <section className="settings-section">
       <h3 className="settings-section-title">Tool Loop Guard / Resilience</h3>
 
+      <div className="form-field-checkbox-row">
+        <Checkbox
+          checked={form.tool_guard_enabled}
+          onChange={(checked) =>
+            setForm({ ...form, tool_guard_enabled: checked })
+          }
+          label="啟用工具迴圈保護（重複呼叫 / 上限攔截）"
+        />
+      </div>
+
       <label className="form-field">
         <span>最大工具回合數（每次訊息）</span>
         <input
@@ -28,7 +38,7 @@ export default function ToolResilienceSection({ form, setForm, saving, onSave }:
             })
           }
         />
-        <span className="hint">建議 3。超過後會觸發強制最終回答（若已啟用）。</span>
+        <span className="hint">建議 5。超過後會觸發強制最終回答（若已啟用）。</span>
       </label>
 
       <label className="form-field">

@@ -135,6 +135,7 @@ func BuildRuntimeServices(
 		contextManager,
 	)
 	chatService.UpdateToolExecutionPolicy(app.ToolExecutionPolicy{
+		ToolGuardEnabled:               settings.ToolGuardEnabled,
 		MaxToolRounds:                  settings.MaxToolRounds,
 		MaxWebSearchCallsPerTurn:       settings.MaxWebSearchCallsPerTurn,
 		ForceFinalAnswerAfterToolLimit: settings.ForceFinalAnswerAfterToolLimit,

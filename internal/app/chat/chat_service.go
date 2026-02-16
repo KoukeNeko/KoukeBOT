@@ -16,12 +16,13 @@ var tripletParseFailedCount uint64
 const personaConfigsBaseDir = "configs/personas"
 
 const (
-	DefaultMaxToolRounds            = 3
+	DefaultMaxToolRounds            = 5
 	DefaultMaxWebSearchCallsPerTurn = 2
 )
 
 // ToolExecutionPolicy controls per-request tool-loop behavior and resilience.
 type ToolExecutionPolicy struct {
+	ToolGuardEnabled               bool
 	MaxToolRounds                  int
 	MaxWebSearchCallsPerTurn       int
 	ForceFinalAnswerAfterToolLimit bool
@@ -35,6 +36,7 @@ type MemoryRetentionPolicy struct {
 
 func DefaultToolExecutionPolicy() ToolExecutionPolicy {
 	return ToolExecutionPolicy{
+		ToolGuardEnabled:               false,
 		MaxToolRounds:                  DefaultMaxToolRounds,
 		MaxWebSearchCallsPerTurn:       DefaultMaxWebSearchCallsPerTurn,
 		ForceFinalAnswerAfterToolLimit: true,

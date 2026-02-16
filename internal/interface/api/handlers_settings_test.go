@@ -122,7 +122,7 @@ func TestValidateToolLoopSettings(t *testing.T) {
 	}{
 		{
 			name:           "valid defaults",
-			maxRounds:      3,
+			maxRounds:      config.DefaultMaxToolRounds,
 			maxWebSearch:   2,
 			maxWaitSeconds: 5,
 			wantErr:        false,

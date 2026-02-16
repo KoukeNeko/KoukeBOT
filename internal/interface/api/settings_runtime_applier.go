@@ -55,6 +55,7 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 		NegativeConstraintDefault: existing.NegativeConstraintDefault,
 	})
 	h.chatService.UpdateToolExecutionPolicy(app.ToolExecutionPolicy{
+		ToolGuardEnabled:               existing.ToolGuardEnabled,
 		MaxToolRounds:                  existing.MaxToolRounds,
 		MaxWebSearchCallsPerTurn:       existing.MaxWebSearchCallsPerTurn,
 		ForceFinalAnswerAfterToolLimit: existing.ForceFinalAnswerAfterToolLimit,

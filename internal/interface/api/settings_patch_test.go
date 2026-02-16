@@ -28,6 +28,7 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	contextFlushThreshold := 0
 	memoryRecentRounds := config.MaxMemoryRecentRounds
 	monitorMaxPerUser := 7
+	toolGuardEnabled := true
 
 	err := h.applySettingsPatch(&existing, SettingsUpdateRequest{
 		GeminiAPIKey:                  "***...abcd",
@@ -37,6 +38,7 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 		ContextFlushThreshold:         &contextFlushThreshold,
 		MemoryRecentRounds:            &memoryRecentRounds,
 		ScheduledMonitorMaxPerUser:    &monitorMaxPerUser,
+		ToolGuardEnabled:              &toolGuardEnabled,
 	})
 	if err != nil {
 		t.Fatalf("applySettingsPatch returned error: %v", err)
@@ -61,6 +63,9 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	}
 	if existing.ScheduledMonitorMaxPerUser != monitorMaxPerUser {
 		t.Fatalf("scheduled_monitor_max_per_user = %d, want %d", existing.ScheduledMonitorMaxPerUser, monitorMaxPerUser)
+	}
+	if !existing.ToolGuardEnabled {
+		t.Fatalf("tool_guard_enabled should be true")
 	}
 }
 

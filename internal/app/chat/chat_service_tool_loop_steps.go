@@ -23,6 +23,7 @@ type toolLoopState struct {
 	emittedToolErrors  map[string]struct{}
 	hadToolCallAttempt bool
 	guardSummary       toolGuardSummary
+	fallbackCause      string
 	fullResponse       string
 	finalTextSent      bool
 	baseMessageCount   int
@@ -79,6 +80,16 @@ func (s *ChatService) filterExecutableToolCalls(
 	executableCalls := make([]domain.ToolCall, 0, len(pendingToolCalls))
 	guardResults := make([]domain.ToolResult, 0, len(pendingToolCalls))
 
+	if !state.toolPolicy.ToolGuardEnabled {
+		for _, call := range pendingToolCalls {
+			signature := toolCallSignature(call)
+			state.toolCallAttempts[signature]++
+			state.toolCountsByName[call.Name]++
+			executableCalls = append(executableCalls, call)
+		}
+		return executableCalls, guardResults
+	}
+
 	for _, call := range pendingToolCalls {
 		if call.Name == "web_search" && state.toolCountsByName[call.Name] >= state.toolPolicy.MaxWebSearchCallsPerTurn {
 			state.guardSummary.Add(
@@ -89,7 +100,7 @@ func (s *ChatService) filterExecutableToolCalls(
 			)
 			s.incrementToolGuardLimitBlocked()
 			guardResults = append(guardResults, buildToolLimitGuardResult(call, state.toolPolicy.MaxWebSearchCallsPerTurn))
-			logChat.Warnf("tool loop guard blocked limit (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
+			logChat.Warnf("%s [LIMIT] round=%d tool=%s%s", toolLogPrefixGuard, round+1, call.Name, summarizeToolTarget(call, personaID))
 			continue
 		}
 
@@ -98,7 +109,7 @@ func (s *ChatService) filterExecutableToolCalls(
 			state.guardSummary.Add(toolGuardKindDuplicate, call.Name, "duplicate_tool_call_blocked", "")
 			s.incrementToolGuardDuplicateBlocked()
 			guardResults = append(guardResults, buildDuplicateToolGuardResult(call))
-			logChat.Warnf("tool loop guard blocked duplicate call (round %d): %s%s", round+1, call.Name, summarizeToolTarget(call, personaID))
+			logChat.Warnf("%s [DUPLICATE] round=%d tool=%s%s", toolLogPrefixGuard, round+1, call.Name, summarizeToolTarget(call, personaID))
 			continue
 		}
 
@@ -148,12 +159,22 @@ func (s *ChatService) emitToolErrors(
 		}
 
 		call := toolCallMap[result.ToolCallID]
-		errSummary := truncateLog(result.Content, 240)
+		errSummary := strings.TrimSpace(result.Content)
+		if errSummary == "" {
+			errSummary = "unknown tool error"
+		}
 		dedupeKey := call.Name + "|" + toolCallSignature(call) + "|" + errSummary
 		if _, exists := state.emittedToolErrors[dedupeKey]; exists {
 			continue
 		}
 		state.emittedToolErrors[dedupeKey] = struct{}{}
+		logChat.Warnf(
+			"%s [EMIT] tool=%s%s error=%s",
+			toolLogPrefixError,
+			call.Name,
+			summarizeToolTarget(call, "unknown"),
+			singleLineToolLog(errSummary),
+		)
 		outputCh <- llm.StreamChunk{
 			ToolStatus: "tool_error",
 			ToolName:   call.Name,
@@ -247,44 +268,58 @@ func (s *ChatService) finalizeToolLoopResponse(
 		state.totalTokens += forcedTokens
 		forcedFinalReady := false
 		if err != nil {
-			logChat.Warnf("forced final answer failed: %v", err)
+			state.fallbackCause = fmt.Sprintf("forced_final_error=%v", err)
+			logChat.Warnf("%s [FORCED_FINAL] failed: %v", toolLogPrefixGuard, err)
 		} else if strings.TrimSpace(forcedResponse) == "" {
-			logChat.Warnf("forced final answer returned empty output")
+			state.fallbackCause = "forced_final_empty_output"
+			logChat.Warnf("%s [FORCED_FINAL] returned empty output", toolLogPrefixGuard)
 		} else {
 			candidate := strings.TrimSpace(forcedResponse)
 			if shouldRepairForcedFinalOutput(candidate, state.promptPolicy) {
-				logChat.Warnf("forced final answer output malformed; attempting one repair pass")
+				logChat.Warnf("%s [FORCED_FINAL] output malformed; attempting one repair pass", toolLogPrefixGuard)
 				repairedResponse, repairedTokens, repairErr := s.regenerateForcedFinalOnceWithoutTools(ctx, conv, persona, candidate)
 				state.totalTokens += repairedTokens
 				if repairErr != nil {
-					logChat.Warnf("forced final answer repair failed: %v", repairErr)
+					state.fallbackCause = fmt.Sprintf("forced_final_repair_error=%v", repairErr)
+					logChat.Warnf("%s [FORCED_FINAL] repair failed: %v", toolLogPrefixGuard, repairErr)
 				} else if strings.TrimSpace(repairedResponse) == "" {
-					logChat.Warnf("forced final answer repair returned empty output")
+					state.fallbackCause = "forced_final_repair_empty_output"
+					logChat.Warnf("%s [FORCED_FINAL] repair returned empty output", toolLogPrefixGuard)
 				} else {
 					candidate = strings.TrimSpace(repairedResponse)
-					logChat.Logf("forced final answer repair pass completed")
+					logChat.Logf("%s [FORCED_FINAL] repair pass completed", toolLogPrefixGuard)
 				}
 			}
 			if isForcedFinalOutputValid(candidate, state.promptPolicy) {
 				state.fullResponse = candidate
 				forcedFinalReady = true
 			} else {
-				logChat.Warnf("forced final answer still invalid after repair pass")
+				state.fallbackCause = "forced_final_invalid_after_repair"
+				logChat.Warnf("%s [FORCED_FINAL] still invalid after repair pass", toolLogPrefixGuard)
 			}
 		}
 		if forcedFinalReady {
 			s.incrementToolForcedFinalSuccess()
-			logChat.Logf("tool loop forced final answer generated after %d tool call(s)", len(state.executedToolCalls))
+			logChat.Logf("%s [FORCED_FINAL] generated after %d tool call(s)", toolLogPrefixGuard, len(state.executedToolCalls))
 		} else {
 			s.incrementToolForcedFinalFailed()
-			logChat.Warnf("forced final answer unavailable after guard stop; fallback path engaged")
+			logChat.Warnf("%s [FORCED_FINAL] unavailable after guard stop; fallback path engaged", toolLogPrefixFallback)
 		}
 	}
 
 	if strings.TrimSpace(state.fullResponse) == "" && state.hadToolCallAttempt {
 		s.incrementToolLoopFallback()
-		state.fullResponse = buildToolLoopFallbackResponse(state.promptPolicy)
-		logChat.Warnf("tool loop fallback response generated after %d tool call(s)", len(state.executedToolCalls))
+		state.fullResponse = buildToolLoopFallbackResponse(state.promptPolicy, state.guardSummary, state.fallbackCause)
+		details := state.guardSummary.buildUserFacingDetails()
+		if strings.TrimSpace(details) == "" {
+			details = state.fallbackCause
+		}
+		logChat.Warnf(
+			"%s generated after %d tool call(s): %s",
+			toolLogPrefixFallback,
+			len(state.executedToolCalls),
+			singleLineToolLog(strings.TrimSpace(details)),
+		)
 	}
 
 	finalView := s.prepareAssistantOutputForStorage(state.fullResponse)

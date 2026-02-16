@@ -89,25 +89,24 @@ func formatToolStatusError(toolName string, toolInput map[string]interface{}, ra
 	if errText == "" {
 		errText = "未知錯誤"
 	}
-	errText = truncateError(errText, 220)
 	lowerErr := strings.ToLower(errText)
 
 	if strings.HasPrefix(lowerErr, "tool guard:") {
-		return fmt.Sprintf("⚠️ 工具保護機制觸發（%s）：%s", safeToolName(toolName), errText)
+		return fmt.Sprintf("⚠️ [TOOL_GUARD] 工具保護機制觸發（%s）：%s", safeToolName(toolName), errText)
 	}
 
 	switch toolName {
 	case "file_write":
-		return fmt.Sprintf("❌ 儲存檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
+		return fmt.Sprintf("❌ [TOOL_ERROR] 儲存檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
 	case "file_append":
-		return fmt.Sprintf("❌ 追加檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
+		return fmt.Sprintf("❌ [TOOL_ERROR] 追加檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
 	case "file_read":
-		return fmt.Sprintf("❌ 讀取檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
+		return fmt.Sprintf("❌ [TOOL_ERROR] 讀取檔案失敗（%s）：%s", extractToolFilename(toolInput), errText)
 	default:
 		if toolName == "" {
 			toolName = "unknown"
 		}
-		return fmt.Sprintf("❌ 工具 %s 執行失敗：%s", toolName, errText)
+		return fmt.Sprintf("❌ [TOOL_ERROR] 工具 %s 執行失敗：%s", toolName, errText)
 	}
 }
 
@@ -152,13 +151,5 @@ func formatDiscordError(err error) string {
 		return "⚠️ **請求過於頻繁**\n請稍等片刻後再試"
 	}
 
-	return fmt.Sprintf("❌ **發生錯誤**\n%s\n\n💡 請查看後端 log 或至 Web UI 檢查設定", truncateError(parsed.RawMessage, 200))
-}
-
-// truncateError truncates error message to avoid Discord message length limit.
-func truncateError(msg string, maxLen int) string {
-	if len(msg) <= maxLen {
-		return msg
-	}
-	return msg[:maxLen] + "..."
+	return fmt.Sprintf("❌ **發生錯誤**\n%s\n\n💡 請查看後端 log 或至 Web UI 檢查設定", parsed.RawMessage)
 }

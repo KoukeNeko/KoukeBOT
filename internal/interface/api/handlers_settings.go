@@ -60,6 +60,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		DiscordPresenceIntentEnabled:    settings.DiscordPresenceIntentEnabled,
 		DiscordObserveMaxResults:        settings.DiscordObserveMaxResults,
 		DiscordObserveMessageScope:      settings.DiscordObserveMessageScope,
+		ToolGuardEnabled:                settings.ToolGuardEnabled,
 		MaxToolRounds:                   settings.MaxToolRounds,
 		MaxWebSearchCallsPerTurn:        settings.MaxWebSearchCallsPerTurn,
 		ForceFinalAnswerAfterToolLimit:  settings.ForceFinalAnswerAfterToolLimit,

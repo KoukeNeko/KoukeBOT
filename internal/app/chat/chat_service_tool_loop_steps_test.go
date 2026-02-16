@@ -46,6 +46,7 @@ func TestConsumeRoundStreamCollectsVisibleContentAndToolCalls(t *testing.T) {
 func TestFilterExecutableToolCallsBlocksDuplicate(t *testing.T) {
 	service := &ChatService{}
 	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = true
 	policy.MaxWebSearchCallsPerTurn = 3
 	state := newToolLoopState(policy, PromptGuardPolicy{})
 
@@ -69,6 +70,7 @@ func TestFilterExecutableToolCallsBlocksDuplicate(t *testing.T) {
 func TestFilterExecutableToolCallsBlocksLimit(t *testing.T) {
 	service := &ChatService{}
 	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = true
 	policy.MaxWebSearchCallsPerTurn = 1
 	state := newToolLoopState(policy, PromptGuardPolicy{})
 
@@ -89,12 +91,37 @@ func TestFilterExecutableToolCallsBlocksLimit(t *testing.T) {
 	}
 }
 
+func TestFilterExecutableToolCallsSkipsGuardsWhenDisabled(t *testing.T) {
+	service := &ChatService{}
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = false
+	policy.MaxWebSearchCallsPerTurn = 1
+	state := newToolLoopState(policy, PromptGuardPolicy{})
+
+	calls := []domain.ToolCall{
+		{ID: "1", Name: "web_search", Input: map[string]interface{}{"query": "same"}},
+		{ID: "2", Name: "web_search", Input: map[string]interface{}{"query": "same"}},
+	}
+
+	executable, guards := service.filterExecutableToolCalls(calls, "persona", 0, state)
+	if len(executable) != 2 {
+		t.Fatalf("executable calls = %d, want 2", len(executable))
+	}
+	if len(guards) != 0 {
+		t.Fatalf("guard results = %d, want 0", len(guards))
+	}
+	if !state.guardSummary.Empty() {
+		t.Fatalf("expected no guard events when tool guard is disabled")
+	}
+}
+
 func TestFinalizeToolLoopResponseBuildsFallback(t *testing.T) {
 	service := &ChatService{
 		assembler: NewContextAssembler(),
 	}
 	state := newToolLoopState(DefaultToolExecutionPolicy(), PromptGuardPolicy{})
 	state.hadToolCallAttempt = true
+	state.fallbackCause = "forced_final_error=network timeout"
 	state.fullResponse = ""
 	outputCh := make(chan llm.StreamChunk, 2)
 
@@ -111,6 +138,38 @@ func TestFinalizeToolLoopResponseBuildsFallback(t *testing.T) {
 	chunk := <-outputCh
 	if chunk.Content == "" {
 		t.Fatalf("expected non-empty chunk content")
+	}
+	if !strings.Contains(chunk.Content, "forced_final_error=network timeout") {
+		t.Fatalf("expected fallback to include full cause, got: %s", chunk.Content)
+	}
+}
+
+func TestEmitToolErrorsDoesNotTruncateContent(t *testing.T) {
+	service := &ChatService{}
+	policy := DefaultToolExecutionPolicy()
+	policy.DiscordShowInternalToolErrors = true
+	state := newToolLoopState(policy, PromptGuardPolicy{})
+	outputCh := make(chan llm.StreamChunk, 1)
+
+	pending := []domain.ToolCall{
+		{ID: "1", Name: "file_read", Input: map[string]interface{}{"filename": "MEMORY.md"}},
+	}
+	fullErr := strings.Repeat("x", 500)
+	results := []domain.ToolResult{
+		{
+			ToolCallID: "1",
+			Content:    fullErr,
+			IsError:    true,
+		},
+	}
+
+	service.emitToolErrors(outputCh, pending, results, state)
+	if len(outputCh) != 1 {
+		t.Fatalf("expected one tool error chunk, got %d", len(outputCh))
+	}
+	chunk := <-outputCh
+	if chunk.ToolError != fullErr {
+		t.Fatalf("tool error was truncated: got_len=%d want_len=%d", len(chunk.ToolError), len(fullErr))
 	}
 }
 
@@ -138,7 +197,9 @@ func TestFinalizeToolLoopResponseRepairsMalformedForcedFinalOnce(t *testing.T) {
 		assembler: assembler,
 		provider:  provider,
 	}
-	state := newToolLoopState(DefaultToolExecutionPolicy(), assembler.PromptGuardPolicy())
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = true
+	state := newToolLoopState(policy, assembler.PromptGuardPolicy())
 	state.hadToolCallAttempt = true
 	state.guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached", "max_tool_rounds=3")
 	outputCh := make(chan llm.StreamChunk, 2)
@@ -192,7 +253,9 @@ func TestFinalizeToolLoopResponseFallsBackWhenRepairFails(t *testing.T) {
 		assembler: assembler,
 		provider:  provider,
 	}
-	state := newToolLoopState(DefaultToolExecutionPolicy(), assembler.PromptGuardPolicy())
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = true
+	state := newToolLoopState(policy, assembler.PromptGuardPolicy())
 	state.hadToolCallAttempt = true
 	state.guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached", "max_tool_rounds=3")
 	outputCh := make(chan llm.StreamChunk, 2)

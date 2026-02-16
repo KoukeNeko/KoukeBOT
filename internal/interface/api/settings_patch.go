@@ -97,6 +97,9 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.DiscordObserveMessageScope != "" {
 		existing.DiscordObserveMessageScope = req.DiscordObserveMessageScope
 	}
+	if req.ToolGuardEnabled != nil {
+		existing.ToolGuardEnabled = *req.ToolGuardEnabled
+	}
 	if req.MaxToolRounds != nil {
 		existing.MaxToolRounds = *req.MaxToolRounds
 	}

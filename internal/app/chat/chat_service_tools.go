@@ -47,13 +47,14 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 				IsError:    true,
 			})
 			logChat.Warnf(
-				"tool[%d/%d] resolve failed: id=%s name=%s%s err=%s",
+				"%s tool[%d/%d] resolve failed: id=%s name=%s%s err=%s",
+				toolLogPrefixError,
 				idx+1,
 				len(toolCalls),
 				callID,
 				call.Name,
 				targetSummary,
-				truncateLog(err.Error(), 180),
+				singleLineToolLog(err.Error()),
 			)
 			continue
 		}
@@ -65,14 +66,15 @@ func (s *ChatService) executeTools(ctx context.Context, toolCalls []domain.ToolC
 		if err != nil {
 			errorCount++
 			logChat.Warnf(
-				"tool[%d/%d] execute error: id=%s name=%s%s elapsed=%s err=%s",
+				"%s tool[%d/%d] execute error: id=%s name=%s%s elapsed=%s err=%s",
+				toolLogPrefixError,
 				idx+1,
 				len(toolCalls),
 				callID,
 				call.Name,
 				targetSummary,
 				formatToolElapsed(elapsed),
-				truncateLog(err.Error(), 180),
+				singleLineToolLog(err.Error()),
 			)
 			results = append(results, domain.ToolResult{
 				ToolCallID: call.ID,

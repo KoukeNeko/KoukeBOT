@@ -71,6 +71,9 @@ func TestNormalizeSettingsAppliesPromptGuardDefaultsForLegacyFile(t *testing.T) 
 	if got.MaxToolRounds != DefaultMaxToolRounds {
 		t.Fatalf("MaxToolRounds = %d, want %d", got.MaxToolRounds, DefaultMaxToolRounds)
 	}
+	if got.ToolGuardEnabled != DefaultToolGuardEnabled {
+		t.Fatalf("ToolGuardEnabled = %v, want %v", got.ToolGuardEnabled, DefaultToolGuardEnabled)
+	}
 	if got.MaxWebSearchCallsPerTurn != DefaultMaxWebSearchCallsPerTurn {
 		t.Fatalf("MaxWebSearchCallsPerTurn = %d, want %d", got.MaxWebSearchCallsPerTurn, DefaultMaxWebSearchCallsPerTurn)
 	}
@@ -108,6 +111,7 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 		"negative_constraint_enabled":         explicitFalse,
 		"analysis_visibility":                 debugValue,
 		"negative_constraint_default":         constraintValue,
+		"tool_guard_enabled":                  explicitFalse,
 		"force_final_answer_after_tool_limit": explicitFalse,
 		"transient_recovery_wait_enabled":     explicitFalse,
 		"discord_show_internal_tool_errors":   explicitFalse,
@@ -122,6 +126,7 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 		NegativeConstraintEnabled:       false,
 		AnalysisVisibility:              "debug",
 		NegativeConstraintDefault:       "keep this",
+		ToolGuardEnabled:                false,
 		ForceFinalAnswerAfterToolLimit:  false,
 		TransientRecoveryWaitEnabled:    false,
 		DiscordShowInternalToolErrors:   false,
@@ -143,6 +148,9 @@ func TestNormalizeSettingsKeepsExplicitFalseValues(t *testing.T) {
 	}
 	if got.NegativeConstraintDefault != "keep this" {
 		t.Fatalf("NegativeConstraintDefault changed unexpectedly: %q", got.NegativeConstraintDefault)
+	}
+	if got.ToolGuardEnabled {
+		t.Fatalf("ToolGuardEnabled should keep explicit false")
 	}
 	if got.ForceFinalAnswerAfterToolLimit {
 		t.Fatalf("ForceFinalAnswerAfterToolLimit should keep explicit false")

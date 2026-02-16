@@ -36,6 +36,7 @@ type SettingsResponse struct {
 	DiscordPresenceIntentEnabled    bool                `json:"discord_presence_intent_enabled"`
 	DiscordObserveMaxResults        int                 `json:"discord_observe_max_results"`
 	DiscordObserveMessageScope      string              `json:"discord_observe_message_scope"`
+	ToolGuardEnabled                bool                `json:"tool_guard_enabled"`
 	MaxToolRounds                   int                 `json:"max_tool_rounds"`
 	MaxWebSearchCallsPerTurn        int                 `json:"max_web_search_calls_per_turn"`
 	ForceFinalAnswerAfterToolLimit  bool                `json:"force_final_answer_after_tool_limit"`
@@ -80,6 +81,7 @@ type SettingsUpdateRequest struct {
 	DiscordPresenceIntentEnabled    *bool                     `json:"discord_presence_intent_enabled"`
 	DiscordObserveMaxResults        *int                      `json:"discord_observe_max_results"`
 	DiscordObserveMessageScope      string                    `json:"discord_observe_message_scope"`
+	ToolGuardEnabled                *bool                     `json:"tool_guard_enabled"`
 	MaxToolRounds                   *int                      `json:"max_tool_rounds"`
 	MaxWebSearchCallsPerTurn        *int                      `json:"max_web_search_calls_per_turn"`
 	ForceFinalAnswerAfterToolLimit  *bool                     `json:"force_final_answer_after_tool_limit"`

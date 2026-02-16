@@ -31,7 +31,8 @@ function buildForm(mode: SettingsData['web_tool_mode']): SettingsData {
     discord_presence_intent_enabled: false,
     discord_observe_max_results: 25,
     discord_observe_message_scope: 'current_guild',
-    max_tool_rounds: 3,
+    tool_guard_enabled: false,
+    max_tool_rounds: 5,
     max_web_search_calls_per_turn: 2,
     force_final_answer_after_tool_limit: true,
     transient_recovery_wait_enabled: true,
@@ -91,4 +92,3 @@ describe('ToolsSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   })
 })
-

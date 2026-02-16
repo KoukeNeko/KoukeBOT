@@ -26,7 +26,8 @@ const (
 	DiscordObserveScopeCurrentChannel = "current_channel"
 	DiscordObserveScopeCurrentGuild   = "current_guild"
 	DefaultDiscordObserveMessageScope = DiscordObserveScopeCurrentGuild
-	DefaultMaxToolRounds              = 3
+	DefaultToolGuardEnabled           = false
+	DefaultMaxToolRounds              = 5
 	DefaultMaxWebSearchCallsPerTurn   = 2
 	DefaultTransientRecoveryWaitMax   = 5
 	DefaultMemoryRecentRounds         = 50
@@ -78,6 +79,7 @@ type Settings struct {
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
 
 	// Tool loop guard / resilience settings
+	ToolGuardEnabled                bool `json:"tool_guard_enabled"`
 	MaxToolRounds                   int  `json:"max_tool_rounds"`
 	MaxWebSearchCallsPerTurn        int  `json:"max_web_search_calls_per_turn"`
 	ForceFinalAnswerAfterToolLimit  bool `json:"force_final_answer_after_tool_limit"`
@@ -276,6 +278,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	}
 	if _, ok := raw["max_tool_rounds"]; !ok {
 		settings.MaxToolRounds = DefaultMaxToolRounds
+	}
+	if _, ok := raw["tool_guard_enabled"]; !ok {
+		settings.ToolGuardEnabled = DefaultToolGuardEnabled
 	}
 	if _, ok := raw["max_web_search_calls_per_turn"]; !ok {
 		settings.MaxWebSearchCallsPerTurn = DefaultMaxWebSearchCallsPerTurn

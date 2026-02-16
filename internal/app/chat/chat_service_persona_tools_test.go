@@ -160,14 +160,19 @@ func TestToolCallSignatureStableForMapInput(t *testing.T) {
 func TestBuildToolLoopFallbackResponse(t *testing.T) {
 	policy := DefaultPromptGuardPolicy()
 	policy.TripletOutputEnabled = true
-	triplet := buildToolLoopFallbackResponse(policy)
+	summary := toolGuardSummary{}
+	summary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached", "max_tool_rounds=3")
+	triplet := buildToolLoopFallbackResponse(policy, summary, "")
 	if !strings.Contains(triplet, "[Status]:") || !strings.Contains(triplet, "[Response]:") {
 		t.Fatalf("expected triplet fallback response, got: %s", triplet)
 	}
+	if !strings.Contains(triplet, toolLogPrefixGuard) {
+		t.Fatalf("expected guard prefix in triplet fallback response, got: %s", triplet)
+	}
 
 	policy.TripletOutputEnabled = false
-	plain := buildToolLoopFallbackResponse(policy)
-	if strings.Contains(plain, "[Status]:") {
+	plain := buildToolLoopFallbackResponse(policy, toolGuardSummary{}, "forced_final_error=boom")
+	if strings.Contains(plain, "[Status]:") || !strings.Contains(plain, toolLogPrefixError) {
 		t.Fatalf("expected plain fallback response, got: %s", plain)
 	}
 }
@@ -193,6 +198,7 @@ func TestToolGuardSummaryForceFinalAnswer(t *testing.T) {
 		t.Fatalf("empty summary should not trigger forced final answer")
 	}
 
+	policy.ToolGuardEnabled = true
 	summary.Add(toolGuardKindDuplicate, "web_search", "duplicate_tool_call_blocked", "")
 	if !summary.shouldForceFinalAnswer(policy) {
 		t.Fatalf("duplicate guard should trigger forced final answer")

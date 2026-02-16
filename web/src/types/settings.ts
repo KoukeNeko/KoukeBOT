@@ -23,6 +23,7 @@ export interface SettingsData {
   discord_presence_intent_enabled: boolean
   discord_observe_max_results: number
   discord_observe_message_scope: 'current_channel' | 'current_guild'
+  tool_guard_enabled: boolean
   max_tool_rounds: number
   max_web_search_calls_per_turn: number
   force_final_answer_after_tool_limit: boolean
