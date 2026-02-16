@@ -107,17 +107,38 @@ func (m *Manager) BuildTools(ctx context.Context, settings config.MCPSettings) (
 		for _, name := range server.ToolAllowlist {
 			allowlist[strings.TrimSpace(name)] = struct{}{}
 		}
+		autoRegisterAll := shouldAutoRegisterAllDiscoveredTools(server.ID)
+		if settings.VerboseLogging {
+			logMCP.Logf(
+				"discover.register server=%s auto_all=%t allowlist=%d discovered=%d",
+				server.ID,
+				autoRegisterAll,
+				len(allowlist),
+				len(discovered),
+			)
+		}
 
 		registered := make([]string, 0, len(discovered))
 		discoveredNames := make([]string, 0, len(discovered))
 		for _, descriptor := range discovered {
 			discoveredNames = append(discoveredNames, descriptor.Name)
-			if _, ok := allowlist[descriptor.Name]; !ok {
-				continue
+			if !autoRegisterAll {
+				if _, ok := allowlist[descriptor.Name]; !ok {
+					continue
+				}
 			}
 			exposedName := ExposedToolName(server.ID, descriptor.Name)
 			tools = append(tools, NewToolAdapter(m, server.ID, descriptor.Name, exposedName, descriptor.Description, descriptor.InputSchema))
 			registered = append(registered, exposedName)
+		}
+
+		if settings.VerboseLogging {
+			logMCP.Logf(
+				"discover.register.done server=%s registered=%d auto_all=%t",
+				server.ID,
+				len(registered),
+				autoRegisterAll,
+			)
 		}
 
 		m.updateStatus(server.ID, func(status *ServerStatus) {
@@ -132,6 +153,10 @@ func (m *Manager) BuildTools(ctx context.Context, settings config.MCPSettings) (
 	}
 
 	return tools, warnings
+}
+
+func shouldAutoRegisterAllDiscoveredTools(serverID string) bool {
+	return strings.TrimSpace(serverID) == config.ManagedPlaywrightMCPServerID
 }
 
 func (m *Manager) DiscoverServer(ctx context.Context, server config.MCPServerSetting, timeout time.Duration) ([]ToolDescriptor, error) {

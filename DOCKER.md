@@ -55,6 +55,7 @@ docker rm kouke-bot
 
 - `GIN_MODE` - Gin framework mode (default: `release`)
 - `TZ` - Timezone (default: `Asia/Tokyo`)
+- `PLAYWRIGHT_BROWSERS_PATH` - Playwright browser cache directory in runtime image (default: `/ms-playwright`)
 
 ## Port Mapping
 
@@ -85,7 +86,16 @@ docker-compose logs -f kouke-bot
 
 ### Enter the container shell
 ```bash
-docker-compose exec kouke-bot sh
+docker-compose exec kouke-bot bash
+```
+
+### Verify Playwright MCP runtime
+```bash
+# confirm binary exists
+docker-compose exec kouke-bot playwright-mcp --help
+
+# confirm chromium is installed in image
+docker-compose exec kouke-bot npx playwright --version
 ```
 
 ### Rebuild after code changes

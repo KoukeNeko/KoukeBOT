@@ -71,3 +71,12 @@ func validateMemoryRetentionSettings(memoryRecentRounds int) error {
 	}
 	return nil
 }
+
+func validateWebToolMode(mode string) error {
+	switch mode {
+	case config.WebToolModeClassic, config.WebToolModePlaywrightMCP:
+		return nil
+	default:
+		return fmt.Errorf("web_tool_mode must be one of: %s, %s", config.WebToolModeClassic, config.WebToolModePlaywrightMCP)
+	}
+}

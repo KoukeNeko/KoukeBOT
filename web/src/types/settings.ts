@@ -9,6 +9,7 @@ export interface SettingsData {
   perplexity_api_key: string
   search_provider: string
   web_fetch_enabled: boolean
+  web_tool_mode: 'classic' | 'playwright_mcp'
   timezone: string
   time_format: string
   location: string

@@ -74,3 +74,17 @@ Expected:
   - status code
   - session id
   - redacted payload
+
+## Playwright MCP Mode Checks
+When `web_tool_mode=playwright_mcp` is selected in Settings:
+
+- Runtime always forces MCP enablement and verbose transport diagnostics.
+- Managed server is reserved as `id=playwright_mcp` (stdio transport).
+- Classic `web_search` / `web_fetch` tools are not registered in this mode.
+
+Quick checks:
+
+1. Save Settings with `web_tool_mode=playwright_mcp`.
+2. Open `/mcp` and verify managed server appears as readonly.
+3. Click `Discover tools` for `playwright_mcp`.
+4. Validate console/Discord logs include `MCP | mode.apply ...` and detailed transport payload logs (with redacted secrets).

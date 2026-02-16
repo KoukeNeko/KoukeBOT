@@ -40,17 +40,22 @@ COPY --from=web-builder /app/web/dist ./web/dist
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o kouke-bot ./cmd/character
 
 # Stage 3: Runtime image
-FROM alpine:latest
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata nodejs npm && \
-    npm install -g @google/gemini-cli && \
+# Install runtime dependencies and Playwright MCP runtime.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npm install -g @google/gemini-cli @playwright/mcp playwright && \
+    npx -y playwright install --with-deps chromium && \
     npm cache clean --force
 
 # Create necessary directories
-RUN mkdir -p /app/configs /app/data /app/web/dist
+RUN mkdir -p /app/configs /app/data /app/web/dist /ms-playwright
 
 # Copy the binary from builder
 COPY --from=go-builder /app/kouke-bot /app/kouke-bot
@@ -66,10 +71,10 @@ ARG IMAGE_VERSION=dev
 RUN echo "${IMAGE_VERSION}" > /app/.image-version
 
 # Create a non-root user
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN groupadd --system appgroup && useradd --system --gid appgroup --create-home appuser
 
 # Change ownership
-RUN chown -R appuser:appgroup /app
+RUN chown -R appuser:appgroup /app /ms-playwright
 
 # Switch to non-root user
 USER appuser

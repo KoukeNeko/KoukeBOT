@@ -24,6 +24,24 @@ func TestNormalizeProviderType(t *testing.T) {
 	}
 }
 
+func TestNormalizeWebToolMode(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "", want: WebToolModeClassic},
+		{in: WebToolModeClassic, want: WebToolModeClassic},
+		{in: WebToolModePlaywrightMCP, want: WebToolModePlaywrightMCP},
+		{in: "unknown", want: WebToolModeClassic},
+	}
+
+	for _, tt := range tests {
+		if got := normalizeWebToolMode(tt.in); got != tt.want {
+			t.Fatalf("normalizeWebToolMode(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestNormalizeSettingsAppliesPromptGuardDefaultsForLegacyFile(t *testing.T) {
 	var s Settings
 	raw := map[string]json.RawMessage{}
@@ -175,5 +193,19 @@ func TestNormalizeSettingsMemoryRecentRoundsBounds(t *testing.T) {
 	gotMonitorHigh := normalizeSettings(Settings{ScheduledMonitorMaxPerUser: MaxScheduledMonitorMaxPerUser + 10}, nil)
 	if gotMonitorHigh.ScheduledMonitorMaxPerUser != MaxScheduledMonitorMaxPerUser {
 		t.Fatalf("ScheduledMonitorMaxPerUser high = %d, want %d", gotMonitorHigh.ScheduledMonitorMaxPerUser, MaxScheduledMonitorMaxPerUser)
+	}
+}
+
+func TestNormalizeSettingsWebToolModeDefaults(t *testing.T) {
+	got := normalizeSettings(Settings{}, map[string]json.RawMessage{})
+	if got.WebToolMode != WebToolModeClassic {
+		t.Fatalf("WebToolMode = %q, want %q", got.WebToolMode, WebToolModeClassic)
+	}
+
+	gotInvalid := normalizeSettings(Settings{WebToolMode: "bad"}, map[string]json.RawMessage{
+		"web_tool_mode": json.RawMessage(`"bad"`),
+	})
+	if gotInvalid.WebToolMode != WebToolModeClassic {
+		t.Fatalf("invalid WebToolMode normalized to %q, want %q", gotInvalid.WebToolMode, WebToolModeClassic)
 	}
 }

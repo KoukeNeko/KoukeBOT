@@ -27,8 +27,16 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 		return nil, fmt.Errorf("handlers are not configured")
 	}
 
-	logAPI.Logf("settings: saving model=%s provider=%s websearch=%v reply=%v",
-		existing.GeminiModel, existing.ProviderType, existing.WebSearchEnabled, existing.DiscordUseReply)
+	if config.NormalizeWebToolMode(existing.WebToolMode) == config.WebToolModePlaywrightMCP {
+		nextServers, upserted := tooling.EnsureManagedPlaywrightMCPServer(existing.MCP.Servers)
+		existing.MCP.Servers = nextServers
+		if upserted {
+			logAPI.Logf("settings: auto-provisioned managed MCP server id=%s", config.ManagedPlaywrightMCPServerID)
+		}
+	}
+
+	logAPI.Logf("settings: saving model=%s provider=%s mode=%s websearch=%v reply=%v",
+		existing.GeminiModel, existing.ProviderType, existing.WebToolMode, existing.WebSearchEnabled, existing.DiscordUseReply)
 
 	if err := h.settingsStore.Save(existing); err != nil {
 		return nil, fmt.Errorf("save settings: %w", err)

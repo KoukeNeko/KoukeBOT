@@ -16,6 +16,7 @@ const defaultSettings: SettingsData = {
   perplexity_api_key: '',
   search_provider: 'auto',
   web_fetch_enabled: false,
+  web_tool_mode: 'classic',
   timezone: 'auto',
   time_format: 'auto',
   location: '',
@@ -51,6 +52,39 @@ const defaultSettings: SettingsData = {
     'You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude.',
 }
 
+const managedPlaywrightServer: MCPServerData = {
+  id: 'playwright_mcp',
+  name: 'Playwright MCP (Managed)',
+  enabled: true,
+  transport: 'stdio',
+  command: 'playwright-mcp',
+  args: ['--headless', '--no-sandbox', '--isolated'],
+  env: {},
+  url: '',
+  headers: {},
+  tool_allowlist: [],
+}
+
+function ensureManagedPlaywrightServer(settings: SettingsData): SettingsData {
+  if (settings.web_tool_mode !== 'playwright_mcp') {
+    return settings
+  }
+
+  const managed: MCPServerData = {
+    ...managedPlaywrightServer,
+    args: [...managedPlaywrightServer.args],
+  }
+  const currentServers = settings.mcp.servers || []
+  const filtered = currentServers.filter((server) => server.id !== managed.id)
+  return {
+    ...settings,
+    mcp: {
+      ...settings.mcp,
+      servers: [...filtered, managed],
+    },
+  }
+}
+
 export function useMCPPageData() {
   const [form, setForm] = useState<SettingsData>(defaultSettings)
   const [mcpStatus, setMCPStatus] = useState<MCPStatusEntry[]>([])
@@ -74,7 +108,7 @@ export function useMCPPageData() {
       getSettings(),
       getMCPStatus().catch(() => [] as MCPStatusEntry[]),
     ])
-    setForm(settings)
+    setForm(ensureManagedPlaywrightServer(settings))
     setMCPStatus(statusEntries)
   }, [])
 
@@ -93,12 +127,13 @@ export function useMCPPageData() {
     setSaving(true)
     setMessage(null)
     try {
-      const result = await updateSettings(form)
+      const nextForm = ensureManagedPlaywrightServer(form)
+      const result = await updateSettings(nextForm)
       const [updated, statusEntries] = await Promise.all([
         getSettings(),
         getMCPStatus().catch(() => [] as MCPStatusEntry[]),
       ])
-      setForm(updated)
+      setForm(ensureManagedPlaywrightServer(updated))
       setMCPStatus(statusEntries)
       if (result.warning) {
         setMessage({ type: 'ok', text: `MCP 設定已儲存。警告：${result.warning}` })

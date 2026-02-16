@@ -23,6 +23,7 @@ const settingsFixture: SettingsData = {
   perplexity_api_key: '',
   search_provider: 'auto',
   web_fetch_enabled: false,
+  web_tool_mode: 'classic',
   timezone: 'auto',
   time_format: 'auto',
   location: '',
@@ -127,5 +128,24 @@ describe('useMCPPageData', () => {
       type: 'ok',
       text: 'MCP test 完成：1/1 servers passed.',
     })
+  })
+
+  it('auto-provisions managed playwright server in playwright mode', async () => {
+    vi.mocked(api.getSettings).mockResolvedValueOnce({
+      ...settingsFixture,
+      web_tool_mode: 'playwright_mcp',
+      mcp: {
+        ...settingsFixture.mcp,
+        servers: [],
+      },
+    })
+
+    const { result } = renderHook(() => useMCPPageData())
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.form.mcp.servers.map((server) => server.id)).toContain('playwright_mcp')
   })
 })

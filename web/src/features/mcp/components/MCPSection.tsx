@@ -55,9 +55,12 @@ function nextServerID(existing: MCPServerData[]): string {
   return `${base}_${n}`
 }
 
+const managedPlaywrightServerID = 'playwright_mcp'
+
 export default function MCPSection({ form, setForm, statuses, saving, onSave, onDiscover }: Props) {
   const [discoveringID, setDiscoveringID] = useState<string | null>(null)
   const [discovered, setDiscovered] = useState<Record<string, MCPToolEntry[]>>({})
+  const managedMode = form.web_tool_mode === 'playwright_mcp'
 
   const statusMap = useMemo(() => {
     const map = new Map<string, MCPStatusEntry>()
@@ -66,6 +69,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
   }, [statuses])
 
   const servers = form.mcp.servers || []
+  const isManagedServer = (server: MCPServerData) => managedMode && server.id === managedPlaywrightServerID
 
   const updateMCP = (next: SettingsData["mcp"]) => {
     setForm({ ...form, mcp: next })
@@ -137,6 +141,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
           checked={form.mcp.enabled}
           onChange={(checked) => updateMCP({ ...form.mcp, enabled: checked })}
           label="啟用 MCP（Model Context Protocol）"
+          disabled={managedMode}
         />
       </div>
       <div className="form-field-checkbox-row">
@@ -144,8 +149,14 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
           checked={form.mcp.verbose_logging}
           onChange={(checked) => updateMCP({ ...form.mcp, verbose_logging: checked })}
           label="啟用 MCP 詳細 Log（MCP prefix）"
+          disabled={managedMode}
         />
       </div>
+      {managedMode && (
+        <p className="hint-block">
+          `playwright_mcp` 模式會強制 runtime 開啟 MCP 與詳細 log，並由系統管理保留 server。
+        </p>
+      )}
 
       <label className="form-field">
         <span>Discovery Timeout (秒)</span>
@@ -202,9 +213,11 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                       {status.reachable ? "reachable" : "offline"}
                     </span>
                   )}
-                  <button type="button" className="btn-outline" onClick={() => handleRemoveServer(idx)}>
-                    刪除
-                  </button>
+                  {!isManagedServer(server) && (
+                    <button type="button" className="btn-outline" onClick={() => handleRemoveServer(idx)}>
+                      刪除
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -214,6 +227,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                   value={server.id}
                   onChange={(e) => updateServer(idx, { ...server, id: e.target.value.trim() })}
                   placeholder="server id (a-z0-9_-)"
+                  disabled={isManagedServer(server)}
                 />
               </label>
 
@@ -223,6 +237,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                   value={server.name}
                   onChange={(e) => updateServer(idx, { ...server, name: e.target.value })}
                   placeholder="Human readable name"
+                  disabled={isManagedServer(server)}
                 />
               </label>
 
@@ -231,7 +246,9 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                   checked={server.enabled}
                   onChange={(checked) => updateServer(idx, { ...server, enabled: checked })}
                   label="啟用此 server"
+                  disabled={isManagedServer(server)}
                 />
+                {isManagedServer(server) && <span className="tool-tag">managed</span>}
               </div>
 
               <label className="form-field">
@@ -239,6 +256,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                 <Select
                   value={server.transport}
                   onChange={(value) => updateServer(idx, { ...server, transport: value as 'stdio' | 'http' })}
+                  disabled={isManagedServer(server)}
                   options={[
                     { value: 'stdio', label: 'stdio' },
                     { value: 'http', label: 'http (streamable)' },
@@ -254,6 +272,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                       value={server.command}
                       onChange={(e) => updateServer(idx, { ...server, command: e.target.value })}
                       placeholder="npx"
+                      disabled={isManagedServer(server)}
                     />
                   </label>
 
@@ -264,6 +283,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                       value={argsToText(server.args || [])}
                       onChange={(e) => updateServer(idx, { ...server, args: textToArgs(e.target.value) })}
                       placeholder="-y\n@modelcontextprotocol/server-filesystem"
+                      disabled={isManagedServer(server)}
                     />
                   </label>
 
@@ -273,6 +293,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                       rows={4}
                       value={mapToLines(server.env || {})}
                       onChange={(e) => updateServer(idx, { ...server, env: linesToMap(e.target.value) })}
+                      disabled={isManagedServer(server)}
                     />
                   </label>
                 </>
@@ -284,6 +305,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                       value={server.url}
                       onChange={(e) => updateServer(idx, { ...server, url: e.target.value })}
                       placeholder="https://example.com/mcp"
+                      disabled={isManagedServer(server)}
                     />
                   </label>
 
@@ -293,6 +315,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                       rows={4}
                       value={mapToLines(server.headers || {})}
                       onChange={(e) => updateServer(idx, { ...server, headers: linesToMap(e.target.value) })}
+                      disabled={isManagedServer(server)}
                     />
                   </label>
                 </>
@@ -322,6 +345,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                           checked={checked}
                           onChange={(next) => toggleAllowlist(idx, tool.name, next)}
                           label={tool.name}
+                          disabled={isManagedServer(server)}
                         />
                         {tool.description && <span className="hint">{tool.description}</span>}
                       </div>

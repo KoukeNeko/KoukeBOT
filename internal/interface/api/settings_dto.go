@@ -14,6 +14,7 @@ type SettingsResponse struct {
 	PerplexityAPIKey                string              `json:"perplexity_api_key"`
 	SearchProvider                  string              `json:"search_provider"`
 	WebFetchEnabled                 bool                `json:"web_fetch_enabled"`
+	WebToolMode                     string              `json:"web_tool_mode"`
 	Timezone                        string              `json:"timezone"`
 	TimeFormat                      string              `json:"time_format"`
 	Location                        string              `json:"location"`
@@ -57,6 +58,7 @@ type SettingsUpdateRequest struct {
 	PerplexityAPIKey                string                    `json:"perplexity_api_key"`
 	SearchProvider                  string                    `json:"search_provider"`
 	WebFetchEnabled                 *bool                     `json:"web_fetch_enabled"`
+	WebToolMode                     string                    `json:"web_tool_mode"`
 	Timezone                        string                    `json:"timezone"`
 	TimeFormat                      string                    `json:"time_format"`
 	Location                        string                    `json:"location"`

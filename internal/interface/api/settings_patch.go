@@ -52,6 +52,9 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.WebFetchEnabled != nil {
 		existing.WebFetchEnabled = *req.WebFetchEnabled
 	}
+	if req.WebToolMode != "" {
+		existing.WebToolMode = req.WebToolMode
+	}
 	existing.Timezone = req.Timezone
 	existing.TimeFormat = req.TimeFormat
 	existing.Location = req.Location
@@ -156,6 +159,9 @@ func (h *Handlers) validateUpdatedSettings(settings config.Settings) error {
 		return err
 	}
 	if err := validateMCPSettings(settings.MCP); err != nil {
+		return err
+	}
+	if err := validateWebToolMode(settings.WebToolMode); err != nil {
 		return err
 	}
 	return validateToolLoopSettings(

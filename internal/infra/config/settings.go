@@ -14,6 +14,11 @@ const (
 	ProviderAPIKey = "api-key"
 	ProviderOAuth  = "oauth"
 
+	WebToolModeClassic       = "classic"
+	WebToolModePlaywrightMCP = "playwright_mcp"
+
+	ManagedPlaywrightMCPServerID = "playwright_mcp"
+
 	DefaultPersonaLockEveryTurns      = 4
 	DefaultAnalysisVisibility         = "visible"
 	DefaultNegativeConstraintPrompt   = "You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude."
@@ -52,6 +57,7 @@ type Settings struct {
 	PerplexityAPIKey              string `json:"perplexity_api_key"` // Perplexity API key for Sonar search (OpenClaw 相容)
 	SearchProvider                string `json:"search_provider"`    // "brave" | "perplexity" | "auto" (OpenClaw 相容)
 	WebFetchEnabled               bool   `json:"web_fetch_enabled"`  // Enable/disable web_fetch tool (OpenClaw 相容)
+	WebToolMode                   string `json:"web_tool_mode"`      // "classic" | "playwright_mcp"
 
 	// Time and location settings (OpenClaw 相容)
 	Timezone   string `json:"timezone"`    // "Asia/Taipei", "America/New_York", "auto"
@@ -192,7 +198,24 @@ func normalizeProviderType(providerType string) string {
 	}
 }
 
+func normalizeWebToolMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case WebToolModeClassic:
+		return WebToolModeClassic
+	case WebToolModePlaywrightMCP:
+		return WebToolModePlaywrightMCP
+	default:
+		return WebToolModeClassic
+	}
+}
+
+func NormalizeWebToolMode(mode string) string {
+	return normalizeWebToolMode(mode)
+}
+
 func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settings {
+	settings.WebToolMode = normalizeWebToolMode(settings.WebToolMode)
+
 	if settings.PersonaLockEveryTurns <= 0 {
 		settings.PersonaLockEveryTurns = DefaultPersonaLockEveryTurns
 	}

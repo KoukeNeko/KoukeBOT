@@ -30,35 +30,38 @@ func BuildCatalog(
 	schedulerService *schedulerpkg.Service,
 	mcpManager *mcp.Manager,
 ) BuildCatalogResult {
+	modeResult := ApplyWebToolMode(settings)
+	effective := modeResult.EffectiveSettings
+
 	var tools []domain.Tool
 	var names []string
 	var warnings []string
 
 	// Web Search Tool
-	if settings.WebSearchEnabled {
+	if effective.WebSearchEnabled {
 		router := search.NewProviderRouter(
-			settings.BraveAPIKey,
-			settings.PerplexityAPIKey,
-			settings.SearchProvider,
+			effective.BraveAPIKey,
+			effective.PerplexityAPIKey,
+			effective.SearchProvider,
 		)
 		if router.IsConfigured() {
 			tools = append(tools, llm.NewWebSearchTool(router))
-			names = append(names, fmt.Sprintf("web_search (provider: %s)", settings.SearchProvider))
+			names = append(names, fmt.Sprintf("web_search (provider: %s)", effective.SearchProvider))
 		}
 	}
 
 	// Web Fetch Tool
-	if settings.WebFetchEnabled {
+	if effective.WebFetchEnabled {
 		tools = append(tools, llm.NewWebFetchTool(search.NewWebFetcher()))
 		names = append(names, "web_fetch")
 	}
 
 	// Session Status Tool
-	timezone := settings.Timezone
+	timezone := effective.Timezone
 	if timezone == "" {
 		timezone = "auto"
 	}
-	timeFormat := settings.TimeFormat
+	timeFormat := effective.TimeFormat
 	if timeFormat == "" {
 		timeFormat = "auto"
 	}
@@ -66,12 +69,12 @@ func BuildCatalog(
 	names = append(names, fmt.Sprintf("session_status (tz: %s)", timezone))
 
 	// Discord observe tool (read-only; Discord-source only).
-	if settings.DiscordObserveEnabled && discordRuntime != nil {
+	if effective.DiscordObserveEnabled && discordRuntime != nil {
 		discordRuntime.SetOptions(discordruntime.RuntimeOptions{
-			MemberIntentEnabled:   settings.DiscordMemberIntentEnabled,
-			PresenceIntentEnabled: settings.DiscordPresenceIntentEnabled,
-			MessageScope:          settings.DiscordObserveMessageScope,
-			MaxResults:            settings.DiscordObserveMaxResults,
+			MemberIntentEnabled:   effective.DiscordMemberIntentEnabled,
+			PresenceIntentEnabled: effective.DiscordPresenceIntentEnabled,
+			MessageScope:          effective.DiscordObserveMessageScope,
+			MaxResults:            effective.DiscordObserveMaxResults,
 		})
 		tools = append(tools, llm.NewDiscordObserveTool(discordRuntime))
 		names = append(names, "discord_observe (read-only; current guild scope)")
@@ -97,14 +100,18 @@ func BuildCatalog(
 	names = append(names, "file_read, file_write, file_append (declarations only; runtime persona-bound execution enabled)")
 
 	if mcpManager != nil {
-		mcpTools, mcpWarnings := mcpManager.BuildTools(ctx, settings.MCP)
+		mcpTools, mcpWarnings := mcpManager.BuildTools(ctx, effective.MCP)
 		tools = append(tools, mcpTools...)
 		warnings = append(warnings, mcpWarnings...)
 		for _, tool := range mcpTools {
 			names = append(names, tool.Name())
 		}
-	} else if settings.MCP.Enabled {
+	} else if effective.MCP.Enabled {
 		warnings = append(warnings, "MCP is enabled but manager is not configured")
+	}
+
+	if modeResult.Mode == config.WebToolModePlaywrightMCP {
+		names = append(names, "web_tool_mode=playwright_mcp (managed MCP)")
 	}
 
 	return BuildCatalogResult{

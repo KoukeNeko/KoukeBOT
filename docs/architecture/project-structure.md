@@ -30,6 +30,9 @@ This document defines the clean-code structure for KoukeBOT after the refactor, 
 
 ## MCP Runtime Notes
 - MCP settings persist in `settings.json` under `mcp`.
+- Web tool runtime now includes `web_tool_mode` (`classic` | `playwright_mcp`).
+- `web_tool_mode=playwright_mcp` disables classic `web_search/web_fetch` registration and forces MCP runtime enablement.
+- Managed Playwright server is reserved as `id=playwright_mcp` and is auto-provisioned for runtime/server management.
 - `mcp.verbose_logging` toggles detailed MCP transport diagnostics.
 - Detailed MCP logs use module prefix `MCP` and redact sensitive keys (`authorization`, `api-key`, `token`, `secret`, `password`, `cookie`, `set-cookie`).
 - Web MCP operations are managed from route `/mcp`; Settings page no longer embeds MCP forms.

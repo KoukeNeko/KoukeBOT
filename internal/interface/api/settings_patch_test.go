@@ -17,6 +17,7 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	existing := config.Settings{
 		GeminiAPIKey:                  "real-key",
 		WebSearchEnabled:              true,
+		WebToolMode:                   config.WebToolModeClassic,
 		DiscordStripLeadingBotMention: false,
 		ContextFlushThreshold:         4000,
 		MemoryRecentRounds:            config.DefaultMemoryRecentRounds,
@@ -31,6 +32,7 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	err := h.applySettingsPatch(&existing, SettingsUpdateRequest{
 		GeminiAPIKey:                  "***...abcd",
 		WebSearchEnabled:              &webSearchEnabled,
+		WebToolMode:                   config.WebToolModePlaywrightMCP,
 		DiscordStripLeadingBotMention: &stripLeadingBotMention,
 		ContextFlushThreshold:         &contextFlushThreshold,
 		MemoryRecentRounds:            &memoryRecentRounds,
@@ -50,6 +52,9 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	}
 	if existing.ContextFlushThreshold != 0 {
 		t.Fatalf("context_flush_threshold = %d, want 0", existing.ContextFlushThreshold)
+	}
+	if existing.WebToolMode != config.WebToolModePlaywrightMCP {
+		t.Fatalf("web_tool_mode = %q, want %q", existing.WebToolMode, config.WebToolModePlaywrightMCP)
 	}
 	if existing.MemoryRecentRounds != config.MaxMemoryRecentRounds {
 		t.Fatalf("memory_recent_rounds = %d, want %d", existing.MemoryRecentRounds, config.MaxMemoryRecentRounds)

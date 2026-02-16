@@ -30,6 +30,7 @@ const defaultSettings: SettingsData = {
   perplexity_api_key: '',
   search_provider: 'auto',
   web_fetch_enabled: false,
+  web_tool_mode: 'classic',
   timezone: 'auto',
   time_format: 'auto',
   location: '',

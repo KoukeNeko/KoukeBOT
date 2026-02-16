@@ -38,6 +38,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		PerplexityAPIKey:                maskKey(settings.PerplexityAPIKey),
 		SearchProvider:                  searchProvider,
 		WebFetchEnabled:                 settings.WebFetchEnabled,
+		WebToolMode:                     settings.WebToolMode,
 		Timezone:                        settings.Timezone,
 		TimeFormat:                      settings.TimeFormat,
 		Location:                        settings.Location,

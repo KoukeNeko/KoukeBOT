@@ -327,3 +327,25 @@ func TestValidateMCPSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateWebToolMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		wantErr bool
+	}{
+		{name: "classic", mode: config.WebToolModeClassic, wantErr: false},
+		{name: "playwright_mcp", mode: config.WebToolModePlaywrightMCP, wantErr: false},
+		{name: "invalid", mode: "legacy", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateWebToolMode(tt.mode)
+		if tt.wantErr && err == nil {
+			t.Fatalf("%s: expected error", tt.name)
+		}
+		if !tt.wantErr && err != nil {
+			t.Fatalf("%s: unexpected error: %v", tt.name, err)
+		}
+	}
+}
