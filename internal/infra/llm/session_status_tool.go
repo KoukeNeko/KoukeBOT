@@ -72,7 +72,11 @@ func (t *SessionStatusTool) Execute(ctx context.Context, input map[string]interf
 
 	statusJSON, _ := json.MarshalIndent(status, "", "  ")
 
-	result := fmt.Sprintf("🕒 Current Session Status\n\n%s\n\nNote: This is the current time when you called this tool.", string(statusJSON))
+	result := fmt.Sprintf(
+		"🕒 Current Session Status\n\n%s\n\nNote: This is the current time when you called this tool.\n"+
+			"Instruction: Use this result directly and do NOT call `session_status` again in this turn unless the user explicitly asks for refreshed current time.",
+		string(statusJSON),
+	)
 
 	return domain.ToolResult{
 		Content: result,
