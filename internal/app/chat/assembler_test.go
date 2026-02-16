@@ -92,6 +92,46 @@ func TestRenderSystemPromptIncludesTOONSchemaReference(t *testing.T) {
 	}
 }
 
+func TestRenderSystemPromptUsesPersonaTimezoneOverGlobal(t *testing.T) {
+	assembler := NewContextAssembler()
+	assembler.UpdateGlobalTimezone("Asia/Taipei")
+	persona := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			SystemTemplate: "Current Time: {{.Time}}",
+			Timezone:       "Asia/Tokyo",
+		},
+	}
+
+	got, err := assembler.renderSystemPrompt(persona, DefaultPromptGuardPolicy())
+	if err != nil {
+		t.Fatalf("renderSystemPrompt() error = %v", err)
+	}
+	if !strings.Contains(got, "Time zone: Asia/Tokyo") {
+		t.Fatalf("expected persona timezone in system prompt, got:\n%s", got)
+	}
+	if strings.Contains(got, "Asia/Taipei") {
+		t.Fatalf("global timezone should not override persona timezone, got:\n%s", got)
+	}
+}
+
+func TestRenderSystemPromptUsesGlobalTimezoneFallback(t *testing.T) {
+	assembler := NewContextAssembler()
+	assembler.UpdateGlobalTimezone("America/New_York")
+	persona := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			SystemTemplate: "Current Time: {{.Time}}",
+		},
+	}
+
+	got, err := assembler.renderSystemPrompt(persona, DefaultPromptGuardPolicy())
+	if err != nil {
+		t.Fatalf("renderSystemPrompt() error = %v", err)
+	}
+	if !strings.Contains(got, "Time zone: America/New_York") {
+		t.Fatalf("expected global timezone fallback in system prompt, got:\n%s", got)
+	}
+}
+
 func TestAssembleThinkingModelInjectsPersonaLockEveryNTurns(t *testing.T) {
 	assembler := NewContextAssembler()
 	policy := DefaultPromptGuardPolicy()

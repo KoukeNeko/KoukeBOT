@@ -54,6 +54,7 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 		NegativeConstraintEnabled: existing.NegativeConstraintEnabled,
 		NegativeConstraintDefault: existing.NegativeConstraintDefault,
 	})
+	h.chatService.UpdateGlobalTimezone(existing.Timezone)
 	h.chatService.UpdateToolExecutionPolicy(app.ToolExecutionPolicy{
 		ToolGuardEnabled:               existing.ToolGuardEnabled,
 		MaxToolRounds:                  existing.MaxToolRounds,

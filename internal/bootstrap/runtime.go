@@ -116,6 +116,7 @@ func BuildRuntimeServices(
 	}
 
 	assembler := app.NewContextAssembler()
+	assembler.UpdateGlobalTimezone(settings.Timezone)
 	assembler.UpdatePromptGuardPolicy(app.PromptGuardPolicy{
 		PersonaLockEveryTurns:     settings.PersonaLockEveryTurns,
 		TripletOutputEnabled:      settings.TripletOutputEnabled,

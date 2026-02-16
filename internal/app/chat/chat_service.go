@@ -127,6 +127,14 @@ func (s *ChatService) UpdatePromptGuardPolicy(policy PromptGuardPolicy) {
 	s.assembler.UpdatePromptGuardPolicy(policy)
 }
 
+// UpdateGlobalTimezone hot-swaps assembler global timezone fallback without restart.
+func (s *ChatService) UpdateGlobalTimezone(timezone string) {
+	if s == nil || s.assembler == nil {
+		return
+	}
+	s.assembler.UpdateGlobalTimezone(timezone)
+}
+
 // UpdateToolExecutionPolicy hot-swaps tool loop policy without restart.
 func (s *ChatService) UpdateToolExecutionPolicy(policy ToolExecutionPolicy) {
 	if s == nil {

@@ -121,6 +121,8 @@ type ContextAssembler struct {
 	budgetMu          sync.RWMutex
 	guardMu           sync.RWMutex
 	guard             PromptGuardPolicy
+	timezoneMu        sync.RWMutex
+	globalTimezone    string
 	lockInjectedCount uint64
 }
 
@@ -135,6 +137,15 @@ func (a *ContextAssembler) UpdatePromptGuardPolicy(policy PromptGuardPolicy) {
 	a.guardMu.Lock()
 	defer a.guardMu.Unlock()
 	a.guard = normalizePromptGuardPolicy(policy)
+}
+
+func (a *ContextAssembler) UpdateGlobalTimezone(timezone string) {
+	if a == nil {
+		return
+	}
+	a.timezoneMu.Lock()
+	a.globalTimezone = normalizeTimezoneValue(timezone)
+	a.timezoneMu.Unlock()
 }
 
 func (a *ContextAssembler) PromptGuardPolicy() PromptGuardPolicy {
@@ -164,6 +175,16 @@ func (a *ContextAssembler) MemoryRecentMessages() int {
 
 func (a *ContextAssembler) snapshotPromptGuardPolicy() PromptGuardPolicy {
 	return a.PromptGuardPolicy()
+}
+
+func (a *ContextAssembler) snapshotGlobalTimezone() string {
+	if a == nil {
+		return ""
+	}
+	a.timezoneMu.RLock()
+	timezone := a.globalTimezone
+	a.timezoneMu.RUnlock()
+	return normalizeTimezoneValue(timezone)
 }
 
 func (a *ContextAssembler) snapshotBudget() ContextBudgetManager {
@@ -220,10 +241,7 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	anchorsText := formatAnchorsForTemplate(persona.Anchors)
 
 	// Determine timezone (persona-level overrides global, default to "auto")
-	timezone := persona.Config.Timezone
-	if timezone == "" {
-		timezone = "auto" // Will be resolved to local timezone
-	}
+	timezone := resolveEffectiveTimezone(persona.Config.Timezone, a.snapshotGlobalTimezone())
 
 	data := map[string]string{
 		"Lore":    persona.Lore,
@@ -676,4 +694,18 @@ func formatAnchorsForTemplate(anchors []domain.Anchor) string {
 		sb.WriteString(fmt.Sprintf("**Response:**\n%s\n\n", anchor.BotResponse))
 	}
 	return sb.String()
+}
+
+func normalizeTimezoneValue(timezone string) string {
+	return strings.TrimSpace(timezone)
+}
+
+func resolveEffectiveTimezone(personaTimezone, globalTimezone string) string {
+	if tz := normalizeTimezoneValue(personaTimezone); tz != "" {
+		return tz
+	}
+	if tz := normalizeTimezoneValue(globalTimezone); tz != "" {
+		return tz
+	}
+	return "auto"
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
@@ -189,6 +191,76 @@ func TestSaveAndHotSwapSettingsReturnsWarningWithoutBlockingSave(t *testing.T) {
 	}
 	if saved.ProviderType != config.ProviderOAuth {
 		t.Fatalf("saved provider type = %q, want oauth", saved.ProviderType)
+	}
+}
+
+func TestSaveAndHotSwapSettingsUpdatesAssemblerGlobalTimezone(t *testing.T) {
+	tempDir := t.TempDir()
+	settingsPath := filepath.Join(tempDir, "settings.json")
+	personaService, err := app.NewPersonaService(testPersonasPath())
+	if err != nil {
+		t.Fatalf("load persona service: %v", err)
+	}
+
+	providerManager := app.NewProviderManager(nil)
+	assembler := app.NewContextAssembler()
+	personaID := "persona-no-timezone"
+	personas := map[string]*domain.PersonaModule{
+		personaID: {
+			Config: domain.PersonaConfig{
+				Meta: domain.PersonaMeta{
+					ID:   personaID,
+					Name: "Persona No TZ",
+				},
+				SystemTemplate: "Current Time: {{.Time}}",
+				Variables:      map[string]any{},
+			},
+		},
+	}
+	chatService := app.NewChatService(
+		providerManager,
+		assembler,
+		store.NewMemoryStore(),
+		nil,
+		0,
+		personas,
+		nil,
+		nil,
+	)
+
+	h := &Handlers{
+		personaService:  personaService,
+		chatService:     chatService,
+		settingsStore:   config.NewSettingsStore(settingsPath),
+		providerManager: providerManager,
+		oauthFlow: llm.NewGeminiOAuthFlow(
+			filepath.Join(tempDir, "oauth.json"),
+			filepath.Join(tempDir, "pool.json"),
+			"http://127.0.0.1:8080/api/oauth/gemini/callback",
+		),
+		convStore: store.NewMemoryStore(),
+		ctx:       context.Background(),
+	}
+
+	response, err := h.saveAndHotSwapSettings(config.Settings{
+		Timezone: "Asia/Tokyo",
+	})
+	if err != nil {
+		t.Fatalf("saveAndHotSwapSettings returned error: %v", err)
+	}
+	if response["status"] != "saved" {
+		t.Fatalf("status = %q, want saved", response["status"])
+	}
+
+	assembled, err := assembler.Assemble(personas[personaID], &domain.Conversation{}, llm.ModelCapabilities{
+		SupportsThinking: true,
+		ContextWindow:    8000,
+	})
+	if err != nil {
+		t.Fatalf("assembler.Assemble returned error: %v", err)
+	}
+	if !strings.Contains(assembled.SystemPrompt, "Time zone: Asia/Tokyo") {
+		t.Fatalf("expected updated global timezone in system prompt, got:\n%s", assembled.SystemPrompt)
 	}
 }
 
