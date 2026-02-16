@@ -1,75 +1,77 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState } from "react";
 
-import DiscordSection from '../../../pages/settings/DiscordSection'
-import MemorySection from '../../../pages/settings/MemorySection'
-import PromptGuardSection from '../../../pages/settings/PromptGuardSection'
-import ProviderSection from '../../../pages/settings/ProviderSection'
-import RuntimeMetricsCard from '../../../pages/settings/RuntimeMetricsCard'
-import TimeLocationSection from '../../../pages/settings/TimeLocationSection'
-import ToolResilienceSection from '../../../pages/settings/ToolResilienceSection'
-import ToolsSection from '../../../pages/settings/ToolsSection'
-import type { useSettingsData } from '../hooks/useSettingsData'
+import DiscordSection from "../../../pages/settings/DiscordSection";
+import MemorySection from "../../../pages/settings/MemorySection";
+import PromptGuardSection from "../../../pages/settings/PromptGuardSection";
+import ProviderSection from "../../../pages/settings/ProviderSection";
+import RuntimeMetricsCard from "../../../pages/settings/RuntimeMetricsCard";
+import TimeLocationSection from "../../../pages/settings/TimeLocationSection";
+import ToolResilienceSection from "../../../pages/settings/ToolResilienceSection";
+import ToolsSection from "../../../pages/settings/ToolsSection";
+import type { useSettingsData } from "../hooks/useSettingsData";
 
-type ViewModel = ReturnType<typeof useSettingsData>
+type ViewModel = ReturnType<typeof useSettingsData>;
 
 type Props = {
-  vm: ViewModel
-}
+  vm: ViewModel;
+};
 
 type SettingsSectionID =
-  | 'runtime_metrics'
-  | 'provider'
-  | 'discord'
-  | 'tools'
-  | 'tool_resilience'
-  | 'prompt_guard'
-  | 'memory'
-  | 'time_location'
+  | "runtime_metrics"
+  | "provider"
+  | "discord"
+  | "tools"
+  | "tool_resilience"
+  | "prompt_guard"
+  | "memory"
+  | "time_location";
 
 type SettingsNavGroup = {
-  id: string
-  label: string
-  items: Array<{ id: SettingsSectionID; label: string }>
-}
+  id: string;
+  label: string;
+  items: Array<{ id: SettingsSectionID; label: string }>;
+};
 
 const settingsNav: SettingsNavGroup[] = [
   {
-    id: 'overview',
-    label: '總覽',
-    items: [{ id: 'runtime_metrics', label: 'Runtime Metrics' }],
+    id: "overview",
+    label: "總覽",
+    items: [{ id: "runtime_metrics", label: "Runtime Metrics" }],
   },
   {
-    id: 'provider',
-    label: '模型與帳號',
-    items: [{ id: 'provider', label: 'LLM Provider' }],
+    id: "provider",
+    label: "模型與帳號",
+    items: [{ id: "provider", label: "LLM Provider" }],
   },
   {
-    id: 'runtime',
-    label: 'Bot Runtime',
+    id: "runtime",
+    label: "Bot Runtime",
     items: [
-      { id: 'discord', label: 'Discord Bot' },
-      { id: 'tools', label: 'Tools' },
-      { id: 'tool_resilience', label: 'Tool Guard / Resilience' },
+      { id: "discord", label: "Discord Bot" },
+      { id: "tools", label: "Tools" },
+      { id: "tool_resilience", label: "Tool Guard / Resilience" },
     ],
   },
   {
-    id: 'behavior',
-    label: '行為與記憶',
+    id: "behavior",
+    label: "行為與記憶",
     items: [
-      { id: 'prompt_guard', label: 'Prompt Guard' },
-      { id: 'memory', label: 'Memory' },
+      { id: "prompt_guard", label: "Prompt Guard" },
+      { id: "memory", label: "Memory" },
     ],
   },
   {
-    id: 'locale',
-    label: '時間與地區',
-    items: [{ id: 'time_location', label: 'Time / Location' }],
+    id: "locale",
+    label: "時間與地區",
+    items: [{ id: "time_location", label: "Time / Location" }],
   },
-]
+];
 
 export default function SettingsPage({ vm }: Props) {
-  const [activeGroup, setActiveGroup] = useState(settingsNav[0].id)
-  const [activeSection, setActiveSection] = useState<SettingsSectionID>(settingsNav[0].items[0].id)
+  const [activeGroup, setActiveGroup] = useState(settingsNav[0].id);
+  const [activeSection, setActiveSection] = useState<SettingsSectionID>(
+    settingsNav[0].items[0].id,
+  );
 
   const activeMeta = useMemo(() => {
     for (const group of settingsNav) {
@@ -79,7 +81,7 @@ export default function SettingsPage({ vm }: Props) {
             groupID: group.id,
             groupLabel: group.label,
             sectionLabel: item.label,
-          }
+          };
         }
       }
     }
@@ -87,18 +89,18 @@ export default function SettingsPage({ vm }: Props) {
       groupID: settingsNav[0].id,
       groupLabel: settingsNav[0].label,
       sectionLabel: settingsNav[0].items[0].label,
-    }
-  }, [activeSection])
+    };
+  }, [activeSection]);
 
   const saveSettings = () => {
-    void vm.handleSave()
-  }
+    void vm.handleSave();
+  };
 
   const renderSection = (section: SettingsSectionID) => {
     switch (section) {
-      case 'runtime_metrics':
-        return <RuntimeMetricsCard runtimeMetrics={vm.runtimeMetrics} />
-      case 'provider':
+      case "runtime_metrics":
+        return <RuntimeMetricsCard runtimeMetrics={vm.runtimeMetrics} />;
+      case "provider":
         return (
           <ProviderSection
             form={vm.form}
@@ -132,8 +134,8 @@ export default function SettingsPage({ vm }: Props) {
             importingCLI={vm.oauth.importingCLI}
             onImportCLIToken={vm.oauth.handleImportCLIToken}
           />
-        )
-      case 'discord':
+        );
+      case "discord":
         return (
           <DiscordSection
             form={vm.form}
@@ -142,8 +144,8 @@ export default function SettingsPage({ vm }: Props) {
             saving={vm.saving}
             onSave={saveSettings}
           />
-        )
-      case 'tools':
+        );
+      case "tools":
         return (
           <ToolsSection
             form={vm.form}
@@ -151,8 +153,8 @@ export default function SettingsPage({ vm }: Props) {
             saving={vm.saving}
             onSave={saveSettings}
           />
-        )
-      case 'tool_resilience':
+        );
+      case "tool_resilience":
         return (
           <ToolResilienceSection
             form={vm.form}
@@ -160,8 +162,8 @@ export default function SettingsPage({ vm }: Props) {
             saving={vm.saving}
             onSave={saveSettings}
           />
-        )
-      case 'prompt_guard':
+        );
+      case "prompt_guard":
         return (
           <PromptGuardSection
             form={vm.form}
@@ -169,8 +171,8 @@ export default function SettingsPage({ vm }: Props) {
             saving={vm.saving}
             onSave={saveSettings}
           />
-        )
-      case 'memory':
+        );
+      case "memory":
         return (
           <MemorySection
             form={vm.form}
@@ -179,8 +181,8 @@ export default function SettingsPage({ vm }: Props) {
             saving={vm.saving}
             onSave={saveSettings}
           />
-        )
-      case 'time_location':
+        );
+      case "time_location":
         return (
           <TimeLocationSection
             form={vm.form}
@@ -188,25 +190,28 @@ export default function SettingsPage({ vm }: Props) {
             saving={vm.saving}
             onSave={saveSettings}
           />
-        )
+        );
       default:
-        return null
+        return null;
     }
-  }
+  };
 
   const handleSelectGroup = (groupID: string) => {
-    const nextGroup = settingsNav.find((group) => group.id === groupID)
-    if (!nextGroup) return
-    setActiveGroup(groupID)
-    setActiveSection(nextGroup.items[0].id)
-  }
+    const nextGroup = settingsNav.find((group) => group.id === groupID);
+    if (!nextGroup) return;
+    setActiveGroup(groupID);
+    setActiveSection(nextGroup.items[0].id);
+  };
 
-  const handleSelectSection = (groupID: string, sectionID: SettingsSectionID) => {
-    setActiveGroup(groupID)
-    setActiveSection(sectionID)
-  }
+  const handleSelectSection = (
+    groupID: string,
+    sectionID: SettingsSectionID,
+  ) => {
+    setActiveGroup(groupID);
+    setActiveSection(sectionID);
+  };
 
-  if (vm.loading) return <p>Loading settings...</p>
+  if (vm.loading) return <p>Loading settings...</p>;
 
   return (
     <div className="settings-page">
@@ -215,7 +220,7 @@ export default function SettingsPage({ vm }: Props) {
           {settingsNav.map((group) => (
             <div
               key={group.id}
-              className={`settings-sidebar-group ${group.id === activeGroup ? 'active' : ''}`}
+              className={`settings-sidebar-group ${group.id === activeGroup ? "active" : ""}`}
             >
               <button
                 className="settings-sidebar-group-button"
@@ -228,7 +233,7 @@ export default function SettingsPage({ vm }: Props) {
                 {group.items.map((item) => (
                   <button
                     key={item.id}
-                    className={`settings-sidebar-subitem ${item.id === activeSection ? 'active' : ''}`}
+                    className={`settings-sidebar-subitem ${item.id === activeSection ? "active" : ""}`}
                     type="button"
                     onClick={() => handleSelectSection(group.id, item.id)}
                   >
@@ -248,15 +253,21 @@ export default function SettingsPage({ vm }: Props) {
           </div>
 
           {vm.status && (
-            <div className={`status-banner ${vm.status.configured ? 'ok' : 'warn'}`}>
+            <div
+              className={`status-banner ${vm.status.configured ? "ok" : "warn"}`}
+            >
               {vm.status.configured
                 ? `Provider active: ${vm.status.provider_name}`
-                : 'LLM provider not configured — set API key or use OAuth below.'}
+                : "LLM provider not configured — set API key or use OAuth below."}
             </div>
           )}
 
           {vm.message && (
-            <p className={vm.message.type === 'ok' ? 'success message' : 'error message'}>
+            <p
+              className={
+                vm.message.type === "ok" ? "success message" : "error message"
+              }
+            >
               {vm.message.text}
             </p>
           )}
@@ -265,5 +276,5 @@ export default function SettingsPage({ vm }: Props) {
         </div>
       </div>
     </div>
-  )
+  );
 }

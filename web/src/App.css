@@ -50,7 +50,9 @@
   text-decoration: none;
   font-size: 0.9rem;
   font-weight: 500;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .sidebar-nav a:hover {
@@ -147,15 +149,19 @@
 }
 
 @keyframes slideIn {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 @media (max-width: 768px) {
   .sidebar {
     display: none;
   }
-  
+
   .main-content {
     margin-left: 0;
     height: calc(100vh - 60px);
@@ -345,7 +351,10 @@
   border-radius: 12px;
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    transform 0.15s,
+    box-shadow 0.2s;
 }
 
 /* ===== Tags ===== */
@@ -464,7 +473,9 @@ button {
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 500;
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 
 button:hover:not(:disabled) {
@@ -479,12 +490,12 @@ button:disabled {
 
 .btn-secondary {
   background: #16162a;
-  border-color: rgba(255,255,255,0.06);
+  border-color: rgba(255, 255, 255, 0.06);
 }
 
 .btn-secondary:hover:not(:disabled) {
   background: #20203a;
-  border-color: rgba(255,255,255,0.12);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 /* ===== Chat ===== */
@@ -620,12 +631,15 @@ button:disabled {
   padding: 0;
 }
 
-.markdown-content ul, .markdown-content ol {
+.markdown-content ul,
+.markdown-content ol {
   padding-left: 1.25rem;
   margin: 0.5rem 0;
 }
 
-.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3 {
   margin: 1rem 0 0.5rem;
   font-size: 1.1rem;
 }
@@ -861,15 +875,22 @@ section h3 {
   padding-bottom: 0.3rem;
 }
 
-.markdown-preview h1 { font-size: 1.6rem; }
-.markdown-preview h2 { font-size: 1.3rem; }
-.markdown-preview h3 { font-size: 1.1rem; }
+.markdown-preview h1 {
+  font-size: 1.6rem;
+}
+.markdown-preview h2 {
+  font-size: 1.3rem;
+}
+.markdown-preview h3 {
+  font-size: 1.1rem;
+}
 
 .markdown-preview p {
   margin-bottom: 1rem;
 }
 
-.markdown-preview ul, .markdown-preview ol {
+.markdown-preview ul,
+.markdown-preview ol {
   padding-left: 1.5rem;
   margin-bottom: 1rem;
 }
@@ -951,7 +972,9 @@ section h3 {
   font-weight: 500;
   cursor: pointer;
   border-radius: 0;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .provider-tab:hover:not(:disabled) {
@@ -990,7 +1013,9 @@ section h3 {
   background: #16162a;
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .pool-card:hover {
@@ -1092,7 +1117,10 @@ section h3 {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .pool-card-remove:hover:not(:disabled) {
