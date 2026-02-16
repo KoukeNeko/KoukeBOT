@@ -141,11 +141,64 @@ func TestHandleMessageStreamPersistsLastRoundRawLLMInput(t *testing.T) {
 	}
 }
 
+func TestHandleMessageStreamStopsAtMaxRoundsEvenWhenToolGuardDisabled(t *testing.T) {
+	ctx := context.Background()
+	provider := &loopingToolCallProvider{}
+	convStore := store.NewMemoryStore()
+	service := NewChatService(
+		provider,
+		NewContextAssembler(),
+		convStore,
+		nil,
+		0,
+		map[string]*domain.PersonaModule{
+			"persona-a": rawInputTestPersona("persona-a"),
+		},
+		[]domain.Tool{llm.NewSessionStatusTool("Asia/Taipei", "24")},
+		nil,
+	)
+
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = false
+	policy.MaxToolRounds = 2
+	policy.ForceFinalAnswerAfterToolLimit = true
+	service.UpdateToolExecutionPolicy(policy)
+
+	streamCh, err := service.HandleMessageStream(ctx, "ch-loop", "persona-a", "hello loop")
+	if err != nil {
+		t.Fatalf("HandleMessageStream() error = %v", err)
+	}
+
+	var output strings.Builder
+	for chunk := range streamCh {
+		if chunk.Error != nil {
+			t.Fatalf("stream chunk error: %v", chunk.Error)
+		}
+		output.WriteString(chunk.Content)
+	}
+
+	finalText := output.String()
+	if !strings.Contains(finalText, "forced final") {
+		t.Fatalf("expected forced-final content after max rounds, got: %s", finalText)
+	}
+	if provider.disabledCalls != 1 {
+		t.Fatalf("disabled StreamChat calls = %d, want 1", provider.disabledCalls)
+	}
+	if provider.normalCalls != 3 {
+		t.Fatalf("normal StreamChat calls = %d, want 3 (max rounds + 1)", provider.normalCalls)
+	}
+}
+
 type rawInputCaptureProvider struct {
 	chatResponse    string
 	chatRequests    []llm.ChatRequest
 	streamResponses [][]llm.StreamChunk
 	streamRequests  []llm.ChatRequest
+}
+
+type loopingToolCallProvider struct {
+	normalCalls   int
+	disabledCalls int
 }
 
 func (p *rawInputCaptureProvider) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
@@ -191,6 +244,56 @@ func (p *rawInputCaptureProvider) ModelInfo() llm.ModelCapabilities {
 }
 
 func (p *rawInputCaptureProvider) RegisterTools(_ []domain.Tool) {}
+
+func (p *loopingToolCallProvider) Chat(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+	return &llm.ChatResponse{
+		Content:    "unused",
+		TokensUsed: 1,
+	}, nil
+}
+
+func (p *loopingToolCallProvider) StreamChat(_ context.Context, req llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+	ch := make(chan llm.StreamChunk, 2)
+	if req.ToolMode == llm.ToolModeDisabled {
+		p.disabledCalls++
+		ch <- llm.StreamChunk{
+			Content: "[Status]: Stable\n[Analysis]: Tool loop capped.\n[Response]: forced final",
+		}
+		ch <- llm.StreamChunk{Done: true}
+		close(ch)
+		return ch, nil
+	}
+
+	p.normalCalls++
+	ch <- llm.StreamChunk{
+		ToolCalls: []domain.ToolCall{
+			{
+				ID:    "loop-call",
+				Name:  "session_status",
+				Input: map[string]interface{}{},
+			},
+		},
+	}
+	close(ch)
+	return ch, nil
+}
+
+func (p *loopingToolCallProvider) StreamChatMultimodal(_ context.Context, _ string, _ []domain.MultimodalMessage, _ domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
+	ch := make(chan llm.StreamChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (p *loopingToolCallProvider) ModelInfo() llm.ModelCapabilities {
+	return llm.ModelCapabilities{
+		SupportsThinking:  true,
+		ContextWindow:     1_000_000,
+		SupportsStreaming: true,
+		ProviderName:      "looping-tool-call-test",
+	}
+}
+
+func (p *loopingToolCallProvider) RegisterTools(_ []domain.Tool) {}
 
 type rawInputEchoTool struct{}
 

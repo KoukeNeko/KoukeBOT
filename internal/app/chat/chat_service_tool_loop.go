@@ -59,7 +59,7 @@ func (s toolGuardSummary) Has(kind toolGuardKind) bool {
 }
 
 func (s toolGuardSummary) shouldForceFinalAnswer(policy ToolExecutionPolicy) bool {
-	if !policy.ToolGuardEnabled || !policy.ForceFinalAnswerAfterToolLimit {
+	if !policy.ForceFinalAnswerAfterToolLimit {
 		return false
 	}
 	return s.Has(toolGuardKindMaxRounds) || s.Has(toolGuardKindLimit) || s.Has(toolGuardKindDuplicate)
@@ -291,11 +291,16 @@ func (s *ChatService) handleToolCallingStream(
 				logChat.Logf("tool calls (round %d, guard disabled): %s", round+1, strings.Join(names, ", "))
 			}
 
-			if state.toolPolicy.ToolGuardEnabled && round == state.toolPolicy.MaxToolRounds {
+			if round == state.toolPolicy.MaxToolRounds {
 				state.guardSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached",
 					fmt.Sprintf("max_tool_rounds=%d", state.toolPolicy.MaxToolRounds))
 				s.incrementToolGuardMaxRounds()
-				logChat.Warnf("%s [MAX_ROUNDS] max tool rounds (%d) reached, stopping", toolLogPrefixGuard, state.toolPolicy.MaxToolRounds)
+				logChat.Warnf(
+					"%s [MAX_ROUNDS] max tool rounds (%d) reached, stopping (tool_guard_enabled=%t)",
+					toolLogPrefixGuard,
+					state.toolPolicy.MaxToolRounds,
+					state.toolPolicy.ToolGuardEnabled,
+				)
 				break
 			}
 

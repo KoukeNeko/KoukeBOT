@@ -198,15 +198,24 @@ func TestToolGuardSummaryForceFinalAnswer(t *testing.T) {
 		t.Fatalf("empty summary should not trigger forced final answer")
 	}
 
-	policy.ToolGuardEnabled = true
 	summary.Add(toolGuardKindDuplicate, "web_search", "duplicate_tool_call_blocked", "")
 	if !summary.shouldForceFinalAnswer(policy) {
 		t.Fatalf("duplicate guard should trigger forced final answer")
 	}
 
+	policy.ToolGuardEnabled = false
+	roundLimitSummary := toolGuardSummary{}
+	roundLimitSummary.Add(toolGuardKindMaxRounds, "", "max_tool_rounds_reached", "max_tool_rounds=5")
+	if !roundLimitSummary.shouldForceFinalAnswer(policy) {
+		t.Fatalf("max rounds should still trigger forced final answer when force_final is enabled")
+	}
+
 	policy.ForceFinalAnswerAfterToolLimit = false
 	if summary.shouldForceFinalAnswer(policy) {
 		t.Fatalf("policy disabled should suppress forced final answer")
+	}
+	if roundLimitSummary.shouldForceFinalAnswer(policy) {
+		t.Fatalf("policy disabled should suppress forced final answer even for max rounds")
 	}
 }
 

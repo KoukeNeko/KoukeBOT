@@ -6,7 +6,7 @@ Explain when the system blocks tool calls and how final user responses are produ
 ## Guard Rules
 - Duplicate guard: identical tool signature in same user turn is blocked.
 - Web search limit guard: `web_search` calls capped by `max_web_search_calls_per_turn`.
-- Max rounds guard: tool rounds capped by `max_tool_rounds`.
+- Max rounds guard: tool rounds are always capped by `max_tool_rounds` (even when duplicate/limit guard is disabled) to prevent infinite loops.
 
 ## Decision Table
 | Condition | Action | User-facing behavior |
