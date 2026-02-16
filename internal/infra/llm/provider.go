@@ -11,6 +11,7 @@ import (
 type ModelCapabilities struct {
 	SupportsThinking  bool   // Thinking/CoT model (e.g., Gemini 2.5 Pro+)
 	ContextWindow     int    // Max tokens in context
+	MaxOutputTokens   int    // Actual maxOutputTokens sent to the API (used as response reserve in budget calculation)
 	SupportsStreaming bool   // Whether streaming is available
 	ProviderName      string // Human-readable provider identifier
 }

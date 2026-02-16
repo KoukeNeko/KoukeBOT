@@ -78,20 +78,22 @@ type AssembledContext struct {
 	Generation   domain.GenerationConfig
 }
 
+// responseReserveSafetyMargin is added on top of MaxOutputTokens to account for
+// token-count estimation drift between the assembler and the actual tokeniser.
+const responseReserveSafetyMargin = 1024
+
 // ContextBudgetManager controls prompt budget allocation between digest and recent history.
 type ContextBudgetManager struct {
-	ResponseReserveTokens int     // reserved for model output + safety
-	MaxRecentMessages     int     // hard cap for recent raw turns
-	MaxDigests            int     // max digest blocks to include
-	DigestBudgetRatio     float64 // % of history budget reserved for digest blocks
+	MaxRecentMessages int     // hard cap for recent raw turns
+	MaxDigests        int     // max digest blocks to include
+	DigestBudgetRatio float64 // % of history budget reserved for digest blocks
 }
 
 func NewContextBudgetManager() *ContextBudgetManager {
 	return &ContextBudgetManager{
-		ResponseReserveTokens: 4096,
-		MaxRecentMessages:     defaultMemoryRecentMessages,
-		MaxDigests:            4,
-		DigestBudgetRatio:     0.30,
+		MaxRecentMessages: defaultMemoryRecentMessages,
+		MaxDigests:        4,
+		DigestBudgetRatio: 0.30,
 	}
 }
 
@@ -101,7 +103,13 @@ func (bm *ContextBudgetManager) historyBudget(systemPrompt string, caps llm.Mode
 		window = 800_000
 	}
 
-	reserve := bm.ResponseReserveTokens
+	// Reserve = actual maxOutputTokens the provider sends to the API + safety margin.
+	// This ensures the assembler doesn't over-allocate history when the model needs
+	// a large output budget (e.g. thinking models: 16384 tokens).
+	reserve := caps.MaxOutputTokens + responseReserveSafetyMargin
+	if reserve <= 0 {
+		reserve = 8192 + responseReserveSafetyMargin // fallback
+	}
 
 	systemTokens := estimateTokens(systemPrompt)
 	budget := window - reserve - systemTokens

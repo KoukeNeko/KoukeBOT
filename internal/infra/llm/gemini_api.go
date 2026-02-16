@@ -166,6 +166,7 @@ func (g *GeminiAPIProvider) ModelInfo() ModelCapabilities {
 	return ModelCapabilities{
 		SupportsThinking:  supportsThinking,
 		ContextWindow:     1_000_000,
+		MaxOutputTokens:   resolveMaxTokensForModel(g.model, defaultMaxOutputTokens),
 		SupportsStreaming: true,
 		ProviderName:      "gemini-api",
 	}
