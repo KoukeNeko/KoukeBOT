@@ -281,9 +281,13 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	if policy.TripletOutputEnabled {
 		buf.WriteString("\n")
 		buf.WriteString("### Output Contract\n\n")
-		buf.WriteString("- Output must contain exactly these sections in order: `[Status]`, `[Analysis]`, `[Response]`.\n")
-		buf.WriteString("- `[Status]` and `[Analysis]` should be concise and in English.\n")
-		buf.WriteString("- `[Response]` contains the actual user-facing reply.\n")
+		buf.WriteString("- Output MUST follow this exact structure:\n")
+		buf.WriteString("> [Internal Analysis & Tactical Decision]\n")
+		buf.WriteString("> [Status]: (Required: A brief status update in English, e.g., \"Calm\", \"Irritated\", \"Calculating\". Sanity level optional...etc)\n")
+		buf.WriteString("> [Analysis]: (Required: A brief, cold logical assessment of the situation in English)\n")
+		buf.WriteString("> [Response]:\n\n")
+		buf.WriteString("(The actual user-facing reply)\n")
+
 		switch policy.AnalysisVisibility {
 		case AnalysisVisibilityHidden:
 			buf.WriteString("- Keep `[Analysis]` terse and non-repetitive.\n")
