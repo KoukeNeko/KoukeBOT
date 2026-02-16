@@ -1,6 +1,43 @@
 package mcp
 
-import "testing"
+import (
+	"bufio"
+	"bytes"
+	"io"
+	"testing"
+)
+
+func TestWriteJSONLine(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeJSONLine(&buf, []byte(`{"jsonrpc":"2.0","id":1}`)); err != nil {
+		t.Fatalf("writeJSONLine error: %v", err)
+	}
+	if got, want := buf.String(), "{\"jsonrpc\":\"2.0\",\"id\":1}\n"; got != want {
+		t.Fatalf("writeJSONLine = %q, want %q", got, want)
+	}
+}
+
+func TestReadJSONLineSkipsEmptyLines(t *testing.T) {
+	reader := bufio.NewReader(bytes.NewBufferString("\n\r\n  \n{\"jsonrpc\":\"2.0\",\"id\":2}\n"))
+	got, err := readJSONLine(reader)
+	if err != nil {
+		t.Fatalf("readJSONLine error: %v", err)
+	}
+	if string(got) != `{"jsonrpc":"2.0","id":2}` {
+		t.Fatalf("readJSONLine = %s", string(got))
+	}
+}
+
+func TestReadJSONLineEOF(t *testing.T) {
+	reader := bufio.NewReader(bytes.NewBufferString(""))
+	_, err := readJSONLine(reader)
+	if err == nil {
+		t.Fatalf("expected io.EOF, got nil")
+	}
+	if err != io.EOF {
+		t.Fatalf("error = %v, want io.EOF", err)
+	}
+}
 
 func TestParseSSEEvents_MultiEventAndMultilineData(t *testing.T) {
 	body := []byte("event: message\n" +

@@ -10,6 +10,13 @@ import (
 	"strings"
 )
 
+type stdioCodec string
+
+const (
+	stdioCodecFramed stdioCodec = "framed"
+	stdioCodecJSONL  stdioCodec = "jsonl"
+)
+
 func writeFramedJSON(w io.Writer, payload []byte) error {
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(payload))
 	if _, err := io.WriteString(w, header); err != nil {
@@ -52,6 +59,30 @@ func readFramedJSON(reader *bufio.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return payload, nil
+}
+
+func writeJSONLine(w io.Writer, payload []byte) error {
+	if len(payload) == 0 {
+		return fmt.Errorf("empty payload")
+	}
+	if _, err := w.Write(payload); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, "\n")
+	return err
+}
+
+func readJSONLine(reader *bufio.Reader) ([]byte, error) {
+	for {
+		line, err := reader.ReadBytes('\n')
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 {
+			return append([]byte(nil), trimmed...), nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 }
 
 type sseEvent struct {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,10 +23,11 @@ type stdioSession struct {
 	stderrBuf bytes.Buffer
 	nextID    int64
 	serverID  string
+	codec     stdioCodec
 	verbose   bool
 }
 
-func newStdioSession(ctx context.Context, server config.MCPServerSetting, verbose bool) (*stdioSession, error) {
+func newStdioSession(ctx context.Context, server config.MCPServerSetting, codec stdioCodec, verbose bool) (*stdioSession, error) {
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
 	cmd.Env = append(os.Environ(), buildEnvList(server.Env)...)
 
@@ -47,6 +49,7 @@ func newStdioSession(ctx context.Context, server config.MCPServerSetting, verbos
 		stdin:    stdin,
 		stdout:   bufio.NewReader(stdoutPipe),
 		serverID: server.ID,
+		codec:    codec,
 		verbose:  verbose,
 	}
 
@@ -81,6 +84,43 @@ func (s *stdioSession) close() error {
 	return nil
 }
 
+func (s *stdioSession) stderrSummary() string {
+	if s == nil {
+		return ""
+	}
+	stderr := strings.TrimSpace(s.stderrBuf.String())
+	if stderr == "" {
+		return ""
+	}
+	const maxLen = 480
+	if len(stderr) <= maxLen {
+		return stderr
+	}
+	return stderr[:maxLen-3] + "..."
+}
+
+func (s *stdioSession) writeRPC(payload []byte) error {
+	switch s.codec {
+	case stdioCodecJSONL:
+		return writeJSONLine(s.stdin, payload)
+	case stdioCodecFramed:
+		return writeFramedJSON(s.stdin, payload)
+	default:
+		return fmt.Errorf("unsupported stdio codec: %s", s.codec)
+	}
+}
+
+func (s *stdioSession) readRPC() ([]byte, error) {
+	switch s.codec {
+	case stdioCodecJSONL:
+		return readJSONLine(s.stdout)
+	case stdioCodecFramed:
+		return readFramedJSON(s.stdout)
+	default:
+		return nil, fmt.Errorf("unsupported stdio codec: %s", s.codec)
+	}
+}
+
 func (s *stdioSession) call(ctx context.Context, method string, params interface{}, expectResponse bool) (json.RawMessage, error) {
 	id := atomic.AddInt64(&s.nextID, 1)
 	request := rpcRequest{
@@ -94,7 +134,7 @@ func (s *stdioSession) call(ctx context.Context, method string, params interface
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	if err := writeFramedJSON(s.stdin, body); err != nil {
+	if err := s.writeRPC(body); err != nil {
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 	s.logRequest("stdio.req", method, request.ID, body)
@@ -110,7 +150,7 @@ func (s *stdioSession) call(ctx context.Context, method string, params interface
 		default:
 		}
 
-		frame, err := readFramedJSON(s.stdout)
+		frame, err := s.readRPC()
 		if err != nil {
 			return nil, fmt.Errorf("read response: %w", err)
 		}
@@ -142,7 +182,7 @@ func (s *stdioSession) notify(method string, params interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshal notification: %w", err)
 	}
-	if err := writeFramedJSON(s.stdin, body); err != nil {
+	if err := s.writeRPC(body); err != nil {
 		return fmt.Errorf("write notification: %w", err)
 	}
 	s.logRequest("stdio.notify", method, nil, body)
@@ -154,9 +194,10 @@ func (s *stdioSession) logRequest(tag, rpcMethod string, requestID interface{}, 
 		return
 	}
 	logMCP.Logf(
-		"%s server=%s transport=stdio rpc_method=%s rpc_id=%v payload=%s",
+		"%s server=%s transport=stdio codec=%s rpc_method=%s rpc_id=%v payload=%s",
 		tag,
 		s.serverID,
+		s.codec,
 		rpcMethod,
 		requestID,
 		string(sanitizeJSONBytes(payload)),
@@ -168,8 +209,9 @@ func (s *stdioSession) logFrame(rpcMethod string, requestID interface{}, frame [
 		return
 	}
 	logMCP.Logf(
-		"stdio.res server=%s transport=stdio rpc_method=%s rpc_id=%v matched=%t payload=%s",
+		"stdio.res server=%s transport=stdio codec=%s rpc_method=%s rpc_id=%v matched=%t payload=%s",
 		s.serverID,
+		s.codec,
 		rpcMethod,
 		requestID,
 		matched,
@@ -178,11 +220,54 @@ func (s *stdioSession) logFrame(rpcMethod string, requestID interface{}, frame [
 }
 
 func runStdioListTools(ctx context.Context, server config.MCPServerSetting, verbose bool) ([]ToolDescriptor, error) {
-	session, err := newStdioSession(ctx, server, verbose)
+	codecs := stdioCodecCandidates(server)
+	attemptErrs := make([]error, 0, len(codecs))
+	for _, codec := range codecs {
+		tools, err := runStdioListToolsWithCodec(ctx, server, codec, verbose)
+		if err == nil {
+			return tools, nil
+		}
+		attemptErrs = append(attemptErrs, fmt.Errorf("codec=%s: %w", codec, err))
+		if ctx.Err() != nil {
+			break
+		}
+	}
+
+	if len(attemptErrs) == 1 {
+		return nil, attemptErrs[0]
+	}
+	return nil, fmt.Errorf("stdio discovery failed: %w", errors.Join(attemptErrs...))
+}
+
+func runStdioCallTool(ctx context.Context, server config.MCPServerSetting, toolName string, input map[string]interface{}, verbose bool) (string, bool, error) {
+	codecs := stdioCodecCandidates(server)
+	attemptErrs := make([]error, 0, len(codecs))
+	for _, codec := range codecs {
+		content, isError, err := runStdioCallToolWithCodec(ctx, server, toolName, input, codec, verbose)
+		if err == nil {
+			return content, isError, nil
+		}
+		attemptErrs = append(attemptErrs, fmt.Errorf("codec=%s: %w", codec, err))
+		if ctx.Err() != nil {
+			break
+		}
+	}
+
+	if len(attemptErrs) == 1 {
+		return "", false, attemptErrs[0]
+	}
+	return "", false, fmt.Errorf("stdio tool call failed: %w", errors.Join(attemptErrs...))
+}
+
+func runStdioListToolsWithCodec(ctx context.Context, server config.MCPServerSetting, codec stdioCodec, verbose bool) (tools []ToolDescriptor, err error) {
+	session, err := newStdioSession(ctx, server, codec, verbose)
 	if err != nil {
 		return nil, err
 	}
-	defer session.close()
+	defer func() {
+		err = withSessionCloseError(err, session.close())
+		err = withSessionStderr(err, session.stderrSummary())
+	}()
 
 	if _, err := session.call(ctx, "initialize", newInitializeParams(), true); err != nil {
 		return nil, fmt.Errorf("initialize failed: %w", err)
@@ -194,19 +279,29 @@ func runStdioListTools(ctx context.Context, server config.MCPServerSetting, verb
 	if err != nil {
 		return nil, fmt.Errorf("tools/list failed: %w", err)
 	}
-	tools, err := parseToolsListResult(result)
+	tools, err = parseToolsListResult(result)
 	if err != nil {
 		return nil, err
 	}
 	return tools, nil
 }
 
-func runStdioCallTool(ctx context.Context, server config.MCPServerSetting, toolName string, input map[string]interface{}, verbose bool) (string, bool, error) {
-	session, err := newStdioSession(ctx, server, verbose)
+func runStdioCallToolWithCodec(
+	ctx context.Context,
+	server config.MCPServerSetting,
+	toolName string,
+	input map[string]interface{},
+	codec stdioCodec,
+	verbose bool,
+) (content string, isError bool, err error) {
+	session, err := newStdioSession(ctx, server, codec, verbose)
 	if err != nil {
 		return "", false, err
 	}
-	defer session.close()
+	defer func() {
+		err = withSessionCloseError(err, session.close())
+		err = withSessionStderr(err, session.stderrSummary())
+	}()
 
 	if _, err := session.call(ctx, "initialize", newInitializeParams(), true); err != nil {
 		return "", false, fmt.Errorf("initialize failed: %w", err)
@@ -214,7 +309,6 @@ func runStdioCallTool(ctx context.Context, server config.MCPServerSetting, toolN
 	if err := session.notify("notifications/initialized", map[string]interface{}{}); err != nil {
 		return "", false, fmt.Errorf("initialized notification failed: %w", err)
 	}
-
 	result, err := session.call(ctx, "tools/call", map[string]interface{}{
 		"name":      toolName,
 		"arguments": input,
@@ -223,11 +317,62 @@ func runStdioCallTool(ctx context.Context, server config.MCPServerSetting, toolN
 		return "", false, fmt.Errorf("tools/call failed: %w", err)
 	}
 
-	content, isError, err := parseToolCallResponse(result)
+	content, isError, err = parseToolCallResponse(result)
 	if err != nil {
 		return "", false, err
 	}
 	return content, isError, nil
+}
+
+func withSessionCloseError(base error, closeErr error) error {
+	if closeErr == nil {
+		return base
+	}
+	if base == nil {
+		return closeErr
+	}
+	return errors.Join(base, closeErr)
+}
+
+func withSessionStderr(base error, stderr string) error {
+	if base == nil {
+		return nil
+	}
+	stderr = strings.TrimSpace(stderr)
+	if stderr == "" {
+		return base
+	}
+	if strings.Contains(base.Error(), "stderr:") {
+		return base
+	}
+	return errors.Join(base, fmt.Errorf("stderr: %s", stderr))
+}
+
+func stdioCodecCandidates(server config.MCPServerSetting) []stdioCodec {
+	if prefersJSONLStdio(server) {
+		return []stdioCodec{stdioCodecJSONL, stdioCodecFramed}
+	}
+	return []stdioCodec{stdioCodecFramed, stdioCodecJSONL}
+}
+
+func prefersJSONLStdio(server config.MCPServerSetting) bool {
+	if strings.TrimSpace(server.ID) == config.ManagedPlaywrightMCPServerID {
+		return true
+	}
+
+	targets := make([]string, 0, len(server.Args)+1)
+	targets = append(targets, server.Command)
+	targets = append(targets, server.Args...)
+	for _, target := range targets {
+		token := strings.ToLower(strings.TrimSpace(target))
+		if strings.Contains(token, "playwright-mcp") {
+			return true
+		}
+		if strings.Contains(token, "@playwright/mcp") {
+			return true
+		}
+	}
+	return false
 }
 
 func buildEnvList(env map[string]string) []string {
