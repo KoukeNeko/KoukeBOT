@@ -9,10 +9,12 @@ export default function RuntimeMetricsCard({ runtimeMetrics }: Props) {
 
   return (
     <section className="settings-section runtime-metrics-section">
-      <h3 className="settings-section-title">Runtime Metrics (Guard / Exhausted)</h3>
-      <p className="meta runtime-metrics-updated">
-        Last update: {new Date(runtimeMetrics.timestamp).toLocaleString("zh-TW")}
-      </p>
+      <h3 className="settings-section-title">
+        Runtime Metrics (Guard / Exhausted)
+        <span className="meta runtime-metrics-updated" style={{ marginLeft: 'auto', fontWeight: 'normal', fontSize: '0.8rem', opacity: 0.7 }}>
+          Update: {new Date(runtimeMetrics.timestamp).toLocaleString("zh-TW", { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        </span>
+      </h3>
 
       <div className="runtime-metrics-grid">
         <div className="runtime-metric-card">

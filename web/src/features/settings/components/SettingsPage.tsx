@@ -212,7 +212,6 @@ export default function SettingsPage({ vm }: Props) {
     <div className="settings-page">
       <div className="settings-shell">
         <aside className="settings-sidebar-panel">
-          <div className="settings-sidebar-heading">設定分類</div>
           {settingsNav.map((group) => (
             <div
               key={group.id}
@@ -242,11 +241,9 @@ export default function SettingsPage({ vm }: Props) {
         </aside>
 
         <div className="settings-content-panel">
-          <h2>Settings</h2>
-
           <div className="settings-active-context">
             <span>{activeMeta.groupLabel}</span>
-            <span>/</span>
+            <span className="separator">/</span>
             <span>{activeMeta.sectionLabel}</span>
           </div>
 

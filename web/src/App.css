@@ -205,7 +205,7 @@
 
 /* ===== Settings Page ===== */
 .settings-page {
-  padding: 2rem 2.5rem;
+  padding: 1.5rem;
   overflow-y: auto;
   height: 100%;
 }
