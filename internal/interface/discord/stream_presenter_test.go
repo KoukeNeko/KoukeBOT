@@ -63,6 +63,30 @@ func TestFormatToolStartStatusMessage(t *testing.T) {
 	}
 }
 
+func TestDiscordStreamPresenterToolGuardSendsDetailMessage(t *testing.T) {
+	sender := &fakeMessageSender{}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+
+	done, stop := presenter.processChunk(llm.StreamChunk{
+		ToolStatus: "tool_guard",
+		ToolName:   "web_search",
+		ToolInput:  map[string]interface{}{"query": "same"},
+		ToolError:  `Tool guard: duplicate call blocked for "web_search" with identical input in this turn.`,
+	})
+	if done {
+		t.Fatalf("done = true, want false")
+	}
+	if stop {
+		t.Fatalf("stop = true, want false")
+	}
+	if len(sender.sendContents) != 1 {
+		t.Fatalf("send contents = %d, want 1", len(sender.sendContents))
+	}
+	if !strings.Contains(sender.sendContents[0], "[TOOL_GUARD_DETAIL]") {
+		t.Fatalf("expected guard detail prefix in message, got: %q", sender.sendContents[0])
+	}
+}
+
 func TestDiscordStreamPresenterSendFinalFallsBackToSendWhenEditFails(t *testing.T) {
 	sender := &fakeMessageSender{
 		editErr: errors.New("edit failed"),

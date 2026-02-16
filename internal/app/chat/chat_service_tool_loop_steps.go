@@ -154,16 +154,39 @@ func (s *ChatService) emitToolErrors(
 		if !result.IsError {
 			continue
 		}
+
+		call := toolCallMap[result.ToolCallID]
 		if isToolGuardResultMessage(result.Content) {
+			guardDetail := strings.TrimSpace(result.Content)
+			if guardDetail == "" {
+				guardDetail = "tool guard triggered without details"
+			}
+			dedupeKey := "guard|" + call.Name + "|" + toolCallSignature(call) + "|" + guardDetail
+			if _, exists := state.emittedToolErrors[dedupeKey]; exists {
+				continue
+			}
+			state.emittedToolErrors[dedupeKey] = struct{}{}
+			logChat.Warnf(
+				"%s [EMIT] tool=%s%s detail=%s",
+				toolLogPrefixGuard,
+				call.Name,
+				summarizeToolTarget(call, "unknown"),
+				singleLineToolLog(guardDetail),
+			)
+			outputCh <- llm.StreamChunk{
+				ToolStatus: "tool_guard",
+				ToolName:   call.Name,
+				ToolInput:  call.Input,
+				ToolError:  guardDetail,
+			}
 			continue
 		}
 
-		call := toolCallMap[result.ToolCallID]
 		errSummary := strings.TrimSpace(result.Content)
 		if errSummary == "" {
 			errSummary = "unknown tool error"
 		}
-		dedupeKey := call.Name + "|" + toolCallSignature(call) + "|" + errSummary
+		dedupeKey := "error|" + call.Name + "|" + toolCallSignature(call) + "|" + errSummary
 		if _, exists := state.emittedToolErrors[dedupeKey]; exists {
 			continue
 		}

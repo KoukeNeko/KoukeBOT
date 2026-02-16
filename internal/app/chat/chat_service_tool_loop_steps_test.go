@@ -173,6 +173,38 @@ func TestEmitToolErrorsDoesNotTruncateContent(t *testing.T) {
 	}
 }
 
+func TestEmitToolErrorsEmitsToolGuardStatus(t *testing.T) {
+	service := &ChatService{}
+	policy := DefaultToolExecutionPolicy()
+	policy.DiscordShowInternalToolErrors = true
+	state := newToolLoopState(policy, PromptGuardPolicy{})
+	outputCh := make(chan llm.StreamChunk, 1)
+
+	pending := []domain.ToolCall{
+		{ID: "1", Name: "web_search", Input: map[string]interface{}{"query": "same"}},
+	}
+	guardContent := `Tool guard: duplicate call blocked for "web_search" with identical input in this turn.`
+	results := []domain.ToolResult{
+		{
+			ToolCallID: "1",
+			Content:    guardContent,
+			IsError:    true,
+		},
+	}
+
+	service.emitToolErrors(outputCh, pending, results, state)
+	if len(outputCh) != 1 {
+		t.Fatalf("expected one tool guard chunk, got %d", len(outputCh))
+	}
+	chunk := <-outputCh
+	if chunk.ToolStatus != "tool_guard" {
+		t.Fatalf("tool status = %q, want tool_guard", chunk.ToolStatus)
+	}
+	if chunk.ToolError != guardContent {
+		t.Fatalf("tool guard detail mismatch")
+	}
+}
+
 func TestFinalizeToolLoopResponseRepairsMalformedForcedFinalOnce(t *testing.T) {
 	provider := &forcedFinalTestProvider{
 		streamResponses: [][]llm.StreamChunk{

@@ -110,6 +110,14 @@ func formatToolStatusError(toolName string, toolInput map[string]interface{}, ra
 	}
 }
 
+func formatToolGuardStatusDetail(toolName string, rawErr string) string {
+	errText := strings.TrimSpace(rawErr)
+	if errText == "" {
+		errText = "tool guard triggered without details"
+	}
+	return fmt.Sprintf("⚠️ [TOOL_GUARD_DETAIL] tool=%s detail=%s", safeToolName(toolName), errText)
+}
+
 func formatToolStartStatusMessage(toolName string, toolInput map[string]interface{}) string {
 	return interfacecommon.FormatToolStartMessage(toolName, toolInput)
 }

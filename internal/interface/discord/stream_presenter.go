@@ -170,6 +170,26 @@ func (p *discordStreamPresenter) handleToolStatus(chunk llm.StreamChunk) {
 		if err := p.sender.EditMessage(p.channelID, p.messageID, toolMsg); err != nil {
 			logHandler.Errorf("edit tool status [%s]: %v", p.channelID, err)
 		}
+	case "tool_guard":
+		logHandler.Warnf(
+			"[TOOL_GUARD_DETAIL] tool status [%s]: name=%s input=%s detail=%s",
+			p.channelID,
+			safeToolName(chunk.ToolName),
+			summarizeStreamToolInput(chunk.ToolInput),
+			normalizeDiscordToolLog(chunk.ToolError),
+		)
+		guardMsg := formatToolGuardStatusDetail(chunk.ToolName, chunk.ToolError)
+		if p.sender == nil {
+			logHandler.Errorf("send tool guard [%s]: sender unavailable", p.channelID)
+			return
+		}
+		segments := splitMessage(guardMsg, discordMaxLength)
+		for i, segment := range segments {
+			if err := p.sender.SendMessage(p.channelID, segment); err != nil {
+				logHandler.Errorf("send tool guard [%s]: idx=%d err=%v", p.channelID, i, err)
+				return
+			}
+		}
 	case "tool_error":
 		logPrefix := "[TOOL_ERROR]"
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(chunk.ToolError)), "tool guard:") {
