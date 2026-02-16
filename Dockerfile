@@ -51,7 +51,7 @@ RUN apt-get update && \
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g @google/gemini-cli @playwright/mcp playwright && \
-    npx -y playwright install --with-deps chromium && \
+    npx -y playwright install --with-deps chrome && \
     npm cache clean --force
 
 # Create necessary directories
