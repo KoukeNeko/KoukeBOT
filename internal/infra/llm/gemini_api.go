@@ -179,6 +179,9 @@ type genConfig struct {
 	presencePenalty  float64
 }
 
+// defaultMaxOutputTokens is the baseline maxOutputTokens for non-thinking models.
+const defaultMaxOutputTokens = 8192
+
 // minThinkingModelOutputTokens is the minimum maxOutputTokens for thinking models
 // (Gemini 2.5+, 3.x). Thinking models consume maxOutputTokens for BOTH internal
 // reasoning tokens AND visible output. With a low limit (e.g. 4096), the model may
@@ -188,16 +191,13 @@ const minThinkingModelOutputTokens = 16384
 func buildConfig(req ChatRequest, model string) genConfig {
 	cfg := genConfig{
 		temperature:      0.7,
-		maxTokens:        8192,
+		maxTokens:        defaultMaxOutputTokens,
 		topP:             0.95,
 		frequencyPenalty: 0.0,
 		presencePenalty:  0.0,
 	}
 	if req.Generation.Temperature > 0 {
 		cfg.temperature = req.Generation.Temperature
-	}
-	if req.Generation.MaxTokens > 0 {
-		cfg.maxTokens = req.Generation.MaxTokens
 	}
 	if req.Generation.TopP > 0 {
 		cfg.topP = req.Generation.TopP
@@ -298,16 +298,13 @@ func buildMultimodalContents(messages []domain.MultimodalMessage) []*genai.Conte
 func buildGenerationConfig(gen domain.GenerationConfig, model string) genConfig {
 	cfg := genConfig{
 		temperature:      0.7,
-		maxTokens:        8192,
+		maxTokens:        defaultMaxOutputTokens,
 		topP:             0.95,
 		frequencyPenalty: 0.0,
 		presencePenalty:  0.0,
 	}
 	if gen.Temperature > 0 {
 		cfg.temperature = gen.Temperature
-	}
-	if gen.MaxTokens > 0 {
-		cfg.maxTokens = gen.MaxTokens
 	}
 	if gen.TopP > 0 {
 		cfg.topP = gen.TopP

@@ -69,7 +69,6 @@ system_template: |
 # Generation parameters
 generation:
   temperature: 1.2 # Extremely chaotic and unpredictable
-  max_tokens: 4096
   top_p: 0.98
   frequency_penalty: 0.0
   presence_penalty: 0.5

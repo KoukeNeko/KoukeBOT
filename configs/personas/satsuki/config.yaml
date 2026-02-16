@@ -60,7 +60,6 @@ system_template: |
 # Generation parameters
 generation:
   temperature: 0.85
-  max_tokens: 4096
   top_p: 0.95
   frequency_penalty: 0.4
   presence_penalty: 0.2

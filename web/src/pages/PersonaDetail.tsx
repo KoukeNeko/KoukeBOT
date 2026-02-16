@@ -112,17 +112,14 @@ export default function PersonaDetail() {
   }
 
   const updateGeneration = (field: keyof GenerationConfig, value: string) => {
-    const parsedNumber =
-      field === 'max_tokens'
-        ? Number.parseInt(value || '0', 10)
-        : Number.parseFloat(value || '0')
+    const parsedNumber = Number.parseFloat(value || '0')
     const safeNumber = Number.isFinite(parsedNumber) ? parsedNumber : 0
 
     applyCoreUpdate((current) => ({
       ...current,
       generation: {
         ...current.generation,
-        [field]: field === 'max_tokens' ? Math.trunc(safeNumber) : safeNumber,
+        [field]: safeNumber,
       },
     }))
   }
@@ -377,7 +374,6 @@ export default function PersonaDetail() {
           {(
             [
               ['temperature', 'Temperature'],
-              ['max_tokens', 'Max Tokens'],
               ['top_p', 'Top P'],
               ['frequency_penalty', 'Frequency Penalty'],
               ['presence_penalty', 'Presence Penalty'],
@@ -387,7 +383,7 @@ export default function PersonaDetail() {
               <span>{label}</span>
               <input
                 type="number"
-                step={key === 'max_tokens' ? 1 : 0.01}
+                step={0.01}
                 value={generation[key]}
                 onChange={(e) => updateGeneration(key, e.target.value)}
                 disabled={coreFormDisabled}

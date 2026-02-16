@@ -64,7 +64,7 @@ system_template: |
   updated template
 generation:
   temperature: 0.9
-  max_tokens: 512
+
   top_p: 0.9
   frequency_penalty: 0.2
   presence_penalty: 0.2
@@ -198,7 +198,7 @@ system_template: |
   hi
 generation:
   temperature: 0.8
-  max_tokens: 256
+
   top_p: 0.95
   frequency_penalty: 0.1
   presence_penalty: 0.1
@@ -253,7 +253,7 @@ system_template: |
   hello
 generation:
   temperature: 0.8
-  max_tokens: 256
+
   top_p: 0.95
   frequency_penalty: 0.1
   presence_penalty: 0.1

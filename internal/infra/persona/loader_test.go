@@ -42,7 +42,7 @@ system_template: |
   hello
 generation:
   temperature: 0.8
-  max_tokens: 512
+
   top_p: 0.95
   frequency_penalty: 0.1
   presence_penalty: 0.1

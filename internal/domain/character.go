@@ -10,9 +10,11 @@ type PersonaMeta struct {
 }
 
 // GenerationConfig controls LLM generation parameters.
+// MaxTokens is NOT configurable per-persona; the provider layer determines the
+// optimal output token budget dynamically based on the selected model
+// (see resolveMaxTokensForModel in the llm package).
 type GenerationConfig struct {
 	Temperature      float64 `yaml:"temperature" json:"temperature"`
-	MaxTokens        int     `yaml:"max_tokens" json:"max_tokens"`
 	TopP             float64 `yaml:"top_p" json:"top_p"`
 	FrequencyPenalty float64 `yaml:"frequency_penalty" json:"frequency_penalty"`
 	PresencePenalty  float64 `yaml:"presence_penalty" json:"presence_penalty"`

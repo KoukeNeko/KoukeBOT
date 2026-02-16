@@ -106,7 +106,6 @@ func TestSaveNewFileWithoutExisting(t *testing.T) {
 			},
 			Generation: domain.GenerationConfig{
 				Temperature: 0.7,
-				MaxTokens:   500,
 			},
 		},
 		Lore:    "# Test lore",

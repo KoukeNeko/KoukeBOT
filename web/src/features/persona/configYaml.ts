@@ -15,7 +15,6 @@ export const DEFAULT_PERSONA_CORE_CONFIG: PersonaCoreConfig = {
   system_template: '',
   generation: {
     temperature: 0,
-    max_tokens: 0,
     top_p: 0,
     frequency_penalty: 0,
     presence_penalty: 0,
@@ -81,7 +80,6 @@ export function parseConfigYaml(configYaml: string): ConfigYamlParseResult {
 
   const parsedGeneration: GenerationConfig = {
     temperature: asNumber(generation.temperature, 0),
-    max_tokens: Math.trunc(asNumber(generation.max_tokens, 0)),
     top_p: asNumber(generation.top_p, 0),
     frequency_penalty: asNumber(generation.frequency_penalty, 0),
     presence_penalty: asNumber(generation.presence_penalty, 0),
@@ -127,7 +125,6 @@ export function applyCoreConfigToYAML(configYaml: string, core: PersonaCoreConfi
 
   const generationMap = ensureMapNode(root, 'generation')
   setNumberValue(generationMap, 'temperature', core.generation.temperature)
-  setNumberValue(generationMap, 'max_tokens', Math.trunc(core.generation.max_tokens))
   setNumberValue(generationMap, 'top_p', core.generation.top_p)
   setNumberValue(generationMap, 'frequency_penalty', core.generation.frequency_penalty)
   setNumberValue(generationMap, 'presence_penalty', core.generation.presence_penalty)

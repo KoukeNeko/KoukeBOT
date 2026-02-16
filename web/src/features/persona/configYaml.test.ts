@@ -16,7 +16,6 @@ system_template: |
   hello
 generation:
   temperature: 0.8
-  max_tokens: 256
   top_p: 0.95
   frequency_penalty: 0.1
   presence_penalty: 0.1
@@ -52,17 +51,16 @@ describe('persona config yaml helpers', () => {
       },
       generation: {
         ...core.generation,
-        max_tokens: 1024,
+        temperature: 0.9,
       },
     })
 
-    expect(nextYAML).toContain('custom_root:')
     expect(nextYAML).toContain('custom_root:')
 
     const reparsed = parseConfigYaml(nextYAML)
     expectValid(reparsed)
     expect(reparsed.core?.meta.name).toBe('Persona Updated')
-    expect(reparsed.core?.generation.max_tokens).toBe(1024)
+    expect(reparsed.core?.generation.temperature).toBe(0.9)
   })
 
   it('returns parse errors for invalid yaml or missing required key', () => {

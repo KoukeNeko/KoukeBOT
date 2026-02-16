@@ -212,7 +212,6 @@ func multimodalRetryPersona(id string) *domain.PersonaModule {
 			SystemTemplate: "You are a test persona.\n{{.Lore}}\n{{.Anchors}}\n{{.Time}}",
 			Generation: domain.GenerationConfig{
 				Temperature: 0.7,
-				MaxTokens:   1024,
 			},
 		},
 		Lore: "test lore",

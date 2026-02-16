@@ -72,7 +72,6 @@ system_template: |
 # 生成參數設定 (Generation Config)
 generation:
   temperature: 0.85 # 稍微調高以增加「搶劫計畫」的創意與瘋狂度
-  max_tokens: 4096 # 確保回應不會被截斷
   top_p: 0.95
   frequency_penalty: 0.6 # 強力抑制重複詞彙（避免一直嘆氣）
   presence_penalty: 0.3

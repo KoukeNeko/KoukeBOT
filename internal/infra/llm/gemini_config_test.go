@@ -36,7 +36,7 @@ func TestResolveMaxTokensForModelThinkingFloor(t *testing.T) {
 func TestBuildConfigAppliesThinkingFloor(t *testing.T) {
 	req := ChatRequest{
 		Generation: domain.GenerationConfig{
-			MaxTokens: 4096,
+			Temperature: 0.7,
 		},
 	}
 
@@ -46,14 +46,14 @@ func TestBuildConfigAppliesThinkingFloor(t *testing.T) {
 	}
 
 	legacyCfg := buildConfig(req, "gemini-2.0-flash")
-	if legacyCfg.maxTokens != 4096 {
-		t.Fatalf("legacy model maxTokens = %d, want 4096", legacyCfg.maxTokens)
+	if legacyCfg.maxTokens != defaultMaxOutputTokens {
+		t.Fatalf("legacy model maxTokens = %d, want %d", legacyCfg.maxTokens, defaultMaxOutputTokens)
 	}
 }
 
 func TestBuildGenerationConfigAppliesThinkingFloor(t *testing.T) {
 	gen := domain.GenerationConfig{
-		MaxTokens: 4096,
+		Temperature: 0.7,
 	}
 
 	thinkingCfg := buildGenerationConfig(gen, "gemini-3-pro-preview")
@@ -62,7 +62,7 @@ func TestBuildGenerationConfigAppliesThinkingFloor(t *testing.T) {
 	}
 
 	legacyCfg := buildGenerationConfig(gen, "gemini-1.5-flash")
-	if legacyCfg.maxTokens != 4096 {
-		t.Fatalf("legacy model maxTokens = %d, want 4096", legacyCfg.maxTokens)
+	if legacyCfg.maxTokens != defaultMaxOutputTokens {
+		t.Fatalf("legacy model maxTokens = %d, want %d", legacyCfg.maxTokens, defaultMaxOutputTokens)
 	}
 }

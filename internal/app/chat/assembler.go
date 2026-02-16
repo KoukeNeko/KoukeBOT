@@ -95,16 +95,13 @@ func NewContextBudgetManager() *ContextBudgetManager {
 	}
 }
 
-func (bm *ContextBudgetManager) historyBudget(systemPrompt string, caps llm.ModelCapabilities, generation domain.GenerationConfig) int {
+func (bm *ContextBudgetManager) historyBudget(systemPrompt string, caps llm.ModelCapabilities) int {
 	window := caps.ContextWindow
 	if window <= 0 {
 		window = 800_000
 	}
 
 	reserve := bm.ResponseReserveTokens
-	if generation.MaxTokens > 0 {
-		reserve = generation.MaxTokens + 1024 // response + safety margin
-	}
 
 	systemTokens := estimateTokens(systemPrompt)
 	budget := window - reserve - systemTokens
@@ -218,7 +215,7 @@ func (a *ContextAssembler) Assemble(
 
 	var messages []domain.Message
 	if caps.SupportsThinking {
-		messages = a.assembleThinkingModel(persona, conv, systemPrompt, caps, persona.Config.Generation, policy)
+		messages = a.assembleThinkingModel(persona, conv, systemPrompt, caps, policy)
 	} else {
 		messages = a.assembleLegacyModel(persona, conv)
 	}
@@ -342,11 +339,10 @@ func (a *ContextAssembler) assembleThinkingModel(
 	conv *domain.Conversation,
 	systemPrompt string,
 	caps llm.ModelCapabilities,
-	generation domain.GenerationConfig,
 	policy PromptGuardPolicy,
 ) []domain.Message {
 	budget := a.snapshotBudget()
-	budgetTokens := budget.historyBudget(systemPrompt, caps, generation)
+	budgetTokens := budget.historyBudget(systemPrompt, caps)
 
 	recentBudget := int(float64(budgetTokens) * (1.0 - budget.DigestBudgetRatio))
 	digestBudget := budgetTokens - recentBudget

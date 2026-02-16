@@ -160,7 +160,6 @@ func (sc *SlashCommands) handleStatus(s *discordgo.Session, i *discordgo.Interac
 	sb.WriteString(fmt.Sprintf("**Anchors:** %d 組\n", len(persona.Anchors)))
 	sb.WriteString(fmt.Sprintf("**Lore:** %d bytes\n", len(persona.Lore)))
 	sb.WriteString(fmt.Sprintf("**Temperature:** %.2f\n", persona.Config.Generation.Temperature))
-	sb.WriteString(fmt.Sprintf("**Max Tokens:** %d\n", persona.Config.Generation.MaxTokens))
 
 	// Add OAuth pool quota information if available
 	if sc.providerManager != nil {

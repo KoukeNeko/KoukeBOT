@@ -60,9 +60,6 @@ func TestPersonaLoaderLoadsHayasaka(t *testing.T) {
 	if module.Config.Generation.Temperature <= 0 {
 		t.Error("generation.temperature should be > 0")
 	}
-	if module.Config.Generation.MaxTokens <= 0 {
-		t.Error("generation.max_tokens should be > 0")
-	}
 
 	// Verify lore.md loaded
 	if module.Lore == "" {

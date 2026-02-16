@@ -23,7 +23,6 @@ func TestBuildRequestToolModeDisabledOmitsTools(t *testing.T) {
 		},
 		Generation: domain.GenerationConfig{
 			Temperature: 0.7,
-			MaxTokens:   256,
 			TopP:        0.9,
 		},
 		ToolMode: ToolModeDisabled,
@@ -51,7 +50,6 @@ func TestBuildRequestToolModeNormalKeepsTools(t *testing.T) {
 		},
 		Generation: domain.GenerationConfig{
 			Temperature: 0.7,
-			MaxTokens:   256,
 			TopP:        0.9,
 		},
 		ToolMode: ToolModeNormal,
