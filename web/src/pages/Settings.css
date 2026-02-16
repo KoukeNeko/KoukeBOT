@@ -8,6 +8,108 @@
   margin-bottom: 2rem;
 }
 
+.settings-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.settings-sidebar-panel {
+  background: #121829;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0.8rem;
+  position: sticky;
+  top: 1rem;
+}
+
+.settings-sidebar-heading {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8f96bd;
+  margin-bottom: 0.6rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.settings-sidebar-group {
+  border-radius: 10px;
+  margin-bottom: 0.4rem;
+  border: 1px solid transparent;
+}
+
+.settings-sidebar-group.active {
+  border-color: rgba(160, 168, 255, 0.25);
+  background: rgba(160, 168, 255, 0.08);
+}
+
+.settings-sidebar-group-button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: #e7eaff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.55rem 0.6rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings-sidebar-group-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.settings-sidebar-submenu {
+  display: none;
+  padding: 0.2rem 0.35rem 0.5rem;
+  gap: 0.2rem;
+  flex-direction: column;
+}
+
+.settings-sidebar-group.active .settings-sidebar-submenu {
+  display: flex;
+}
+
+.settings-sidebar-subitem {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: #b8bfdf;
+  font-size: 0.84rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.settings-sidebar-subitem:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #dce1ff;
+}
+
+.settings-sidebar-subitem.active {
+  background: rgba(123, 141, 255, 0.24);
+  color: #f3f5ff;
+}
+
+.settings-content-panel {
+  min-width: 0;
+}
+
+.settings-active-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+  font-size: 0.82rem;
+  color: #9aa1c7;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .settings-section-title {
   font-size: 1.1rem;
   font-weight: 600;
@@ -95,6 +197,29 @@
 }
 
 @media (max-width: 768px) {
+  .settings-shell {
+    grid-template-columns: 1fr;
+    gap: 0.9rem;
+  }
+
+  .settings-sidebar-panel {
+    position: static;
+    padding: 0.7rem;
+  }
+
+  .settings-sidebar-heading {
+    margin-bottom: 0.4rem;
+    padding: 0.2rem 0.35rem;
+  }
+
+  .settings-sidebar-group-button {
+    padding: 0.45rem 0.5rem;
+  }
+
+  .settings-sidebar-subitem {
+    padding: 0.42rem 0.48rem;
+  }
+
   .discord-permissions-grid {
     grid-template-columns: 1fr;
     gap: 1rem;
