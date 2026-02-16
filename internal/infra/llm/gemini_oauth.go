@@ -158,6 +158,7 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 		defer resp.Body.Close()
 
 		var lastUsage *caUsage
+		var lastFinishReason string
 		var responseLen int
 		var responsePreview string
 		scanner := bufio.NewScanner(resp.Body)
@@ -174,6 +175,9 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			parsed := extractCAChunkFull(chunk)
 			if parsed.usage != nil {
 				lastUsage = parsed.usage
+			}
+			if parsed.finishReason != "" {
+				lastFinishReason = parsed.finishReason
 			}
 
 			// Emit function calls to trigger the tool calling loop
@@ -201,11 +205,14 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 			return
 		}
 		logCompletion(lastUsage, responsePreview, responseLen)
+		if lastFinishReason == "MAX_TOKENS" {
+			logOAuth.Warnf("stream response truncated (MAX_TOKENS) — consider increasing max_tokens")
+		}
 		tokens := 0
 		if lastUsage != nil {
 			tokens = lastUsage.TotalTokenCount
 		}
-		ch <- StreamChunk{Done: true, TokensUsed: tokens}
+		ch <- StreamChunk{Done: true, TokensUsed: tokens, FinishReason: lastFinishReason}
 	}()
 
 	return ch, nil
@@ -390,7 +397,7 @@ type caUsage struct {
 // --- Helpers ---
 
 func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
-	config := buildConfig(req)
+	config := buildConfig(req, g.model)
 
 	var contents []caContent
 	for _, msg := range req.Messages {
@@ -445,7 +452,7 @@ func (g *GeminiOAuthProvider) buildRequest(req ChatRequest) caRequest {
 }
 
 func (g *GeminiOAuthProvider) buildMultimodalRequest(systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) caRequest {
-	config := buildGenerationConfig(generation)
+	config := buildGenerationConfig(generation, g.model)
 
 	var contents []caContent
 	for _, msg := range messages {
@@ -553,10 +560,11 @@ func parseSSEData(line string) (string, bool) {
 
 // caChunkResult holds parsed data from a single SSE chunk.
 type caChunkResult struct {
-	text      string
-	tokens    int
-	usage     *caUsage // full usage metadata (last chunk only)
-	toolCalls []domain.ToolCall
+	text         string
+	tokens       int
+	usage        *caUsage // full usage metadata (last chunk only)
+	toolCalls    []domain.ToolCall
+	finishReason string
 }
 
 func extractCAChunkFull(chunk caResponseChunk) caChunkResult {
@@ -565,8 +573,13 @@ func extractCAChunkFull(chunk caResponseChunk) caChunkResult {
 		return result
 	}
 
+	candidate := chunk.Response.Candidates[0]
+	if candidate.FinishReason != "" {
+		result.finishReason = candidate.FinishReason
+	}
+
 	var sb strings.Builder
-	for _, part := range chunk.Response.Candidates[0].Content.Parts {
+	for _, part := range candidate.Content.Parts {
 		if part.Text != "" {
 			sb.WriteString(part.Text)
 		}

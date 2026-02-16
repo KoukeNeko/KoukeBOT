@@ -40,15 +40,16 @@ type ChatResponse struct {
 
 // StreamChunk is a single piece of a streaming response.
 type StreamChunk struct {
-	Content    string
-	Done       bool
-	Error      error
-	ToolCalls  []domain.ToolCall      // Function calls requested by LLM
-	ToolStatus string                 // Tool execution status: "tool_start", "tool_executing", "tool_guard", "tool_error", "tool_done"
-	ToolName   string                 // Name of the tool being executed
-	ToolInput  map[string]interface{} // Tool input parameters (optional)
-	ToolError  string                 // Tool error/guard details when ToolStatus == "tool_error" or "tool_guard"
-	TokensUsed int                    // Total tokens for this turn (sent in final chunk)
+	Content      string
+	Done         bool
+	Error        error
+	ToolCalls    []domain.ToolCall      // Function calls requested by LLM
+	ToolStatus   string                 // Tool execution status: "tool_start", "tool_executing", "tool_guard", "tool_error", "tool_done"
+	ToolName     string                 // Name of the tool being executed
+	ToolInput    map[string]interface{} // Tool input parameters (optional)
+	ToolError    string                 // Tool error/guard details when ToolStatus == "tool_error" or "tool_guard"
+	TokensUsed   int                    // Total tokens for this turn (sent in final chunk)
+	FinishReason string                 // LLM finish reason (e.g. "STOP", "MAX_TOKENS") — final chunk only
 }
 
 // Provider is the strategy interface for LLM backends.

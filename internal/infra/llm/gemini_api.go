@@ -34,7 +34,7 @@ func NewGeminiAPIProvider(ctx context.Context, apiKey, model string) (*GeminiAPI
 
 func (g *GeminiAPIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	contents := buildContents(req.Messages)
-	config := buildConfig(req)
+	config := buildConfig(req, g.model)
 
 	// Prepare config with optional tools
 	genConfig := &genai.GenerateContentConfig{
@@ -65,7 +65,7 @@ func (g *GeminiAPIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 
 func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error) {
 	contents := buildContents(req.Messages)
-	config := buildConfig(req)
+	config := buildConfig(req, g.model)
 	ch := make(chan StreamChunk, 16)
 
 	// Prepare config with optional tools
@@ -87,6 +87,7 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 		defer close(ch)
 
 		var lastTokenCount int
+		var lastFinishReason string
 		iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, genConfig)
 
 		for resp, err := range iter {
@@ -97,6 +98,9 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 
 			if resp.UsageMetadata != nil {
 				lastTokenCount = int(resp.UsageMetadata.TotalTokenCount)
+			}
+			if len(resp.Candidates) > 0 && resp.Candidates[0].FinishReason != "" {
+				lastFinishReason = string(resp.Candidates[0].FinishReason)
 			}
 
 			// Check for function calls
@@ -112,7 +116,7 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 				ch <- StreamChunk{Content: text}
 			}
 		}
-		ch <- StreamChunk{Done: true, TokensUsed: lastTokenCount}
+		ch <- StreamChunk{Done: true, TokensUsed: lastTokenCount, FinishReason: lastFinishReason}
 	}()
 
 	return ch, nil
@@ -120,7 +124,7 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 
 func (g *GeminiAPIProvider) StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan StreamChunk, error) {
 	contents := buildMultimodalContents(messages)
-	config := buildGenerationConfig(generation)
+	config := buildGenerationConfig(generation, g.model)
 	ch := make(chan StreamChunk, 16)
 
 	go func() {
@@ -175,7 +179,13 @@ type genConfig struct {
 	presencePenalty  float64
 }
 
-func buildConfig(req ChatRequest) genConfig {
+// minThinkingModelOutputTokens is the minimum maxOutputTokens for thinking models
+// (Gemini 2.5+, 3.x). Thinking models consume maxOutputTokens for BOTH internal
+// reasoning tokens AND visible output. With a low limit (e.g. 4096), the model may
+// exhaust the budget on thinking, leaving insufficient tokens for visible output.
+const minThinkingModelOutputTokens = 16384
+
+func buildConfig(req ChatRequest, model string) genConfig {
 	cfg := genConfig{
 		temperature:      0.7,
 		maxTokens:        8192,
@@ -198,7 +208,22 @@ func buildConfig(req ChatRequest) genConfig {
 	if req.Generation.PresencePenalty > 0 {
 		cfg.presencePenalty = req.Generation.PresencePenalty
 	}
+	cfg.maxTokens = resolveMaxTokensForModel(model, cfg.maxTokens)
 	return cfg
+}
+
+// resolveMaxTokensForModel ensures thinking models have a sufficient maxOutputTokens
+// floor. Thinking models (Gemini 2.5+, 3.x) share the maxOutputTokens budget between
+// internal reasoning and visible output; a low limit truncates the visible response.
+func resolveMaxTokensForModel(model string, configuredMaxTokens int) int {
+	isThinkingModel := strings.Contains(model, "2.5") || strings.Contains(model, "3")
+	if !isThinkingModel {
+		return configuredMaxTokens
+	}
+	if configuredMaxTokens < minThinkingModelOutputTokens {
+		return minThinkingModelOutputTokens
+	}
+	return configuredMaxTokens
 }
 
 func buildContents(messages []domain.Message) []*genai.Content {
@@ -270,7 +295,7 @@ func buildMultimodalContents(messages []domain.MultimodalMessage) []*genai.Conte
 }
 
 // buildGenerationConfig creates a genConfig from domain GenerationConfig.
-func buildGenerationConfig(gen domain.GenerationConfig) genConfig {
+func buildGenerationConfig(gen domain.GenerationConfig, model string) genConfig {
 	cfg := genConfig{
 		temperature:      0.7,
 		maxTokens:        8192,
@@ -293,6 +318,7 @@ func buildGenerationConfig(gen domain.GenerationConfig) genConfig {
 	if gen.PresencePenalty > 0 {
 		cfg.presencePenalty = gen.PresencePenalty
 	}
+	cfg.maxTokens = resolveMaxTokensForModel(model, cfg.maxTokens)
 	return cfg
 }
 
