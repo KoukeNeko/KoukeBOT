@@ -65,6 +65,33 @@ func TestAssembleThinkingModelIncludesRelevantDigestAndRecentMessage(t *testing.
 	}
 }
 
+func TestRenderSystemPromptIncludesTOONSchemaReference(t *testing.T) {
+	assembler := NewContextAssembler()
+	persona := &domain.PersonaModule{
+		Config: domain.PersonaConfig{
+			SystemTemplate: "TOON schema test {{.Lore}} {{.Anchors}} {{.Time}}",
+		},
+		Lore: "persona lore",
+	}
+
+	got, err := assembler.renderSystemPrompt(persona, DefaultPromptGuardPolicy())
+	if err != nil {
+		t.Fatalf("renderSystemPrompt() error = %v", err)
+	}
+
+	wants := []string{
+		"TOON quick schema reference",
+		"`t=msg`: `uid`, `name`, `cid`, `pid`, `ts` (UTC Unix seconds), `txt`, `pri`.",
+		"`t=ctx`: `hist` (older `msg` events) + `cur` (current `msg` event).",
+		"`t=toolr`: `items[]` where each item has `id`, `name`, `ok`, `out`.",
+	}
+	for _, want := range wants {
+		if !strings.Contains(got, want) {
+			t.Fatalf("system prompt should include %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestAssembleThinkingModelInjectsPersonaLockEveryNTurns(t *testing.T) {
 	assembler := NewContextAssembler()
 	policy := DefaultPromptGuardPolicy()
