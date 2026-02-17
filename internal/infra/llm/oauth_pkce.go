@@ -36,15 +36,18 @@ func generateFlowID() string {
 	return hex.EncodeToString(buf)
 }
 
-func buildAuthURL(clientID, redirectURL, state, codeVerifier string) string {
+func buildAuthURL(clientID, redirectURL, state, codeVerifier string, scopes []string) string {
 	challenge := sha256.Sum256([]byte(codeVerifier))
 	codeChallenge := base64.RawURLEncoding.EncodeToString(challenge[:])
+	if len(scopes) == 0 {
+		scopes = oauthScopes
+	}
 
 	params := url.Values{
 		"client_id":             {clientID},
 		"response_type":         {"code"},
 		"redirect_uri":          {redirectURL},
-		"scope":                 {strings.Join(oauthScopes, " ")},
+		"scope":                 {strings.Join(scopes, " ")},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
 		"state":                 {state},

@@ -3,6 +3,12 @@ export interface SettingsData {
   gemini_model: string
   discord_token: string
   provider_type: string
+  provider_id: string
+  model_id: string
+  fallback_enabled: boolean
+  fallback_model_id: string
+  endpoint_policy: 'primary_then_sandbox'
+  deprecated_fields?: string[]
   brave_api_key: string
   web_search_enabled: boolean
   discord_use_reply: boolean
@@ -86,12 +92,22 @@ export interface MCPStatusEntry {
 export interface ModelEntry {
   id: string
   display_name: string
+  provider_id?: string
+  supports_text: boolean
+  supports_multimodal: boolean
+  supports_tools: boolean
+  reasoning: boolean
 }
 
 export interface ProviderStatus {
   configured: boolean
   provider_name: string
   model: string
+  active_provider_id?: string
+  active_model_id?: string
+  effective_model_id?: string
+  effective_endpoint?: string
+  last_fallback_reason?: string
 }
 
 export interface RuntimeMetrics {
@@ -106,6 +122,7 @@ export interface RuntimeMetrics {
   pool_transient_wait_retry_succeeded: number
   pool_transient_wait_retry_failed: number
   pool_all_accounts_exhausted: number
+  pool_model_fallback: number
   pool_accounts_total: number
   pool_accounts_exhausted_current: number
 }

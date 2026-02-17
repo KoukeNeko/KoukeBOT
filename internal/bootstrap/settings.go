@@ -5,6 +5,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 func ResolvePort(defaultPort string) string {
@@ -23,9 +24,16 @@ func ResolveSettings(settingsStore *config.SettingsStore, logs Loggers) config.S
 
 	if envKey := os.Getenv("GEMINI_API_KEY"); envKey != "" {
 		settings.GeminiAPIKey = envKey
+		settings.ProviderType = config.ProviderAPIKey
+		settings.ProviderID = llm.ProviderGeminiAPIKey
 	}
 	if envModel := os.Getenv("GEMINI_MODEL"); envModel != "" {
-		settings.GeminiModel = envModel
+		settings.GeminiModel = llm.NormalizeGoogleModelAlias(envModel)
+		settings.ProviderID, settings.GeminiModel, settings.ModelID = llm.ResolveProviderAndModel(
+			settings.ProviderID,
+			settings.ModelID,
+			settings.GeminiModel,
+		)
 	}
 	if envToken := os.Getenv("DISCORD_TOKEN"); envToken != "" {
 		settings.DiscordToken = envToken

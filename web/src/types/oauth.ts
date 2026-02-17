@@ -10,11 +10,15 @@ export interface OAuthStartResult {
   auth_url: string
   expires_at: string
   mode: 'local' | 'remote'
+  provider_id?: string
 }
 
 export interface OAuthCompleteResult {
   email: string
   project_id: string
+  tier_id?: string
+  endpoint_used?: string
+  provider_id?: string
   status: string
 }
 
@@ -22,6 +26,9 @@ export interface OAuthStatus {
   authenticated: boolean
   project_id?: string
   email?: string
+  provider_id?: string
+  tier_id?: string
+  endpoint_used?: string
   pool?: PoolEntry[]
   pool_size?: number
 }

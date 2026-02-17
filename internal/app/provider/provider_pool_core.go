@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -201,6 +202,33 @@ func (pp *ProviderPool) ModelInfo() llm.ModelCapabilities {
 	return caps
 }
 
+// EffectiveModel returns the currently effective model (primary or fallback).
+func (pp *ProviderPool) EffectiveModel() string {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+	if strings.TrimSpace(pp.effectiveModel) != "" {
+		return pp.effectiveModel
+	}
+	if len(pp.entries) == 0 {
+		return ""
+	}
+	return pp.entries[0].provider.ModelInfo().Model
+}
+
+// EffectiveEndpoint returns the endpoint used by the latest successful request.
+func (pp *ProviderPool) EffectiveEndpoint() string {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+	return pp.effectiveEndpoint
+}
+
+// LastFallbackReason returns the latest model fallback reason.
+func (pp *ProviderPool) LastFallbackReason() string {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+	return pp.lastFallbackReason
+}
+
 // RegisterTools registers tools with all providers in the pool.
 func (pp *ProviderPool) RegisterTools(tools []domain.Tool) {
 	pp.mu.Lock()
@@ -230,6 +258,7 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 
 	waitRetryUsed := false
 	modelCapacityHit := false
+	modelFallbackTriggered := false
 	var lastErr error
 
 	for tried := 0; tried < total; tried++ {
@@ -254,6 +283,7 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			if pp.circuitBreaker != nil {
 				pp.circuitBreaker.recordSuccess()
 			}
+			pp.recordEffectiveState(selection.provider, selection.provider.ModelInfo().Model, "", false)
 			if waitRetryUsed {
 				atomic.AddUint64(&pp.metricTransientWaitRetrySucceeded, 1)
 				logPool.Logf("metric pool.transient_wait_retry_succeeded=1")
@@ -278,7 +308,12 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 				pp.circuitBreaker.recordFailure()
 			}
 			modelCapacityHit = true
+			modelFallbackTriggered = true
 			lastErr = err
+		case errorModelUnavailable:
+			modelFallbackTriggered = true
+			lastErr = err
+			logPool.Warnf("model unavailable for %s: %s", selection.email, truncateError(err, 220))
 		case errorTransient:
 			pp.handleTransientError(selection.email, err)
 			continue
@@ -298,14 +333,19 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		}
 
 		// Model capacity: all accounts share the same issue, stop trying.
-		if modelCapacityHit {
+		if modelCapacityHit || modelFallbackTriggered {
 			break
 		}
 	}
 
-	if modelCapacityHit {
+	if modelFallbackTriggered {
+		fallbackReason := ""
+		if lastErr != nil {
+			fallbackReason = lastErr.Error()
+		}
+
 		// Attempt fallback model before giving up.
-		if result, err := tryFallbackModel(ctx, pp, fn); err == nil {
+		if result, err := tryFallbackModel(ctx, pp, fn, fallbackReason); err == nil {
 			if pp.circuitBreaker != nil {
 				pp.circuitBreaker.recordSuccess()
 			}
@@ -313,11 +353,13 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		}
 
 		// Queue the request if enabled; wait for cooldown to expire.
-		if result, err := enqueueAndRetry(ctx, pp, fn); err == nil {
-			if pp.circuitBreaker != nil {
-				pp.circuitBreaker.recordSuccess()
+		if modelCapacityHit {
+			if result, err := enqueueAndRetry(ctx, pp, fn); err == nil {
+				if pp.circuitBreaker != nil {
+					pp.circuitBreaker.recordSuccess()
+				}
+				return result, nil
 			}
-			return result, nil
 		}
 
 		if lastErr != nil {
@@ -359,6 +401,7 @@ func enqueueAndRetry[T any](ctx context.Context, pp *ProviderPool, fn func(llm.P
 	pp.recordAttempt(email, time.Now(), callErr == nil)
 	if callErr == nil {
 		pp.markSuccess(email, time.Now())
+		pp.recordEffectiveState(provider, provider.ModelInfo().Model, "", false)
 		return result, nil
 	}
 	return zero, callErr
@@ -366,7 +409,7 @@ func enqueueAndRetry[T any](ctx context.Context, pp *ProviderPool, fn func(llm.P
 
 // tryFallbackModel attempts the request on a fallback model using the first
 // available provider that supports ModelSwitcher.
-func tryFallbackModel[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
+func tryFallbackModel[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error), reason string) (T, error) {
 	var zero T
 
 	pp.mu.RLock()
@@ -402,6 +445,98 @@ func tryFallbackModel[T any](ctx context.Context, pp *ProviderPool, fn func(llm.
 		return zero, fmt.Errorf("fallback model %s: %w", fallbackModel, err)
 	}
 
+	result = annotateFallbackResult(result, fallbackModel, reason)
+	pp.recordEffectiveState(fallbackProvider, fallbackModel, reason, true)
+	atomic.AddUint64(&pp.metricModelFallback, 1)
+	logPool.Logf("metric pool.model_fallback=1")
 	logPool.Logf("fallback model %s succeeded", fallbackModel)
 	return result, nil
+}
+
+func annotateFallbackResult[T any](result T, fallbackModel, reason string) T {
+	note := formatFallbackNotice(fallbackModel, reason)
+	if strings.TrimSpace(note) == "" {
+		return result
+	}
+
+	switch typed := any(result).(type) {
+	case *llm.ChatResponse:
+		if typed == nil {
+			return result
+		}
+		if strings.TrimSpace(typed.Content) == "" {
+			typed.Content = note
+		} else {
+			typed.Content += "\n\n" + note
+		}
+		return any(typed).(T)
+	case <-chan llm.StreamChunk:
+		return any(appendFallbackNoteToStream(typed, note)).(T)
+	default:
+		return result
+	}
+}
+
+func appendFallbackNoteToStream(input <-chan llm.StreamChunk, note string) <-chan llm.StreamChunk {
+	if input == nil || strings.TrimSpace(note) == "" {
+		return input
+	}
+	output := make(chan llm.StreamChunk, 16)
+	go func() {
+		defer close(output)
+		for chunk := range input {
+			if chunk.Done && chunk.Error == nil && len(chunk.ToolCalls) == 0 {
+				output <- llm.StreamChunk{Content: note}
+			}
+			output <- chunk
+		}
+	}()
+	return output
+}
+
+func formatFallbackNotice(fallbackModel, reason string) string {
+	model := strings.TrimSpace(fallbackModel)
+	if model == "" {
+		return ""
+	}
+	why := normalizeFallbackReason(reason)
+	if why == "" {
+		why = "primary model failed"
+	}
+	return fmt.Sprintf("[Model fallback] switched to %s due to %s", model, why)
+}
+
+func normalizeFallbackReason(reason string) string {
+	why := strings.Join(strings.Fields(strings.TrimSpace(reason)), " ")
+	if len(why) > 180 {
+		why = why[:180] + "..."
+	}
+	return why
+}
+
+func (pp *ProviderPool) recordEffectiveState(provider llm.Provider, model, fallbackReason string, usedFallback bool) {
+	if pp == nil || provider == nil {
+		return
+	}
+	effectiveModel := strings.TrimSpace(model)
+	if effectiveModel == "" {
+		effectiveModel = strings.TrimSpace(provider.ModelInfo().Model)
+	}
+	effectiveEndpoint := ""
+	if endpointAware, ok := provider.(interface{ EffectiveEndpoint() string }); ok {
+		effectiveEndpoint = strings.TrimSpace(endpointAware.EffectiveEndpoint())
+	}
+
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	pp.effectiveModel = effectiveModel
+	pp.effectiveEndpoint = effectiveEndpoint
+	if usedFallback {
+		reasonText := normalizeFallbackReason(fallbackReason)
+		if reasonText == "" {
+			reasonText = "primary model failed"
+		}
+		pp.lastFallbackReason = reasonText
+		pp.lastFallbackAt = time.Now().UTC()
+	}
 }

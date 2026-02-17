@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -15,43 +16,96 @@ func codeAssistHeaders(accessToken string) map[string]string {
 	return map[string]string{
 		"Authorization":     "Bearer " + accessToken,
 		"Content-Type":      "application/json",
-		"User-Agent":        "google-api-nodejs-client/9.15.1",
-		"X-Goog-Api-Client": "gl-node/koukeBOT",
+		"User-Agent":        "google-cloud-sdk vscode_cloudshelleditor/0.1",
+		"X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
+		"Client-Metadata":   `{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}`,
 	}
 }
 
 func discoverProject(ctx context.Context, accessToken string) (string, error) {
-	headers := codeAssistHeaders(accessToken)
-	projectID, err := loadCodeAssist(ctx, headers)
-	if err == nil && projectID != "" {
-		return projectID, nil
-	}
-	logFlow.Logf("loadCodeAssist: %v, trying onboardUser...", err)
-	return onboardUser(ctx, headers)
+	projectID, _, _, err := discoverProjectWithProvider(
+		ctx,
+		accessToken,
+		ProviderGoogleGeminiCLI,
+		EndpointPolicyPrimaryThenSandbox,
+	)
+	return projectID, err
 }
 
-func loadCodeAssist(ctx context.Context, headers map[string]string) (string, error) {
+func discoverProjectWithProvider(
+	ctx context.Context,
+	accessToken string,
+	providerID string,
+	endpointPolicy string,
+) (projectID string, tierID string, endpointUsed string, err error) {
+	headers := codeAssistHeaders(accessToken)
+	spec := googleProviderSpec(providerID)
+	endpoints := resolveOAuthEndpointCandidates(spec.EndpointCandidates, endpointPolicy)
+	var lastErr error
+	for _, endpoint := range endpoints {
+		projectID, tierID, err := loadCodeAssist(ctx, endpoint, headers)
+		if err == nil && projectID != "" {
+			return projectID, tierID, endpoint, nil
+		}
+		logFlow.Logf("loadCodeAssist endpoint=%s: %v, trying onboardUser...", endpoint, err)
+
+		projectID, tierID, err = onboardUser(ctx, endpoint, headers)
+		if err == nil && projectID != "" {
+			return projectID, tierID, endpoint, nil
+		}
+		lastErr = err
+		logFlow.Warnf("onboardUser endpoint=%s failed: %v", endpoint, err)
+	}
+
+	if project := strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT")); project != "" {
+		return project, "manual-project", firstEndpointOrDefault(endpoints), nil
+	}
+	if project := strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT_ID")); project != "" {
+		return project, "manual-project", firstEndpointOrDefault(endpoints), nil
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("project discovery failed")
+	}
+	if strings.Contains(strings.ToLower(lastErr.Error()), "vpc_sc") {
+		return "", "", "", fmt.Errorf(
+			"project discovery blocked by VPC_SC; set GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT_ID: %w",
+			lastErr,
+		)
+	}
+	return "", "", "", lastErr
+}
+
+func loadCodeAssist(ctx context.Context, endpoint string, headers map[string]string) (string, string, error) {
 	body := `{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
-	respBody, err := doCodeAssistRequest(ctx, codeAssistURL+"/v1internal:loadCodeAssist", body, headers)
+	respBody, err := doCodeAssistRequest(ctx, strings.TrimRight(endpoint, "/")+"/v1internal:loadCodeAssist", body, headers)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	var result struct {
-		CloudAICompanionProject any `json:"cloudaicompanionProject"`
+		CloudAICompanionProject any    `json:"cloudaicompanionProject"`
+		CurrentTier             string `json:"currentTier"`
+		AllowedTiers            []struct {
+			ID string `json:"id"`
+		} `json:"allowedTiers"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("parse loadCodeAssist response: %w", err)
+		return "", "", fmt.Errorf("parse loadCodeAssist response: %w", err)
 	}
 
-	return extractProjectID(result.CloudAICompanionProject), nil
+	tierID := strings.TrimSpace(result.CurrentTier)
+	if tierID == "" && len(result.AllowedTiers) > 0 {
+		tierID = strings.TrimSpace(result.AllowedTiers[0].ID)
+	}
+	return extractProjectID(result.CloudAICompanionProject), tierID, nil
 }
 
-func onboardUser(ctx context.Context, headers map[string]string) (string, error) {
+func onboardUser(ctx context.Context, endpoint string, headers map[string]string) (string, string, error) {
 	body := `{"tierId":"legacy-tier","metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
-	respBody, err := doCodeAssistRequest(ctx, codeAssistURL+"/v1internal:onboardUser", body, headers)
+	respBody, err := doCodeAssistRequest(ctx, strings.TrimRight(endpoint, "/")+"/v1internal:onboardUser", body, headers)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	var lro struct {
@@ -61,31 +115,36 @@ func onboardUser(ctx context.Context, headers map[string]string) (string, error)
 			CloudAICompanionProject struct {
 				ID string `json:"id"`
 			} `json:"cloudaicompanionProject"`
+			TierID string `json:"tierId"`
 		} `json:"response"`
 	}
 	if err := json.Unmarshal(respBody, &lro); err != nil {
-		return "", fmt.Errorf("parse onboardUser response: %w", err)
+		return "", "", fmt.Errorf("parse onboardUser response: %w", err)
 	}
 
 	if lro.Done {
-		return lro.Response.CloudAICompanionProject.ID, nil
+		tierID := strings.TrimSpace(lro.Response.TierID)
+		if tierID == "" {
+			tierID = "legacy-tier"
+		}
+		return lro.Response.CloudAICompanionProject.ID, tierID, nil
 	}
 	if lro.Name == "" {
-		return "", errors.New("onboardUser returned no operation name")
+		return "", "", errors.New("onboardUser returned no operation name")
 	}
 
-	return pollOperation(ctx, lro.Name, headers)
+	return pollOperation(ctx, endpoint, lro.Name, headers)
 }
 
-func pollOperation(ctx context.Context, operationName string, headers map[string]string) (string, error) {
+func pollOperation(ctx context.Context, endpoint, operationName string, headers map[string]string) (string, string, error) {
 	for attempt := 0; attempt < pollMaxAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", "", ctx.Err()
 		case <-time.After(pollInterval):
 		}
 
-		reqURL := codeAssistURL + "/v1internal/" + operationName
+		reqURL := strings.TrimRight(endpoint, "/") + "/v1internal/" + operationName
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
 			continue
@@ -108,6 +167,7 @@ func pollOperation(ctx context.Context, operationName string, headers map[string
 				CloudAICompanionProject struct {
 					ID string `json:"id"`
 				} `json:"cloudaicompanionProject"`
+				TierID string `json:"tierId"`
 			} `json:"response"`
 		}
 		body, _ := io.ReadAll(resp.Body)
@@ -117,11 +177,15 @@ func pollOperation(ctx context.Context, operationName string, headers map[string
 			continue
 		}
 		if lro.Done {
-			return lro.Response.CloudAICompanionProject.ID, nil
+			tierID := strings.TrimSpace(lro.Response.TierID)
+			if tierID == "" {
+				tierID = "legacy-tier"
+			}
+			return lro.Response.CloudAICompanionProject.ID, tierID, nil
 		}
 	}
 
-	return "", errors.New("operation polling timeout")
+	return "", "", errors.New("operation polling timeout")
 }
 
 func doCodeAssistRequest(ctx context.Context, requestURL, body string, headers map[string]string) ([]byte, error) {
@@ -148,6 +212,13 @@ func doCodeAssistRequest(ctx context.Context, requestURL, body string, headers m
 	}
 
 	return respBody, nil
+}
+
+func firstEndpointOrDefault(endpoints []string) string {
+	if len(endpoints) == 0 {
+		return codeAssistPrimaryEndpoint
+	}
+	return endpoints[0]
 }
 
 // extractProjectID handles both string and object forms of cloudaicompanionProject.

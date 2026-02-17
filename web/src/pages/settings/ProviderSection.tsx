@@ -36,7 +36,7 @@ type Props = {
   oauthFlow: OAuthStartResult | null;
   oauthCallbackURL: string;
   setOAuthCallbackURL: (value: string) => void;
-  onStartOAuth: () => void;
+  onStartOAuth: (providerID: string) => void;
   onCompleteOAuth: () => void;
   message: StatusMessage;
   pastedTokenJSON: string;
@@ -81,6 +81,11 @@ export default function ProviderSection({
 }: Props) {
   const isModalBusy = oauthStarting || oauthCompleting;
   const [errorDetailEmail, setErrorDetailEmail] = useState<string | null>(null);
+  const selectedOAuthProviderID =
+    form.provider_id === "google-antigravity" ? "google-antigravity" : "google-gemini-cli";
+  const currentModelValue = form.model_id || form.gemini_model;
+  const toLegacyModel = (modelID: string) =>
+    modelID.includes("/") ? modelID.split("/").slice(1).join("/") : modelID;
 
   return (
     <>
@@ -120,8 +125,15 @@ export default function ProviderSection({
               <label className="form-field">
                 <span>Model</span>
                 <Select
-                  value={form.gemini_model}
-                  onChange={(val) => setForm({ ...form, gemini_model: val })}
+                  value={currentModelValue}
+                  onChange={(val) =>
+                    setForm({
+                      ...form,
+                      provider_id: "gemini-api-key",
+                      model_id: val,
+                      gemini_model: toLegacyModel(val),
+                    })
+                  }
                   options={modelOptions}
                 />
               </label>
@@ -302,10 +314,38 @@ export default function ProviderSection({
               {pool.length > 0 && (
                 <div className="oauth-section-subtle">
                   <label className="form-field">
+                    <span>OAuth Provider</span>
+                    <Select
+                      value={selectedOAuthProviderID}
+                      onChange={(val) => {
+                        const providerID = val === "google-antigravity" ? "google-antigravity" : "google-gemini-cli";
+                        setForm({
+                          ...form,
+                          provider_id: providerID,
+                          model_id: providerID === "google-antigravity"
+                            ? "google-antigravity/claude-opus-4-6-thinking"
+                            : "google-gemini-cli/gemini-3-pro-preview",
+                          gemini_model: providerID === "google-antigravity" ? "claude-opus-4-6-thinking" : "gemini-3-pro-preview",
+                        });
+                      }}
+                      options={[
+                        { value: "google-gemini-cli", label: "Google Gemini CLI" },
+                        { value: "google-antigravity", label: "Google Antigravity" },
+                      ]}
+                    />
+                  </label>
+
+                  <label className="form-field">
                     <span>Model</span>
                     <Select
-                      value={form.gemini_model}
-                      onChange={(val) => setForm({ ...form, gemini_model: val })}
+                      value={currentModelValue}
+                      onChange={(val) =>
+                        setForm({
+                          ...form,
+                          model_id: val,
+                          gemini_model: toLegacyModel(val),
+                        })
+                      }
                       options={modelOptions}
                     />
                   </label>
@@ -364,7 +404,7 @@ export default function ProviderSection({
                   </button>
                 </div>
                 <button
-                  onClick={onStartOAuth}
+                  onClick={() => onStartOAuth(selectedOAuthProviderID)}
                   disabled={isModalBusy}
                   className="btn-primary"
                 >

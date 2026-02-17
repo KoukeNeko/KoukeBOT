@@ -73,6 +73,12 @@ type ProviderPool struct {
 	// Fallback model: tried when primary model has no capacity.
 	fallbackModel string
 
+	// Observability fields for status endpoint / UI.
+	effectiveModel     string
+	effectiveEndpoint  string
+	lastFallbackReason string
+	lastFallbackAt     time.Time
+
 	// Request queue: buffers requests when all accounts are in cooldown.
 	queue        *requestQueue
 	queueEnabled bool
@@ -82,6 +88,7 @@ type ProviderPool struct {
 	metricTransientWaitRetryFailed    uint64
 	metricAllAccountsExhausted        uint64
 	metricModelCapacityGlobalCooldown uint64
+	metricModelFallback               uint64
 }
 
 // NewProviderPool creates an empty provider pool.
@@ -168,6 +175,7 @@ type ProviderPoolMetrics struct {
 	TransientWaitRetryFailed    uint64 `json:"transient_wait_retry_failed"`
 	AllAccountsExhausted        uint64 `json:"all_accounts_exhausted"`
 	ModelCapacityGlobalCooldown uint64 `json:"model_capacity_global_cooldown"`
+	ModelFallback               uint64 `json:"model_fallback"`
 }
 
 func (pp *ProviderPool) MetricsSnapshot() ProviderPoolMetrics {
@@ -180,5 +188,6 @@ func (pp *ProviderPool) MetricsSnapshot() ProviderPoolMetrics {
 		TransientWaitRetryFailed:    atomic.LoadUint64(&pp.metricTransientWaitRetryFailed),
 		AllAccountsExhausted:        atomic.LoadUint64(&pp.metricAllAccountsExhausted),
 		ModelCapacityGlobalCooldown: atomic.LoadUint64(&pp.metricModelCapacityGlobalCooldown),
+		ModelFallback:               atomic.LoadUint64(&pp.metricModelFallback),
 	}
 }

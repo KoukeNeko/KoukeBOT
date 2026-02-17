@@ -214,8 +214,8 @@ export default function SettingsPage({ vm }: Props) {
   if (vm.loading) return <p>Loading settings...</p>;
 
   const activeProviderLabel =
-    vm.status && vm.status.model
-      ? `${vm.status.provider_name} / ${vm.status.model}`
+    vm.status && vm.status.configured
+      ? `${vm.status.active_provider_id ?? vm.status.provider_name} / ${vm.status.effective_model_id ?? vm.status.model}${vm.status.effective_endpoint ? ` @ ${vm.status.effective_endpoint}` : ""}`
       : vm.status?.provider_name ?? "";
 
   return (
@@ -264,6 +264,9 @@ export default function SettingsPage({ vm }: Props) {
               {vm.status.configured
                 ? `Provider active: ${activeProviderLabel}`
                 : "LLM provider not configured — set API key or use OAuth below."}
+              {vm.status.last_fallback_reason
+                ? ` (last fallback: ${vm.status.last_fallback_reason})`
+                : ""}
             </div>
           )}
 

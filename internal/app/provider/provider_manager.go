@@ -110,3 +110,10 @@ func (pm *ProviderManager) GetPool() *ProviderPool {
 	}
 	return nil
 }
+
+// Provider returns the currently configured provider.
+func (pm *ProviderManager) Provider() llm.Provider {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.provider
+}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
@@ -18,41 +19,99 @@ import (
 
 var logOAuth = logger.New("llm", logger.Yellow)
 
-// Cloud Code Assist API — the endpoint used by Gemini CLI OAuth.
-// Reference: github.com/openclaw/openclaw
-const codeAssistEndpoint = "https://cloudcode-pa.googleapis.com"
-
 // GeminiOAuthProvider uses OAuth token + Cloud Code Assist API to access Gemini.
 // The genai SDK requires an API key for BackendGeminiAPI, so we bypass it
 // and make raw HTTP calls to cloudcode-pa.googleapis.com with Bearer auth.
 type GeminiOAuthProvider struct {
-	httpClient *http.Client
-	model      string
-	projectID  string
-	tools      []domain.Tool // Registered tools for function calling
+	httpClient         *http.Client
+	providerID         string
+	model              string
+	projectID          string
+	endpointPolicy     string
+	endpointCandidates []string
+	endpointMu         sync.RWMutex
+	effectiveEndpoint  string
+	tools              []domain.Tool // Registered tools for function calling
 }
 
 // NewGeminiOAuthProvider creates a provider using OAuth credentials via Cloud Code Assist API.
 func NewGeminiOAuthProvider(ctx context.Context, tokenData *OAuthTokenData, model string) (*GeminiOAuthProvider, error) {
+	return NewGeminiOAuthProviderWithProvider(
+		ctx,
+		tokenData,
+		ProviderGoogleGeminiCLI,
+		model,
+		EndpointPolicyPrimaryThenSandbox,
+	)
+}
+
+// NewGeminiOAuthProviderWithProvider creates a provider with explicit provider identity
+// and endpoint policy/candidate configuration.
+func NewGeminiOAuthProviderWithProvider(
+	ctx context.Context,
+	tokenData *OAuthTokenData,
+	providerID string,
+	model string,
+	endpointPolicy string,
+) (*GeminiOAuthProvider, error) {
 	tokenSource := NewTokenSource(ctx, tokenData)
 	httpClient := oauth2.NewClient(ctx, tokenSource)
+	pid := NormalizeGoogleProviderID(providerID)
+	spec := googleProviderSpec(pid)
+	candidates := resolveOAuthEndpointCandidates(spec.EndpointCandidates, endpointPolicy)
+	normalizedModel := NormalizeGoogleModelAlias(model)
+	if normalizedModel == "" {
+		normalizedModel = spec.DefaultModel
+	}
 
 	return &GeminiOAuthProvider{
-		httpClient: httpClient,
-		model:      NormalizeModelID(model),
-		projectID:  tokenData.ProjectID,
+		httpClient:         httpClient,
+		providerID:         pid,
+		model:              normalizedModel,
+		projectID:          tokenData.ProjectID,
+		endpointPolicy:     ResolveEndpointPolicy(endpointPolicy),
+		endpointCandidates: candidates,
+		effectiveEndpoint:  candidates[0],
 	}, nil
 }
 
 // WithModel returns a shallow clone of this provider configured for a different model.
 // The HTTP client (and thus OAuth credentials) is shared.
 func (g *GeminiOAuthProvider) WithModel(model string) Provider {
+	g.endpointMu.RLock()
+	effective := g.effectiveEndpoint
+	candidates := append([]string(nil), g.endpointCandidates...)
+	g.endpointMu.RUnlock()
+
 	return &GeminiOAuthProvider{
-		httpClient: g.httpClient,
-		model:      NormalizeModelID(model),
-		projectID:  g.projectID,
-		tools:      append([]domain.Tool(nil), g.tools...),
+		httpClient:         g.httpClient,
+		providerID:         g.providerID,
+		model:              NormalizeGoogleModelAlias(model),
+		projectID:          g.projectID,
+		endpointPolicy:     g.endpointPolicy,
+		endpointCandidates: candidates,
+		effectiveEndpoint:  effective,
+		tools:              append([]domain.Tool(nil), g.tools...),
 	}
+}
+
+func resolveOAuthEndpointCandidates(candidates []string, endpointPolicy string) []string {
+	policy := ResolveEndpointPolicy(endpointPolicy)
+	resolved := make([]string, 0, len(candidates))
+	for _, endpoint := range candidates {
+		endpoint = strings.TrimSpace(endpoint)
+		if endpoint == "" {
+			continue
+		}
+		resolved = append(resolved, endpoint)
+	}
+	if len(resolved) == 0 {
+		resolved = []string{codeAssistPrimaryEndpoint, codeAssistSandboxEndpoint}
+	}
+	if policy != EndpointPolicyPrimaryThenSandbox {
+		return resolved
+	}
+	return resolved
 }
 
 func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
@@ -61,23 +120,11 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := codeAssistEndpoint + "/v1internal:streamGenerateContent?alt=sse"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	resp, _, err := g.openStreamGenerateContent(ctx, body, "code assist request")
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	setCodeAssistHeaders(httpReq)
-
-	resp, err := g.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("code assist request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("code assist HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
 
 	// Collect all SSE chunks into a single response.
 	var fullText strings.Builder
@@ -145,22 +192,9 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := codeAssistEndpoint + "/v1internal:streamGenerateContent?alt=sse"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	resp, _, err := g.openStreamGenerateContent(ctx, body, "code assist stream")
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	setCodeAssistHeaders(httpReq)
-
-	resp, err := g.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("code assist stream: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("code assist stream HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, err
 	}
 
 	ch := make(chan StreamChunk, 16)
@@ -235,22 +269,9 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 		return nil, fmt.Errorf("marshal multimodal request: %w", err)
 	}
 
-	url := codeAssistEndpoint + "/v1internal:streamGenerateContent?alt=sse"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	resp, _, err := g.openStreamGenerateContent(ctx, body, "code assist multimodal stream")
 	if err != nil {
-		return nil, fmt.Errorf("create multimodal request: %w", err)
-	}
-	setCodeAssistHeaders(httpReq)
-
-	resp, err := g.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("code assist multimodal stream: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("code assist multimodal stream HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, err
 	}
 
 	ch := make(chan StreamChunk, 16)
@@ -321,9 +342,16 @@ func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 		ContextWindow:     1_000_000,
 		MaxOutputTokens:   resolveMaxTokensForModel(g.model, defaultMaxOutputTokens),
 		SupportsStreaming: true,
-		ProviderName:      "gemini-oauth",
+		ProviderName:      fmt.Sprintf("gemini-oauth/%s", g.providerID),
 		Model:             g.model,
 	}
+}
+
+// EffectiveEndpoint returns the endpoint of the last successful OAuth request.
+func (g *GeminiOAuthProvider) EffectiveEndpoint() string {
+	g.endpointMu.RLock()
+	defer g.endpointMu.RUnlock()
+	return g.effectiveEndpoint
 }
 
 // RegisterTools registers tools for function calling (OAuth provider).
@@ -557,6 +585,76 @@ func setCodeAssistHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", "google-cloud-sdk vscode_cloudshelleditor/0.1")
 	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
 	req.Header.Set("Client-Metadata", `{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}`)
+}
+
+func (g *GeminiOAuthProvider) openStreamGenerateContent(ctx context.Context, body []byte, label string) (*http.Response, string, error) {
+	candidates := g.currentEndpointCandidates()
+	var lastErr error
+	var lastErrEndpoint string
+
+	for idx, endpoint := range candidates {
+		reqURL := strings.TrimRight(endpoint, "/") + "/v1internal:streamGenerateContent?alt=sse"
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, endpoint, fmt.Errorf("create request: %w", err)
+		}
+		setCodeAssistHeaders(httpReq)
+
+		resp, err := g.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", label, err)
+			lastErrEndpoint = endpoint
+			if idx+1 < len(candidates) {
+				logOAuth.Warnf("%s endpoint=%s failed (%v), retrying fallback endpoint", label, endpoint, err)
+				continue
+			}
+			return nil, endpoint, lastErr
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			g.setEffectiveEndpoint(endpoint)
+			return resp, endpoint, nil
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		formattedErr := fmt.Errorf("%s HTTP %d: %s", label, resp.StatusCode, string(respBody))
+		lastErr = formattedErr
+		lastErrEndpoint = endpoint
+
+		if isEndpointFallbackEligibleStatus(resp.StatusCode) && idx+1 < len(candidates) {
+			logOAuth.Warnf("%s endpoint=%s status=%d, retrying fallback endpoint", label, endpoint, resp.StatusCode)
+			continue
+		}
+		return nil, endpoint, formattedErr
+	}
+
+	if lastErr != nil {
+		return nil, lastErrEndpoint, lastErr
+	}
+	return nil, "", fmt.Errorf("%s: no endpoint candidates available", label)
+}
+
+func isEndpointFallbackEligibleStatus(statusCode int) bool {
+	if statusCode >= 500 {
+		return true
+	}
+	return statusCode == http.StatusRequestTimeout
+}
+
+func (g *GeminiOAuthProvider) currentEndpointCandidates() []string {
+	g.endpointMu.RLock()
+	defer g.endpointMu.RUnlock()
+	if len(g.endpointCandidates) == 0 {
+		return []string{codeAssistPrimaryEndpoint, codeAssistSandboxEndpoint}
+	}
+	return append([]string(nil), g.endpointCandidates...)
+}
+
+func (g *GeminiOAuthProvider) setEffectiveEndpoint(endpoint string) {
+	g.endpointMu.Lock()
+	defer g.endpointMu.Unlock()
+	g.effectiveEndpoint = endpoint
 }
 
 // parseSSEData extracts the JSON payload from an SSE data line.

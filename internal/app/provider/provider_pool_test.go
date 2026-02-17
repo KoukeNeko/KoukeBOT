@@ -457,8 +457,11 @@ func TestProviderPoolFallbackModelSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected fallback success, got error: %v", err)
 	}
-	if resp == nil || resp.Content != "fallback-ok" {
+	if resp == nil || !strings.Contains(resp.Content, "fallback-ok") {
 		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Content, "[Model fallback] switched to gemini-2.0-flash") {
+		t.Fatalf("expected fallback notice in response, got: %q", resp.Content)
 	}
 }
 

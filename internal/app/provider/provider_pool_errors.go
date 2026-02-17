@@ -18,6 +18,7 @@ const (
 	errorNone errorType = iota
 	errorQuota
 	errorModelCapacity // Model server has no capacity (distinct from account quota)
+	errorModelUnavailable
 	errorValidation
 	errorTransient
 	errorOther
@@ -36,6 +37,9 @@ func classifyError(err error) errorType {
 	// different handling (global cooldown instead of account rotation).
 	if isModelCapacityError(lower) {
 		return errorModelCapacity
+	}
+	if isModelUnavailableError(lower) {
+		return errorModelUnavailable
 	}
 
 	if strings.Contains(s, "429") || strings.Contains(s, "RESOURCE_EXHAUSTED") {
@@ -82,6 +86,19 @@ func isModelCapacityError(lower string) bool {
 	return strings.Contains(lower, "no capacity available") ||
 		strings.Contains(lower, "model_capacity") ||
 		strings.Contains(lower, "model capacity")
+}
+
+func isModelUnavailableError(lower string) bool {
+	if strings.Contains(lower, "http 404") ||
+		strings.Contains(lower, "\"status\": \"not_found\"") ||
+		strings.Contains(lower, "\"status\":\"not_found\"") ||
+		strings.Contains(lower, "requested entity was not found") {
+		return true
+	}
+
+	return strings.Contains(lower, "multimodal") && strings.Contains(lower, "not support") ||
+		strings.Contains(lower, "image") && strings.Contains(lower, "not support") ||
+		strings.Contains(lower, "unsupported image input")
 }
 
 // modelCapacityCooldown returns the global cooldown applied when the model

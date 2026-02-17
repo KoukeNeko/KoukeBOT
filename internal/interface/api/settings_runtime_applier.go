@@ -32,6 +32,7 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("load current settings: %w", err)
 	}
+	existing = backfillProviderFieldsFromPrevious(previous, existing)
 
 	if config.NormalizeWebToolMode(existing.WebToolMode) == config.WebToolModePlaywrightMCP {
 		nextServers, upserted := tooling.EnsureManagedPlaywrightMCPServer(existing.MCP.Servers)
@@ -53,7 +54,7 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 	}
 
 	logAPI.Logf("settings: saving model=%s provider=%s mode=%s websearch=%v reply=%v provider_related_changed=%v",
-		existing.GeminiModel, existing.ProviderType, existing.WebToolMode, existing.WebSearchEnabled, existing.DiscordUseReply, providerRelatedChanged)
+		existing.ModelID, existing.ProviderID, existing.WebToolMode, existing.WebSearchEnabled, existing.DiscordUseReply, providerRelatedChanged)
 
 	if err := h.settingsStore.Save(existing); err != nil {
 		return nil, fmt.Errorf("save settings: %w", err)
@@ -92,8 +93,8 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 			existing.TransientRecoveryWaitEnabled,
 			time.Duration(existing.TransientRecoveryWaitMaxSeconds)*time.Second,
 		)
-		if existing.FallbackModelEnabled && existing.FallbackModel != "" {
-			pool.SetFallbackModel(existing.FallbackModel)
+		if fallbackModel := resolveFallbackModelShort(existing, existing.ProviderID); fallbackModel != "" && (existing.FallbackEnabled || existing.FallbackModelEnabled) {
+			pool.SetFallbackModel(fallbackModel)
 		} else {
 			pool.SetFallbackModel("")
 		}
@@ -129,23 +130,79 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 	return response, nil
 }
 
+func backfillProviderFieldsFromPrevious(previous, next config.Settings) config.Settings {
+	if hasExplicitProviderPayload(next) {
+		return next
+	}
+	next.ProviderType = previous.ProviderType
+	next.ProviderID = previous.ProviderID
+	next.ModelID = previous.ModelID
+	next.GeminiModel = previous.GeminiModel
+	next.GeminiAPIKey = previous.GeminiAPIKey
+	next.FallbackEnabled = previous.FallbackEnabled
+	next.FallbackModelEnabled = previous.FallbackModelEnabled
+	next.FallbackModelID = previous.FallbackModelID
+	next.FallbackModel = previous.FallbackModel
+	next.EndpointPolicy = previous.EndpointPolicy
+	return next
+}
+
+func hasExplicitProviderPayload(settings config.Settings) bool {
+	return strings.TrimSpace(settings.ProviderType) != "" ||
+		strings.TrimSpace(settings.ProviderID) != "" ||
+		strings.TrimSpace(settings.ModelID) != "" ||
+		strings.TrimSpace(settings.GeminiModel) != "" ||
+		strings.TrimSpace(settings.GeminiAPIKey) != "" ||
+		strings.TrimSpace(settings.FallbackModelID) != "" ||
+		strings.TrimSpace(settings.FallbackModel) != "" ||
+		settings.FallbackEnabled ||
+		settings.FallbackModelEnabled ||
+		strings.TrimSpace(settings.EndpointPolicy) != ""
+}
+
 func hasProviderRelatedSettingsChange(previous, next config.Settings) bool {
-	if normalizeProviderTypeForSelection(previous.ProviderType) != normalizeProviderTypeForSelection(next.ProviderType) {
+	prevProviderID, prevModel, prevModelID := llm.ResolveProviderAndModel(previous.ProviderID, previous.ModelID, previous.GeminiModel)
+	nextProviderID, nextModel, nextModelID := llm.ResolveProviderAndModel(next.ProviderID, next.ModelID, next.GeminiModel)
+
+	if prevProviderID != nextProviderID {
 		return true
 	}
-	if llm.NormalizeModelID(previous.GeminiModel) != llm.NormalizeModelID(next.GeminiModel) {
+	if prevModelID != nextModelID {
+		return true
+	}
+	if llm.NormalizeGoogleModelAlias(prevModel) != llm.NormalizeGoogleModelAlias(nextModel) {
+		return true
+	}
+	if normalizeProviderTypeForSelection(previous.ProviderType) != normalizeProviderTypeForSelection(next.ProviderType) {
 		return true
 	}
 	if previous.GeminiAPIKey != next.GeminiAPIKey {
 		return true
 	}
-	if previous.FallbackModelEnabled != next.FallbackModelEnabled {
+	prevFallbackID, prevFallbackModel := resolveFallbackModelForResponse(previous, prevProviderID)
+	nextFallbackID, nextFallbackModel := resolveFallbackModelForResponse(next, nextProviderID)
+	if prevFallbackID != nextFallbackID {
 		return true
 	}
-	return llm.NormalizeModelID(previous.FallbackModel) != llm.NormalizeModelID(next.FallbackModel)
+	if llm.NormalizeGoogleModelAlias(prevFallbackModel) != llm.NormalizeGoogleModelAlias(nextFallbackModel) {
+		return true
+	}
+	if (previous.FallbackEnabled || previous.FallbackModelEnabled) != (next.FallbackEnabled || next.FallbackModelEnabled) {
+		return true
+	}
+	return llm.ResolveEndpointPolicy(previous.EndpointPolicy) != llm.ResolveEndpointPolicy(next.EndpointPolicy)
 }
 
 func shouldRunStrictOAuthProbe(settings config.Settings) bool {
+	if strings.TrimSpace(settings.ProviderID) != "" {
+		switch llm.NormalizeGoogleProviderID(settings.ProviderID) {
+		case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+			return true
+		case llm.ProviderGeminiAPIKey:
+			return false
+		}
+	}
+
 	switch normalizeProviderTypeForSelection(settings.ProviderType) {
 	case config.ProviderOAuth:
 		return true

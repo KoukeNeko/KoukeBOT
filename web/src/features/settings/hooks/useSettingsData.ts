@@ -22,6 +22,11 @@ const defaultSettings: SettingsData = {
   gemini_model: '',
   discord_token: '',
   provider_type: '',
+  provider_id: 'google-gemini-cli',
+  model_id: 'google-gemini-cli/gemini-3-pro-preview',
+  fallback_enabled: false,
+  fallback_model_id: '',
+  endpoint_policy: 'primary_then_sandbox',
   brave_api_key: '',
   web_search_enabled: false,
   discord_use_reply: false,
@@ -111,10 +116,10 @@ export function useSettingsData() {
         setModels(modelList)
         setPersonas(personaList)
 
-        if (settings.provider_type === 'oauth') {
-          oauth.setProviderTab('oauth')
-        } else if (settings.provider_type === 'api-key') {
+        if (settings.provider_id === 'gemini-api-key' || settings.provider_type === 'api-key') {
           oauth.setProviderTab('api-key')
+        } else {
+          oauth.setProviderTab('oauth')
         }
       })
       .catch((error) => setMessage({ type: 'err', text: error instanceof Error ? error.message : 'Failed to load settings' }))
@@ -136,6 +141,11 @@ export function useSettingsData() {
       const payload = { ...form }
       if (overrideProviderType) {
         payload.provider_type = overrideProviderType
+        if (overrideProviderType === 'api-key') {
+          payload.provider_id = 'gemini-api-key'
+        } else if (payload.provider_id === 'gemini-api-key' || !payload.provider_id) {
+          payload.provider_id = 'google-gemini-cli'
+        }
       }
 
       const result = await updateSettings(payload)
@@ -163,9 +173,12 @@ export function useSettingsData() {
   const modelOptions = useMemo(
     () =>
       models.length > 0
-        ? models.map((model) => ({ value: model.id, label: model.display_name }))
-        : [{ value: form.gemini_model || 'gemini-2.5-pro', label: form.gemini_model || 'gemini-2.5-pro' }],
-    [form.gemini_model, models],
+        ? models.map((model) => ({
+            value: model.id,
+            label: `${model.display_name}${model.reasoning ? ' · Reasoning' : ''}${model.supports_multimodal ? ' · MM' : ''}${model.supports_tools ? ' · Tools' : ''}`,
+          }))
+        : [{ value: form.model_id || form.gemini_model || 'google-gemini-cli/gemini-3-pro-preview', label: form.model_id || form.gemini_model || 'google-gemini-cli/gemini-3-pro-preview' }],
+    [form.gemini_model, form.model_id, models],
   )
 
   const personaOptions = useMemo(

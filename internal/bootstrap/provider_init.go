@@ -9,10 +9,19 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
-func initProvider(ctx context.Context, settings config.Settings, pm *app.ProviderManager, model, port string, paths Paths, logs Loggers) {
-	switch settings.ProviderType {
+func initProvider(
+	ctx context.Context,
+	settings config.Settings,
+	pm *app.ProviderManager,
+	providerID string,
+	model string,
+	port string,
+	paths Paths,
+	logs Loggers,
+) {
+	switch resolveBootstrapProviderType(settings, providerID) {
 	case config.ProviderOAuth:
-		if initOAuthProvider(ctx, settings, pm, model, paths, logs) {
+		if initOAuthProvider(ctx, settings, pm, providerID, model, paths, logs) {
 			return
 		}
 		logs.LLM.Warnf("OAuth selected but not available — configure at http://localhost:%s/settings", port)
@@ -27,7 +36,7 @@ func initProvider(ctx context.Context, settings config.Settings, pm *app.Provide
 		if settings.GeminiAPIKey != "" && initAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model, logs) {
 			return
 		}
-		if initOAuthProvider(ctx, settings, pm, model, paths, logs) {
+		if initOAuthProvider(ctx, settings, pm, providerID, model, paths, logs) {
 			return
 		}
 		logs.LLM.Warnf("no LLM credentials — configure at http://localhost:%s/settings", port)
@@ -52,6 +61,7 @@ func initOAuthProvider(
 	ctx context.Context,
 	settings config.Settings,
 	pm *app.ProviderManager,
+	providerID string,
 	model string,
 	paths Paths,
 	logs Loggers,
@@ -81,8 +91,8 @@ func initOAuthProvider(
 		settings.TransientRecoveryWaitEnabled,
 		time.Duration(settings.TransientRecoveryWaitMaxSeconds)*time.Second,
 	)
-	if settings.FallbackModelEnabled && settings.FallbackModel != "" {
-		pool.SetFallbackModel(settings.FallbackModel)
+	if fallbackModel := resolveBootstrapFallbackModel(settings); fallbackModel != "" && (settings.FallbackEnabled || settings.FallbackModelEnabled) {
+		pool.SetFallbackModel(fallbackModel)
 	}
 	if settings.RequestQueueEnabled {
 		capacity := settings.RequestQueueCapacity
@@ -117,7 +127,13 @@ func initOAuthProvider(
 				logs.LLM.Warnf("failed to persist refreshed pool token for %s: %v", tokenData.Email, err)
 			}
 		}
-		provider, err := llm.NewGeminiOAuthProvider(ctx, tokenData, model)
+		provider, err := llm.NewGeminiOAuthProviderWithProvider(
+			ctx,
+			tokenData,
+			providerID,
+			model,
+			settings.EndpointPolicy,
+		)
 		if err != nil {
 			logs.LLM.Warnf("failed to init OAuth provider for %s: %v", tokenData.Email, err)
 			continue
@@ -132,4 +148,35 @@ func initOAuthProvider(
 	pm.Update(pool)
 	logs.LLM.Logf("OAuth pool: %d account(s) (model: %s)", pool.Size(), model)
 	return true
+}
+
+func resolveBootstrapProviderType(settings config.Settings, providerID string) string {
+	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderGeminiAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+		return config.ProviderOAuth
+	}
+	switch settings.ProviderType {
+	case config.ProviderAPIKey:
+		return config.ProviderAPIKey
+	case config.ProviderOAuth, "cli":
+		return config.ProviderOAuth
+	default:
+		if settings.GeminiAPIKey != "" {
+			return config.ProviderAPIKey
+		}
+		return config.ProviderOAuth
+	}
+}
+
+func resolveBootstrapFallbackModel(settings config.Settings) string {
+	_, fallbackModel := llm.SplitProviderModelID(settings.FallbackModelID)
+	if fallbackModel == "" {
+		fallbackModel = llm.NormalizeGoogleModelAlias(settings.FallbackModel)
+	}
+	if fallbackModel == "" {
+		return ""
+	}
+	return fallbackModel
 }

@@ -3,10 +3,12 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Provider type constants for explicit provider selection.
@@ -49,6 +51,11 @@ type Settings struct {
 	GeminiModel      string `json:"gemini_model"`
 	DiscordToken     string `json:"discord_token"`
 	ProviderType     string `json:"provider_type"`      // "api-key", "oauth", or "" (auto)
+	ProviderID       string `json:"provider_id"`        // "google-gemini-cli" | "google-antigravity" | "gemini-api-key"
+	ModelID          string `json:"model_id"`           // "provider/model"
+	FallbackEnabled  bool   `json:"fallback_enabled"`   // OpenClaw-style fallback switch
+	FallbackModelID  string `json:"fallback_model_id"`  // "provider/model"
+	EndpointPolicy   string `json:"endpoint_policy"`    // "primary_then_sandbox"
 	BraveAPIKey      string `json:"brave_api_key"`      // Brave Search API key for web search
 	WebSearchEnabled bool   `json:"web_search_enabled"` // Enable/disable web search tool
 	DiscordUseReply  bool   `json:"discord_use_reply"`  // Use reply feature in Discord (default: false)
@@ -89,7 +96,7 @@ type Settings struct {
 
 	// Circuit breaker settings
 	CircuitBreakerEnabled          bool `json:"circuit_breaker_enabled"`
-	CircuitBreakerFailureThreshold int  `json:"circuit_breaker_failure_threshold"` // default: 5
+	CircuitBreakerFailureThreshold int  `json:"circuit_breaker_failure_threshold"`     // default: 5
 	CircuitBreakerOpenDurationS    int  `json:"circuit_breaker_open_duration_seconds"` // default: 60
 
 	// Tool loop guard / resilience settings
@@ -158,8 +165,8 @@ func NewSettingsStore(path string) *SettingsStore {
 
 // Load reads settings from disk. Returns zero-value Settings if the file does not exist.
 func (s *SettingsStore) Load() (Settings, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -177,8 +184,21 @@ func (s *SettingsStore) Load() (Settings, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Settings{}, err
 	}
+	needsMigration := shouldMigrateLegacySettings(raw)
 	settings.ProviderType = normalizeProviderType(settings.ProviderType)
 	settings = normalizeSettings(settings, raw)
+
+	if needsMigration {
+		if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err == nil {
+			backupPath := fmt.Sprintf("%s.migration_backup.%s.json", s.path, time.Now().UTC().Format("20060102T150405Z"))
+			if writeErr := os.WriteFile(backupPath, data, 0o600); writeErr != nil {
+				// Best effort only; continue with migrated settings.
+			}
+			if normalized, marshalErr := json.MarshalIndent(settings, "", "  "); marshalErr == nil {
+				_ = os.WriteFile(s.path, normalized, 0o600)
+			}
+		}
+	}
 	return settings, nil
 }
 
@@ -231,6 +251,26 @@ func NormalizeWebToolMode(mode string) string {
 
 func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settings {
 	settings.WebToolMode = normalizeWebToolMode(settings.WebToolMode)
+	settings.EndpointPolicy = normalizeEndpointPolicyForSettings(settings.EndpointPolicy)
+
+	settings.ProviderID, settings.ModelID, settings.GeminiModel = resolveProviderModelForSettings(
+		settings.ProviderID,
+		settings.ModelID,
+		settings.ProviderType,
+		settings.GeminiModel,
+		settings.GeminiAPIKey,
+	)
+	settings.ProviderType = syncLegacyProviderTypeForSettings(settings.ProviderType, settings.ProviderID, settings.GeminiAPIKey)
+
+	if settings.FallbackEnabled || settings.FallbackModelEnabled || settings.FallbackModelID != "" || settings.FallbackModel != "" {
+		settings.FallbackEnabled = settings.FallbackEnabled || settings.FallbackModelEnabled
+	}
+	settings.FallbackModelID, settings.FallbackModel = resolveFallbackModelForSettings(
+		settings.ProviderID,
+		settings.FallbackModelID,
+		settings.FallbackModel,
+	)
+	settings.FallbackModelEnabled = settings.FallbackEnabled
 
 	if settings.PersonaLockEveryTurns <= 0 {
 		settings.PersonaLockEveryTurns = DefaultPersonaLockEveryTurns
@@ -385,6 +425,158 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 	}
 	settings.MCP = normalizeMCPSettings(settings.MCP)
 	return settings
+}
+
+func shouldMigrateLegacySettings(raw map[string]json.RawMessage) bool {
+	if raw == nil {
+		return false
+	}
+	_, hasProviderID := raw["provider_id"]
+	_, hasModelID := raw["model_id"]
+	if hasProviderID {
+		if !hasModelID {
+			return true
+		}
+		return false
+	}
+	_, hasLegacyProvider := raw["provider_type"]
+	_, hasLegacyModel := raw["gemini_model"]
+	return hasLegacyProvider || hasLegacyModel
+}
+
+func resolveProviderModelForSettings(providerID, modelID, providerType, legacyModel, apiKey string) (string, string, string) {
+	pid := normalizeGoogleProviderIDForSettings(providerID)
+	if pid == "" {
+		switch normalizeProviderType(providerType) {
+		case ProviderAPIKey:
+			pid = "gemini-api-key"
+		case ProviderOAuth:
+			pid = "google-gemini-cli"
+		default:
+			if strings.TrimSpace(apiKey) != "" {
+				pid = "gemini-api-key"
+			} else {
+				pid = "google-gemini-cli"
+			}
+		}
+	}
+
+	if mProvider, mModel := splitProviderModelIDForSettings(modelID); mModel != "" {
+		if mProvider != "" {
+			pid = mProvider
+		}
+		normalized := normalizeGoogleModelAliasForSettings(mModel)
+		return pid, buildProviderModelIDForSettings(pid, normalized), normalized
+	}
+
+	normalizedLegacyModel := normalizeGoogleModelAliasForSettings(legacyModel)
+	if normalizedLegacyModel == "" {
+		switch pid {
+		case "google-antigravity":
+			normalizedLegacyModel = "claude-opus-4-6-thinking"
+		default:
+			normalizedLegacyModel = "gemini-3-pro-preview"
+		}
+	}
+	return pid, buildProviderModelIDForSettings(pid, normalizedLegacyModel), normalizedLegacyModel
+}
+
+func resolveFallbackModelForSettings(providerID, fallbackModelID, legacyFallbackModel string) (string, string) {
+	pid := normalizeGoogleProviderIDForSettings(providerID)
+	if fp, fm := splitProviderModelIDForSettings(fallbackModelID); fm != "" {
+		if fp != "" {
+			pid = fp
+		}
+		model := normalizeGoogleModelAliasForSettings(fm)
+		return buildProviderModelIDForSettings(pid, model), model
+	}
+	legacy := normalizeGoogleModelAliasForSettings(legacyFallbackModel)
+	if legacy == "" {
+		return "", ""
+	}
+	return buildProviderModelIDForSettings(pid, legacy), legacy
+}
+
+func normalizeGoogleProviderIDForSettings(providerID string) string {
+	switch strings.TrimSpace(strings.ToLower(providerID)) {
+	case "":
+		return ""
+	case "google-gemini-cli", "gemini-cli", "oauth", "cli":
+		return "google-gemini-cli"
+	case "google-antigravity":
+		return "google-antigravity"
+	case "gemini-api-key":
+		return "gemini-api-key"
+	default:
+		return strings.TrimSpace(strings.ToLower(providerID))
+	}
+}
+
+func normalizeGoogleModelAliasForSettings(model string) string {
+	normalized := strings.TrimSpace(model)
+	if strings.HasPrefix(normalized, "models/") {
+		normalized = strings.TrimPrefix(normalized, "models/")
+	}
+	if idx := strings.LastIndex(normalized, "/"); idx >= 0 && idx+1 < len(normalized) {
+		normalized = normalized[idx+1:]
+	}
+	switch normalized {
+	case "gemini-3-pro":
+		return "gemini-3-pro-preview"
+	case "gemini-3-flash":
+		return "gemini-3-flash-preview"
+	default:
+		return strings.TrimSpace(normalized)
+	}
+}
+
+func splitProviderModelIDForSettings(modelID string) (string, string) {
+	normalized := strings.TrimSpace(modelID)
+	if normalized == "" {
+		return "", ""
+	}
+	if idx := strings.Index(normalized, "/"); idx > 0 {
+		return normalizeGoogleProviderIDForSettings(normalized[:idx]), normalizeGoogleModelAliasForSettings(normalized[idx+1:])
+	}
+	return "", normalizeGoogleModelAliasForSettings(normalized)
+}
+
+func buildProviderModelIDForSettings(providerID, model string) string {
+	pid := normalizeGoogleProviderIDForSettings(providerID)
+	mid := normalizeGoogleModelAliasForSettings(model)
+	if pid == "" {
+		pid = "google-gemini-cli"
+	}
+	if mid == "" {
+		mid = "gemini-3-pro-preview"
+	}
+	return pid + "/" + mid
+}
+
+func syncLegacyProviderTypeForSettings(providerType, providerID, apiKey string) string {
+	switch normalizeGoogleProviderIDForSettings(providerID) {
+	case "gemini-api-key":
+		return ProviderAPIKey
+	case "google-gemini-cli", "google-antigravity":
+		return ProviderOAuth
+	}
+	normalized := normalizeProviderType(providerType)
+	if normalized != "" {
+		return normalized
+	}
+	if strings.TrimSpace(apiKey) != "" {
+		return ProviderAPIKey
+	}
+	return ProviderOAuth
+}
+
+func normalizeEndpointPolicyForSettings(policy string) string {
+	switch strings.TrimSpace(strings.ToLower(policy)) {
+	case "primary_then_sandbox":
+		return "primary_then_sandbox"
+	default:
+		return "primary_then_sandbox"
+	}
 }
 
 func normalizeMCPSettings(mcp MCPSettings) MCPSettings {

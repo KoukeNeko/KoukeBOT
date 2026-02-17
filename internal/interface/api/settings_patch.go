@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
@@ -26,13 +27,32 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 		existing.GeminiAPIKey = req.GeminiAPIKey
 	}
 	if req.GeminiModel != "" {
-		existing.GeminiModel = llm.NormalizeModelID(req.GeminiModel)
+		existing.GeminiModel = llm.NormalizeGoogleModelAlias(req.GeminiModel)
 	}
 	if req.DiscordToken != "" && !isMasked(req.DiscordToken) {
 		existing.DiscordToken = req.DiscordToken
 	}
 	if req.ProviderType != "" {
 		existing.ProviderType = req.ProviderType
+		switch normalizeProviderTypeForSelection(req.ProviderType) {
+		case config.ProviderAPIKey:
+			if req.ProviderID == "" {
+				existing.ProviderID = llm.ProviderGeminiAPIKey
+			}
+		case config.ProviderOAuth:
+			if req.ProviderID == "" && (existing.ProviderID == "" || existing.ProviderID == llm.ProviderGeminiAPIKey) {
+				existing.ProviderID = llm.ProviderGoogleGeminiCLI
+			}
+		}
+	}
+	if req.ProviderID != "" {
+		existing.ProviderID = llm.NormalizeGoogleProviderID(req.ProviderID)
+	}
+	if req.ModelID != "" {
+		existing.ModelID = strings.TrimSpace(req.ModelID)
+	}
+	if req.EndpointPolicy != "" {
+		existing.EndpointPolicy = llm.ResolveEndpointPolicy(req.EndpointPolicy)
 	}
 	if req.BraveAPIKey != "" && !isMasked(req.BraveAPIKey) {
 		existing.BraveAPIKey = req.BraveAPIKey
@@ -122,10 +142,18 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.ScheduledMonitorMaxPerUser != nil {
 		existing.ScheduledMonitorMaxPerUser = *req.ScheduledMonitorMaxPerUser
 	}
+	if req.FallbackEnabled != nil {
+		existing.FallbackEnabled = *req.FallbackEnabled
+		existing.FallbackModelEnabled = *req.FallbackEnabled
+	}
 	if req.FallbackModelEnabled != nil {
 		existing.FallbackModelEnabled = *req.FallbackModelEnabled
+		existing.FallbackEnabled = *req.FallbackModelEnabled
 	}
-	existing.FallbackModel = llm.NormalizeModelID(req.FallbackModel)
+	if req.FallbackModelID != "" {
+		existing.FallbackModelID = strings.TrimSpace(req.FallbackModelID)
+	}
+	existing.FallbackModel = llm.NormalizeGoogleModelAlias(req.FallbackModel)
 	if req.MCP != nil {
 		prevMCP := existing.MCP
 		existing.MCP = convertMCPSettingsUpdate(*req.MCP)
@@ -144,6 +172,35 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 			return fmt.Errorf("invalid discord persona id: %s", req.DiscordPersonaID)
 		}
 		existing.DiscordPersonaID = req.DiscordPersonaID
+	}
+
+	existing.ProviderType = resolveProviderTypeWithLegacyFallback(existing.ProviderType, existing.ProviderID, existing.GeminiAPIKey)
+	existing.ProviderID, existing.GeminiModel, existing.ModelID = llm.ResolveProviderAndModel(
+		existing.ProviderID,
+		existing.ModelID,
+		existing.GeminiModel,
+	)
+	existing.ProviderType = normalizeProviderTypeFromProviderID(existing.ProviderType, existing.ProviderID)
+
+	fallbackProviderID, fallbackModel := llm.SplitProviderModelID(existing.FallbackModelID)
+	if fallbackModel == "" {
+		fallbackModel = llm.NormalizeGoogleModelAlias(existing.FallbackModel)
+	}
+	if fallbackProviderID == "" {
+		fallbackProviderID = existing.ProviderID
+	}
+	if fallbackModel != "" {
+		existing.FallbackModel = fallbackModel
+		existing.FallbackModelID = llm.BuildProviderModelID(fallbackProviderID, fallbackModel)
+	} else {
+		existing.FallbackModel = ""
+		existing.FallbackModelID = ""
+	}
+	existing.FallbackModelEnabled = existing.FallbackModelEnabled || existing.FallbackEnabled
+	existing.FallbackEnabled = existing.FallbackModelEnabled
+
+	if existing.EndpointPolicy == "" {
+		existing.EndpointPolicy = llm.EndpointPolicyPrimaryThenSandbox
 	}
 	return nil
 }
@@ -229,4 +286,33 @@ func cloneStringMap(values map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func resolveProviderTypeWithLegacyFallback(providerType, providerID, apiKey string) string {
+	normalized := normalizeProviderTypeForSelection(providerType)
+	if normalized != "" {
+		return normalized
+	}
+	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderGeminiAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+		return config.ProviderOAuth
+	default:
+		if strings.TrimSpace(apiKey) != "" {
+			return config.ProviderAPIKey
+		}
+		return config.ProviderOAuth
+	}
+}
+
+func normalizeProviderTypeFromProviderID(providerType, providerID string) string {
+	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderGeminiAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+		return config.ProviderOAuth
+	default:
+		return providerType
+	}
 }

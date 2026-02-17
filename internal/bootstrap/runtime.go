@@ -10,6 +10,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/mcp"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
@@ -55,11 +56,11 @@ func BuildRuntimeServices(
 	logs Loggers,
 ) (*RuntimeServices, error) {
 	providerManager := app.NewProviderManager(nil)
-	model := settings.GeminiModel
+	providerID, model, _ := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
 	if model == "" {
 		model = defaultModel
 	}
-	initProvider(ctx, settings, providerManager, model, port, paths, logs)
+	initProvider(ctx, settings, providerManager, providerID, model, port, paths, logs)
 
 	convStore, err := store.NewFileStore(paths.ConversationsDir)
 	if err != nil {

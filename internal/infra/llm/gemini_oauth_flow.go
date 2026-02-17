@@ -42,6 +42,9 @@ type OAuthTokenData struct {
 	Expiry       time.Time        `json:"expiry"`
 	ProjectID    string           `json:"project_id"`
 	Email        string           `json:"email,omitempty"`
+	ProviderID   string           `json:"provider_id,omitempty"`
+	TierID       string           `json:"tier_id,omitempty"`
+	EndpointUsed string           `json:"endpoint_used,omitempty"`
 	UsageStats   *OAuthUsageStats `json:"usage_stats,omitempty"`
 }
 
@@ -70,6 +73,7 @@ type oauthFlowState struct {
 	ClientSecret string
 	RedirectURL  string
 	Mode         string
+	ProviderID   string
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
 }
@@ -81,6 +85,7 @@ type OAuthStartInfo struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	Mode        string    `json:"mode"`
 	RedirectURL string    `json:"redirect_url,omitempty"`
+	ProviderID  string    `json:"provider_id,omitempty"`
 }
 
 // GeminiOAuthFlow manages the entire OAuth lifecycle.

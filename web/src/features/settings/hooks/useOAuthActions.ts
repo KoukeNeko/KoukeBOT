@@ -81,13 +81,13 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     [refreshOAuthSnapshot],
   )
 
-  const handleStartOAuth = useCallback(async () => {
+  const handleStartOAuth = useCallback(async (providerID: string) => {
     setOAuthStarting(true)
     setMessage(null)
     const previousPoolSize = pool.length
 
     try {
-      const start = await startGeminiOAuth({ mode: oauthMode })
+      const start = await startGeminiOAuth({ mode: oauthMode, providerId: providerID })
       setOAuthFlow(start)
       setOAuthCallbackURL('')
 
@@ -139,7 +139,7 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     setOAuthCompleting(true)
     setMessage(null)
     try {
-      const result = await completeGeminiOAuth(oauthFlow.flow_id, oauthCallbackURL.trim())
+      const result = await completeGeminiOAuth(oauthFlow.flow_id, oauthCallbackURL.trim(), oauthFlow.provider_id)
       await refreshOAuthSnapshot()
       setOAuthFlow(null)
       setOAuthCallbackURL('')

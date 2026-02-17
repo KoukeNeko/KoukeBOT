@@ -163,6 +163,7 @@ func DetectGeminiCLIToken(ctx context.Context) (*OAuthTokenData, error) {
 		RefreshToken: creds.RefreshToken,
 		TokenType:    creds.TokenType,
 		Expiry:       expiry,
+		ProviderID:   ProviderGoogleGeminiCLI,
 	}
 
 	if err := RefreshIfNeeded(ctx, data, ""); err != nil {
@@ -173,8 +174,15 @@ func DetectGeminiCLIToken(ctx context.Context) (*OAuthTokenData, error) {
 	} else {
 		logFlow.Warnf("failed to fetch email during import: %v", err)
 	}
-	if projectID, err := discoverProject(ctx, data.AccessToken); err == nil {
+	if projectID, tierID, endpointUsed, err := discoverProjectWithProvider(
+		ctx,
+		data.AccessToken,
+		data.ProviderID,
+		EndpointPolicyPrimaryThenSandbox,
+	); err == nil {
 		data.ProjectID = projectID
+		data.TierID = tierID
+		data.EndpointUsed = endpointUsed
 	} else {
 		logFlow.Warnf("failed to discover project during import: %v", err)
 	}
@@ -214,6 +222,7 @@ func (f *GeminiOAuthFlow) ImportTokenFromJSON(ctx context.Context, raw []byte, c
 		RefreshToken: creds.RefreshToken,
 		TokenType:    creds.TokenType,
 		Expiry:       expiry,
+		ProviderID:   ProviderGoogleGeminiCLI,
 	}
 
 	if err := RefreshIfNeeded(ctx, data, ""); err != nil {
@@ -224,8 +233,15 @@ func (f *GeminiOAuthFlow) ImportTokenFromJSON(ctx context.Context, raw []byte, c
 	} else {
 		logFlow.Warnf("failed to fetch email during paste import: %v", err)
 	}
-	if projectID, err := discoverProject(ctx, data.AccessToken); err == nil {
+	if projectID, tierID, endpointUsed, err := discoverProjectWithProvider(
+		ctx,
+		data.AccessToken,
+		data.ProviderID,
+		EndpointPolicyPrimaryThenSandbox,
+	); err == nil {
 		data.ProjectID = projectID
+		data.TierID = tierID
+		data.EndpointUsed = endpointUsed
 	} else {
 		logFlow.Warnf("failed to discover project during paste import: %v", err)
 	}

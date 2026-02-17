@@ -28,6 +28,11 @@ const settingsFixture: SettingsData = {
   gemini_model: 'gemini-2.5-pro',
   discord_token: '',
   provider_type: 'api-key',
+  provider_id: 'gemini-api-key',
+  model_id: 'gemini-api-key/gemini-2.5-pro',
+  fallback_enabled: false,
+  fallback_model_id: '',
+  endpoint_policy: 'primary_then_sandbox',
   brave_api_key: '',
   web_search_enabled: false,
   discord_use_reply: false,
@@ -91,6 +96,7 @@ const metricsFixture: RuntimeMetrics = {
   pool_transient_wait_retry_succeeded: 0,
   pool_transient_wait_retry_failed: 0,
   pool_all_accounts_exhausted: 0,
+  pool_model_fallback: 0,
   pool_accounts_total: 0,
   pool_accounts_exhausted_current: 0,
 }
@@ -103,7 +109,15 @@ describe('useSettingsData', () => {
     vi.mocked(api.getProviderStatus).mockResolvedValue(providerStatusFixture)
     vi.mocked(api.getRuntimeMetrics).mockResolvedValue(metricsFixture)
     vi.mocked(api.listModels).mockResolvedValue([
-      { id: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro' },
+      {
+        id: 'gemini-api-key/gemini-2.5-pro',
+        display_name: 'Gemini 2.5 Pro',
+        provider_id: 'gemini-api-key',
+        supports_text: true,
+        supports_multimodal: true,
+        supports_tools: true,
+        reasoning: true,
+      },
     ])
     vi.mocked(api.listPersonas).mockResolvedValue([])
     vi.mocked(api.updateSettings).mockResolvedValue({ status: 'ok' })

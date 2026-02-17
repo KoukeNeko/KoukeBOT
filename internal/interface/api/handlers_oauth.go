@@ -40,15 +40,17 @@ func (h *Handlers) OAuthDetect(w http.ResponseWriter, r *http.Request) {
 type OAuthStartRequest struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
+	ProviderID   string `json:"provider_id"`
 	Mode         string `json:"mode"`         // "local" | "remote"
 	RedirectURL  string `json:"redirect_url"` // optional override
 }
 
 type OAuthStartResponse struct {
-	FlowID    string `json:"flow_id"`
-	AuthURL   string `json:"auth_url"`
-	ExpiresAt string `json:"expires_at"`
-	Mode      string `json:"mode"`
+	FlowID     string `json:"flow_id"`
+	AuthURL    string `json:"auth_url"`
+	ExpiresAt  string `json:"expires_at"`
+	Mode       string `json:"mode"`
+	ProviderID string `json:"provider_id,omitempty"`
 }
 
 func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +58,10 @@ func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
+	}
+	providerID := llm.NormalizeGoogleProviderID(req.ProviderID)
+	if providerID == "" {
+		providerID = llm.ProviderGoogleGeminiCLI
 	}
 
 	// If no credentials provided, try auto-detect.
@@ -94,35 +100,51 @@ func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		redirectURL = base + "/api/oauth/gemini/callback"
 	}
 
-	info, err := h.oauthFlow.StartFlowV2(clientID, clientSecret, mode, redirectURL)
+	info, err := h.oauthFlow.StartFlowWithProvider(clientID, clientSecret, mode, redirectURL, providerID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "start OAuth flow: "+err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, OAuthStartResponse{
-		FlowID:    info.FlowID,
-		AuthURL:   info.AuthURL,
-		ExpiresAt: info.ExpiresAt.Format(time.RFC3339),
-		Mode:      info.Mode,
+		FlowID:     info.FlowID,
+		AuthURL:    info.AuthURL,
+		ExpiresAt:  info.ExpiresAt.Format(time.RFC3339),
+		Mode:       info.Mode,
+		ProviderID: info.ProviderID,
 	})
 }
 
 // completeOAuthCallback is the shared logic for both automatic and manual OAuth callbacks.
-func (h *Handlers) completeOAuthCallback(flowID, code, state string) (*llm.OAuthTokenData, error) {
+func (h *Handlers) completeOAuthCallback(flowID, code, state, expectedProviderID string) (*llm.OAuthTokenData, error) {
 	tokenData, err := h.oauthFlow.HandleCallbackWithFlow(h.ctx, flowID, code, state)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
 
-	model := "gemini-2.5-pro"
+	providerID := llm.NormalizeGoogleProviderID(tokenData.ProviderID)
+	if providerID == "" {
+		providerID = llm.ProviderGoogleGeminiCLI
+	}
+	if expected := llm.NormalizeGoogleProviderID(expectedProviderID); expected != "" && expected != providerID {
+		return nil, fmt.Errorf("OAuth provider mismatch: expected %s, got %s", expected, providerID)
+	}
+	tokenData.ProviderID = providerID
+
+	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
+	if model == "" {
+		model = "gemini-3-pro-preview"
+	}
+	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
 	var loadedSettings config.Settings
 	loadedSettings, _ = h.settingsStore.Load()
-	if loadedSettings.GeminiModel != "" {
-		model = loadedSettings.GeminiModel
+	endpointPolicy = llm.ResolveEndpointPolicy(loadedSettings.EndpointPolicy)
+	settingProviderID, settingModel, _ := llm.ResolveProviderAndModel(loadedSettings.ProviderID, loadedSettings.ModelID, loadedSettings.GeminiModel)
+	if settingProviderID == providerID && settingModel != "" {
+		model = settingModel
 	}
 
-	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
+	provider, err := llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
 	if err != nil {
 		return nil, fmt.Errorf("provider creation: %w", err)
 	}
@@ -156,6 +178,11 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state string) (*llm.OAuth
 
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
 		s.ProviderType = config.ProviderOAuth
+		s.ProviderID = providerID
+		if _, settingModelID := llm.SplitProviderModelID(s.ModelID); settingModelID == "" {
+			s.ModelID = llm.DefaultProviderModelID(providerID)
+		}
+		_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
 		_ = h.settingsStore.Save(s)
 	}
 
@@ -173,7 +200,7 @@ func (h *Handlers) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenData, err := h.completeOAuthCallback(flowID, code, state)
+	tokenData, err := h.completeOAuthCallback(flowID, code, state, "")
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
@@ -194,6 +221,7 @@ func (h *Handlers) OAuthCallbackManual(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CallbackURL string `json:"callback_url"`
 		FlowID      string `json:"flow_id"`
+		ProviderID  string `json:"provider_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -209,16 +237,19 @@ func (h *Handlers) OAuthCallbackManual(w http.ResponseWriter, r *http.Request) {
 	code := parsed.Query().Get("code")
 	state := parsed.Query().Get("state")
 
-	tokenData, err := h.completeOAuthCallback(req.FlowID, code, state)
+	tokenData, err := h.completeOAuthCallback(req.FlowID, code, state, req.ProviderID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"email":      tokenData.Email,
-		"project_id": tokenData.ProjectID,
-		"status":     "ok",
+		"email":         tokenData.Email,
+		"project_id":    tokenData.ProjectID,
+		"tier_id":       tokenData.TierID,
+		"endpoint_used": tokenData.EndpointUsed,
+		"provider_id":   tokenData.ProviderID,
+		"status":        "ok",
 	})
 }
 
@@ -227,6 +258,7 @@ func (h *Handlers) OAuthComplete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FlowID      string `json:"flow_id"`
 		CallbackURL string `json:"callback_url"`
+		ProviderID  string `json:"provider_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -246,16 +278,19 @@ func (h *Handlers) OAuthComplete(w http.ResponseWriter, r *http.Request) {
 	code := parsed.Query().Get("code")
 	state := parsed.Query().Get("state")
 
-	tokenData, err := h.completeOAuthCallback(req.FlowID, code, state)
+	tokenData, err := h.completeOAuthCallback(req.FlowID, code, state, req.ProviderID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"email":      tokenData.Email,
-		"project_id": tokenData.ProjectID,
-		"status":     "ok",
+		"email":         tokenData.Email,
+		"project_id":    tokenData.ProjectID,
+		"tier_id":       tokenData.TierID,
+		"endpoint_used": tokenData.EndpointUsed,
+		"provider_id":   tokenData.ProviderID,
+		"status":        "ok",
 	})
 }
 
@@ -300,6 +335,7 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 		TokenJSON    string `json:"token_json"`
 		ClientID     string `json:"client_id"`
 		ClientSecret string `json:"client_secret"`
+		ProviderID   string `json:"provider_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -315,13 +351,26 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "import failed: "+err.Error())
 		return
 	}
+	providerID := llm.NormalizeGoogleProviderID(req.ProviderID)
+	if providerID == "" {
+		providerID = llm.NormalizeGoogleProviderID(tokenData.ProviderID)
+	}
+	if providerID == "" {
+		providerID = llm.ProviderGoogleGeminiCLI
+	}
+	tokenData.ProviderID = providerID
 
-	model := "gemini-2.5-pro"
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil && s.GeminiModel != "" {
-		model = s.GeminiModel
+	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
+	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
+	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
+		endpointPolicy = llm.ResolveEndpointPolicy(s.EndpointPolicy)
+		spid, smodel, _ := llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
+		if spid == providerID && smodel != "" {
+			model = smodel
+		}
 	}
 
-	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
+	provider, err := llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "provider creation: "+err.Error())
 		return
@@ -342,13 +391,21 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
 		s.ProviderType = config.ProviderOAuth
+		s.ProviderID = providerID
+		if _, mid := llm.SplitProviderModelID(s.ModelID); mid == "" {
+			s.ModelID = llm.DefaultProviderModelID(providerID)
+		}
+		_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
 		_ = h.settingsStore.Save(s)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"email":      tokenData.Email,
-		"project_id": tokenData.ProjectID,
-		"status":     "ok",
+		"email":         tokenData.Email,
+		"project_id":    tokenData.ProjectID,
+		"tier_id":       tokenData.TierID,
+		"endpoint_used": tokenData.EndpointUsed,
+		"provider_id":   tokenData.ProviderID,
+		"status":        "ok",
 	})
 }
 
@@ -360,13 +417,26 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "import failed: "+err.Error())
 		return
 	}
+	providerID := llm.NormalizeGoogleProviderID(r.URL.Query().Get("provider_id"))
+	if providerID == "" {
+		providerID = llm.NormalizeGoogleProviderID(tokenData.ProviderID)
+	}
+	if providerID == "" {
+		providerID = llm.ProviderGoogleGeminiCLI
+	}
+	tokenData.ProviderID = providerID
 
-	model := "gemini-2.5-pro"
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil && s.GeminiModel != "" {
-		model = s.GeminiModel
+	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
+	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
+	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
+		endpointPolicy = llm.ResolveEndpointPolicy(s.EndpointPolicy)
+		spid, smodel, _ := llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
+		if spid == providerID && smodel != "" {
+			model = smodel
+		}
 	}
 
-	provider, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
+	provider, err := llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "provider creation: "+err.Error())
 		return
@@ -387,13 +457,21 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 
 	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
 		s.ProviderType = config.ProviderOAuth
+		s.ProviderID = providerID
+		if _, mid := llm.SplitProviderModelID(s.ModelID); mid == "" {
+			s.ModelID = llm.DefaultProviderModelID(providerID)
+		}
+		_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
 		_ = h.settingsStore.Save(s)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"email":      tokenData.Email,
-		"project_id": tokenData.ProjectID,
-		"status":     "ok",
+		"email":         tokenData.Email,
+		"project_id":    tokenData.ProjectID,
+		"tier_id":       tokenData.TierID,
+		"endpoint_used": tokenData.EndpointUsed,
+		"provider_id":   tokenData.ProviderID,
+		"status":        "ok",
 	})
 }
 
@@ -401,6 +479,9 @@ type OAuthStatusResponse struct {
 	Authenticated bool             `json:"authenticated"`
 	ProjectID     string           `json:"project_id,omitempty"`
 	Email         string           `json:"email,omitempty"`
+	ProviderID    string           `json:"provider_id,omitempty"`
+	TierID        string           `json:"tier_id,omitempty"`
+	EndpointUsed  string           `json:"endpoint_used,omitempty"`
 	Pool          []app.PoolStatus `json:"pool,omitempty"`
 	PoolSize      int              `json:"pool_size"`
 }
@@ -424,6 +505,9 @@ func (h *Handlers) OAuthStatus(w http.ResponseWriter, r *http.Request) {
 			resp.Authenticated = data.AccessToken != ""
 			resp.ProjectID = data.ProjectID
 			resp.Email = data.Email
+			resp.ProviderID = data.ProviderID
+			resp.TierID = data.TierID
+			resp.EndpointUsed = data.EndpointUsed
 		}
 	}
 

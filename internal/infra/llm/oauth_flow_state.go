@@ -41,7 +41,7 @@ func (f *GeminiOAuthFlow) resolveFlowLocked(flowID, state string) (*oauthFlowSta
 
 // StartFlow generates an OAuth authorization URL and stores in-flight state.
 func (f *GeminiOAuthFlow) StartFlow(clientID, clientSecret, redirectURL string) (authURL string, err error) {
-	info, err := f.StartFlowV2(clientID, clientSecret, "local", redirectURL)
+	info, err := f.StartFlowWithProvider(clientID, clientSecret, "local", redirectURL, ProviderGoogleGeminiCLI)
 	if err != nil {
 		return "", err
 	}
@@ -50,18 +50,28 @@ func (f *GeminiOAuthFlow) StartFlow(clientID, clientSecret, redirectURL string) 
 
 // StartFlowV2 creates a concurrent-safe OAuth flow and returns metadata for UI/API usage.
 func (f *GeminiOAuthFlow) StartFlowV2(clientID, clientSecret, mode, redirectURL string) (*OAuthStartInfo, error) {
+	return f.StartFlowWithProvider(clientID, clientSecret, mode, redirectURL, ProviderGoogleGeminiCLI)
+}
+
+// StartFlowWithProvider creates a concurrent-safe OAuth flow and returns metadata
+// for UI/API usage with provider-specific OAuth scopes.
+func (f *GeminiOAuthFlow) StartFlowWithProvider(clientID, clientSecret, mode, redirectURL, providerID string) (*OAuthStartInfo, error) {
 	if strings.TrimSpace(clientID) == "" {
 		return nil, errors.New("client_id is required")
 	}
 	if mode == "" {
 		mode = "local"
 	}
+	spec := googleProviderSpec(providerID)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cleanupExpiredFlowsLocked()
 
 	redir := f.redirectURL
+	if strings.TrimSpace(redir) == "" {
+		redir = spec.RedirectURI
+	}
 	if strings.TrimSpace(redirectURL) != "" {
 		redir = strings.TrimSpace(redirectURL)
 	}
@@ -78,6 +88,7 @@ func (f *GeminiOAuthFlow) StartFlowV2(clientID, clientSecret, mode, redirectURL 
 		ClientSecret: clientSecret,
 		RedirectURL:  redir,
 		Mode:         mode,
+		ProviderID:   spec.ID,
 		CreatedAt:    now,
 		ExpiresAt:    now.Add(f.flowTTL),
 	}
@@ -85,10 +96,11 @@ func (f *GeminiOAuthFlow) StartFlowV2(clientID, clientSecret, mode, redirectURL 
 
 	return &OAuthStartInfo{
 		FlowID:      flowID,
-		AuthURL:     buildAuthURL(clientID, redir, state, verifier),
+		AuthURL:     buildAuthURL(clientID, redir, state, verifier, spec.OAuthScopes),
 		ExpiresAt:   flow.ExpiresAt,
 		Mode:        mode,
 		RedirectURL: redir,
+		ProviderID:  spec.ID,
 	}, nil
 }
 
@@ -114,7 +126,12 @@ func (f *GeminiOAuthFlow) HandleCallbackWithFlow(ctx context.Context, flowID, co
 	}
 
 	email, _ := fetchUserEmail(ctx, token.AccessToken)
-	projectID, err := discoverProject(ctx, token.AccessToken)
+	projectID, tierID, endpointUsed, err := discoverProjectWithProvider(
+		ctx,
+		token.AccessToken,
+		flow.ProviderID,
+		EndpointPolicyPrimaryThenSandbox,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("project discovery: %w", err)
 	}
@@ -128,6 +145,9 @@ func (f *GeminiOAuthFlow) HandleCallbackWithFlow(ctx context.Context, flowID, co
 		Expiry:       token.Expiry,
 		ProjectID:    projectID,
 		Email:        email,
+		ProviderID:   flow.ProviderID,
+		TierID:       tierID,
+		EndpointUsed: endpointUsed,
 	}
 
 	if err := saveTokenData(f.tokenPath, data); err != nil {

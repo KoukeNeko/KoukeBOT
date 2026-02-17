@@ -22,6 +22,9 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	providerID, model, modelID := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
+	fallbackModelID, fallbackModel := resolveFallbackModelForResponse(settings, providerID)
+
 	searchProvider := settings.SearchProvider
 	if searchProvider == "" {
 		searchProvider = "auto"
@@ -33,9 +36,15 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, SettingsResponse{
 		GeminiAPIKey:                    maskKey(settings.GeminiAPIKey),
-		GeminiModel:                     settings.GeminiModel,
+		GeminiModel:                     model,
 		DiscordToken:                    maskKey(settings.DiscordToken),
-		ProviderType:                    settings.ProviderType,
+		ProviderType:                    resolveProviderTypeForSettings(settings, providerID),
+		ProviderID:                      providerID,
+		ModelID:                         modelID,
+		FallbackEnabled:                 settings.FallbackEnabled || settings.FallbackModelEnabled,
+		FallbackModelID:                 fallbackModelID,
+		EndpointPolicy:                  llm.ResolveEndpointPolicy(settings.EndpointPolicy),
+		DeprecatedFields:                []string{"provider_type", "gemini_model", "fallback_model", "fallback_model_enabled"},
 		BraveAPIKey:                     maskKey(settings.BraveAPIKey),
 		WebSearchEnabled:                settings.WebSearchEnabled,
 		DiscordUseReply:                 settings.DiscordUseReply,
@@ -73,8 +82,8 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		TransientRecoveryWaitMaxSeconds: settings.TransientRecoveryWaitMaxSeconds,
 		DiscordShowInternalToolErrors:   settings.DiscordShowInternalToolErrors,
 		ScheduledMonitorMaxPerUser:      settings.ScheduledMonitorMaxPerUser,
-		FallbackModelEnabled:            settings.FallbackModelEnabled,
-		FallbackModel:                   settings.FallbackModel,
+		FallbackModelEnabled:            settings.FallbackEnabled || settings.FallbackModelEnabled,
+		FallbackModel:                   fallbackModel,
 		MCP:                             toMCPSettingsResponse(settings.MCP),
 	})
 }
@@ -125,21 +134,19 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 }
 
 func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe bool) (llm.Provider, error) {
-	model := s.GeminiModel
-	if model == "" {
-		model = "gemini-2.5-pro"
-	}
-	model = llm.NormalizeModelID(model)
-	if model == "" {
-		model = "gemini-2.5-pro"
-	}
-
-	providerType := normalizeProviderTypeForSelection(s.ProviderType)
-	logAPI.Logf("build-provider: type=%s model=%s strict_oauth_probe=%v", providerType, model, strictOAuthProbe)
+	providerID, model, modelID := llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
+	providerType := resolveProviderTypeForSettings(s, providerID)
+	logAPI.Logf(
+		"build-provider: type=%s provider_id=%s model_id=%s strict_oauth_probe=%v",
+		providerType,
+		providerID,
+		modelID,
+		strictOAuthProbe,
+	)
 
 	switch providerType {
 	case config.ProviderOAuth:
-		return h.buildOAuthPoolProvider(s, model, strictOAuthProbe)
+		return h.buildOAuthPoolProvider(s, providerID, model, strictOAuthProbe)
 
 	case config.ProviderAPIKey:
 		if s.GeminiAPIKey == "" {
@@ -160,16 +167,51 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 			return provider, nil
 		}
 		// Auto mode without API key falls back to OAuth credentials.
-		return h.buildOAuthPoolProvider(s, model, strictOAuthProbe)
+		return h.buildOAuthPoolProvider(s, providerID, model, strictOAuthProbe)
 	}
 }
 
 func (h *Handlers) GetProviderStatus(w http.ResponseWriter, r *http.Request) {
 	info := h.providerManager.ModelInfo()
+	settings := config.Settings{}
+	if h.settingsStore != nil {
+		if loaded, err := h.settingsStore.Load(); err == nil {
+			settings = loaded
+		}
+	}
+	activeProviderID, activeModel, activeModelID := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
+	effectiveModel := llm.NormalizeGoogleModelAlias(info.Model)
+	if effectiveModel == "" {
+		effectiveModel = activeModel
+	}
+	if observedModel, observedEndpoint, observedFallbackReason := h.resolveProviderObservability(); observedModel != "" {
+		effectiveModel = observedModel
+		effectiveEndpoint, lastFallbackReason := observedEndpoint, observedFallbackReason
+		effectiveModelID := llm.BuildProviderModelID(activeProviderID, effectiveModel)
+		writeJSON(w, http.StatusOK, ProviderStatusResponse{
+			Configured:         h.providerManager.IsConfigured(),
+			ProviderName:       info.ProviderName,
+			Model:              effectiveModel,
+			ActiveProviderID:   activeProviderID,
+			ActiveModelID:      activeModelID,
+			EffectiveModelID:   effectiveModelID,
+			EffectiveEndpoint:  effectiveEndpoint,
+			LastFallbackReason: lastFallbackReason,
+		})
+		return
+	}
+	effectiveModelID := llm.BuildProviderModelID(activeProviderID, effectiveModel)
+	_, effectiveEndpoint, lastFallbackReason := h.resolveProviderObservability()
+
 	writeJSON(w, http.StatusOK, ProviderStatusResponse{
-		Configured:   h.providerManager.IsConfigured(),
-		ProviderName: info.ProviderName,
-		Model:        info.Model,
+		Configured:         h.providerManager.IsConfigured(),
+		ProviderName:       info.ProviderName,
+		Model:              effectiveModel,
+		ActiveProviderID:   activeProviderID,
+		ActiveModelID:      activeModelID,
+		EffectiveModelID:   effectiveModelID,
+		EffectiveEndpoint:  effectiveEndpoint,
+		LastFallbackReason: lastFallbackReason,
 	})
 }
 
@@ -185,7 +227,11 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		oauthToken = data
 	}
 
-	models, err := llm.ListGeminiModelsForProvider(r.Context(), settings.GeminiAPIKey, oauthToken, settings.ProviderType)
+	providerID := settings.ProviderID
+	if providerID == "" {
+		providerID = settings.ProviderType
+	}
+	models, err := llm.ListGeminiModelsForProvider(r.Context(), settings.GeminiAPIKey, oauthToken, providerID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list models: "+err.Error())
 		return
@@ -194,8 +240,8 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models)
 }
 
-func (h *Handlers) buildOAuthPoolProvider(s config.Settings, model string, strictOAuthProbe bool) (llm.Provider, error) {
-	logAPI.Logf("build-provider: switching to OAuth")
+func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model string, strictOAuthProbe bool) (llm.Provider, error) {
+	logAPI.Logf("build-provider: switching to OAuth provider=%s", providerID)
 	poolPath := h.oauthFlow.PoolPath()
 	tokens, err := llm.LoadOAuthPool(poolPath)
 	if err != nil || len(tokens) == 0 {
@@ -215,8 +261,10 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, model string, stric
 		s.TransientRecoveryWaitEnabled,
 		time.Duration(s.TransientRecoveryWaitMaxSeconds)*time.Second,
 	)
-	if s.FallbackModelEnabled && s.FallbackModel != "" {
-		pool.SetFallbackModel(llm.NormalizeModelID(s.FallbackModel))
+	fallbackEnabled := s.FallbackEnabled || s.FallbackModelEnabled
+	fallbackModel := resolveFallbackModelShort(s, providerID)
+	if fallbackModel != "" && fallbackEnabled {
+		pool.SetFallbackModel(fallbackModel)
 	}
 
 	probeSuccess := false
@@ -231,14 +279,20 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, model string, stric
 				logAPI.Warnf("build-provider: persist refreshed token failed for %s: %v", tokenData.Email, err)
 			}
 		}
-		p, err := llm.NewGeminiOAuthProvider(h.ctx, tokenData, model)
+		p, err := llm.NewGeminiOAuthProviderWithProvider(
+			h.ctx,
+			tokenData,
+			providerID,
+			model,
+			s.EndpointPolicy,
+		)
 		if err != nil {
 			logAPI.Warnf("build-provider: provider init failed for %s: %v", tokenData.Email, err)
 			continue
 		}
 
 		if strictOAuthProbe {
-			if probeErr := h.probeOAuthModel(richContext(h.ctx), p); probeErr != nil {
+			if probeErr := h.probeOAuthProviderStrict(richContext(h.ctx), p, model, fallbackModel, fallbackEnabled); probeErr != nil {
 				if isOAuthModelNotFoundError(probeErr) {
 					probeNotFound = true
 					logAPI.Warnf("build-provider: OAuth model probe 404 for %s: %v", tokenData.Email, probeErr)
@@ -264,7 +318,61 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, model string, stric
 	return pool, nil
 }
 
+func (h *Handlers) probeOAuthProviderStrict(
+	ctx context.Context,
+	provider llm.Provider,
+	primaryModel string,
+	fallbackModel string,
+	fallbackEnabled bool,
+) error {
+	if err := h.probeOAuthTextModel(ctx, provider); err != nil {
+		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModel, fallbackEnabled)
+	}
+	if err := h.probeOAuthMultimodalModel(ctx, provider); err != nil {
+		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModel, fallbackEnabled)
+	}
+	return nil
+}
+
+func (h *Handlers) handleOAuthProbeErrorWithFallback(
+	ctx context.Context,
+	provider llm.Provider,
+	probeErr error,
+	primaryModel string,
+	fallbackModel string,
+	fallbackEnabled bool,
+) error {
+	if !isOAuthModelNotFoundError(probeErr) {
+		return probeErr
+	}
+	if !fallbackEnabled || strings.TrimSpace(fallbackModel) == "" || fallbackModel == primaryModel {
+		return probeErr
+	}
+	switcher, ok := provider.(llm.ModelSwitcher)
+	if !ok {
+		return fmt.Errorf("fallback probe requested but provider does not support model switching: %w", probeErr)
+	}
+	fallbackProvider := switcher.WithModel(fallbackModel)
+	if err := h.probeOAuthTextModel(ctx, fallbackProvider); err != nil {
+		if isOAuthModelNotFoundError(err) {
+			return probeErr
+		}
+		return fmt.Errorf("fallback text probe failed: %w", err)
+	}
+	if err := h.probeOAuthMultimodalModel(ctx, fallbackProvider); err != nil {
+		if isOAuthModelNotFoundError(err) {
+			return probeErr
+		}
+		return fmt.Errorf("fallback multimodal probe failed: %w", err)
+	}
+	return nil
+}
+
 func (h *Handlers) probeOAuthModel(ctx context.Context, provider llm.Provider) error {
+	return h.probeOAuthTextModel(ctx, provider)
+}
+
+func (h *Handlers) probeOAuthTextModel(ctx context.Context, provider llm.Provider) error {
 	probeCtx, cancel := context.WithTimeout(ctx, oauthProbeTimeout)
 	defer cancel()
 	_, err := provider.Chat(probeCtx, llm.ChatRequest{
@@ -274,6 +382,53 @@ func (h *Handlers) probeOAuthModel(ctx context.Context, provider llm.Provider) e
 		ToolMode: llm.ToolModeDisabled,
 	})
 	return err
+}
+
+func (h *Handlers) probeOAuthMultimodalModel(ctx context.Context, provider llm.Provider) error {
+	probeCtx, cancel := context.WithTimeout(ctx, oauthProbeTimeout)
+	defer cancel()
+
+	ch, err := provider.StreamChatMultimodal(probeCtx, "", []domain.MultimodalMessage{
+		{
+			Role: domain.RoleUser,
+			Parts: []domain.MessagePart{
+				{Text: "ping"},
+				{
+					ImageData: &domain.ImageInput{
+						Filename: "probe.png",
+						MimeType: "image/png",
+						Data:     minimalProbePNG(),
+					},
+				},
+			},
+		},
+	}, domain.GenerationConfig{})
+	if err != nil {
+		return err
+	}
+	for chunk := range ch {
+		if chunk.Error != nil {
+			return chunk.Error
+		}
+		if chunk.Done {
+			return nil
+		}
+	}
+	return nil
+}
+
+func minimalProbePNG() []byte {
+	return []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+		0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41,
+		0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+		0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
+		0xb1, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+		0x44, 0xae, 0x42, 0x60, 0x82,
+	}
 }
 
 func isOAuthModelNotFoundError(err error) bool {
@@ -303,4 +458,61 @@ func richContext(ctx context.Context) context.Context {
 		return context.Background()
 	}
 	return ctx
+}
+
+func resolveProviderTypeForSettings(settings config.Settings, providerID string) string {
+	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderGeminiAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+		return config.ProviderOAuth
+	}
+
+	switch normalizeProviderTypeForSelection(settings.ProviderType) {
+	case config.ProviderAPIKey:
+		return config.ProviderAPIKey
+	case config.ProviderOAuth:
+		return config.ProviderOAuth
+	default:
+		if strings.TrimSpace(settings.GeminiAPIKey) != "" {
+			return config.ProviderAPIKey
+		}
+		return config.ProviderOAuth
+	}
+}
+
+func resolveFallbackModelForResponse(settings config.Settings, providerID string) (string, string) {
+	fallbackProvider, fallbackModel := llm.SplitProviderModelID(settings.FallbackModelID)
+	if fallbackModel == "" {
+		fallbackModel = llm.NormalizeGoogleModelAlias(settings.FallbackModel)
+	}
+	if fallbackProvider == "" {
+		fallbackProvider = providerID
+	}
+	if fallbackModel == "" {
+		return "", ""
+	}
+	return llm.BuildProviderModelID(fallbackProvider, fallbackModel), fallbackModel
+}
+
+func resolveFallbackModelShort(settings config.Settings, providerID string) string {
+	_, fallbackModel := resolveFallbackModelForResponse(settings, providerID)
+	return fallbackModel
+}
+
+func (h *Handlers) resolveProviderObservability() (model string, endpoint string, fallbackReason string) {
+	provider := h.providerManager.Provider()
+	if provider == nil {
+		return "", "", ""
+	}
+	if modelAware, ok := provider.(interface{ EffectiveModel() string }); ok {
+		model = llm.NormalizeGoogleModelAlias(modelAware.EffectiveModel())
+	}
+	if endpointAware, ok := provider.(interface{ EffectiveEndpoint() string }); ok {
+		endpoint = endpointAware.EffectiveEndpoint()
+	}
+	if fallbackAware, ok := provider.(interface{ LastFallbackReason() string }); ok {
+		fallbackReason = fallbackAware.LastFallbackReason()
+	}
+	return model, endpoint, fallbackReason
 }

@@ -7,6 +7,12 @@ type SettingsResponse struct {
 	GeminiModel                     string              `json:"gemini_model"`
 	DiscordToken                    string              `json:"discord_token"`
 	ProviderType                    string              `json:"provider_type"`
+	ProviderID                      string              `json:"provider_id"`
+	ModelID                         string              `json:"model_id"`
+	FallbackEnabled                 bool                `json:"fallback_enabled"`
+	FallbackModelID                 string              `json:"fallback_model_id"`
+	EndpointPolicy                  string              `json:"endpoint_policy"`
+	DeprecatedFields                []string            `json:"deprecated_fields,omitempty"`
 	BraveAPIKey                     string              `json:"brave_api_key"`
 	WebSearchEnabled                bool                `json:"web_search_enabled"`
 	DiscordUseReply                 bool                `json:"discord_use_reply"`
@@ -54,6 +60,11 @@ type SettingsUpdateRequest struct {
 	GeminiModel                     string                    `json:"gemini_model"`
 	DiscordToken                    string                    `json:"discord_token"`
 	ProviderType                    string                    `json:"provider_type"`
+	ProviderID                      string                    `json:"provider_id"`
+	ModelID                         string                    `json:"model_id"`
+	FallbackEnabled                 *bool                     `json:"fallback_enabled"`
+	FallbackModelID                 string                    `json:"fallback_model_id"`
+	EndpointPolicy                  string                    `json:"endpoint_policy"`
 	BraveAPIKey                     string                    `json:"brave_api_key"`
 	WebSearchEnabled                *bool                     `json:"web_search_enabled"`
 	DiscordUseReply                 *bool                     `json:"discord_use_reply"`
@@ -139,9 +150,14 @@ type MCPServerUpdateRequest struct {
 }
 
 type ProviderStatusResponse struct {
-	Configured   bool   `json:"configured"`
-	ProviderName string `json:"provider_name"`
-	Model        string `json:"model"`
+	Configured         bool   `json:"configured"`
+	ProviderName       string `json:"provider_name"`
+	Model              string `json:"model"`
+	ActiveProviderID   string `json:"active_provider_id,omitempty"`
+	ActiveModelID      string `json:"active_model_id,omitempty"`
+	EffectiveModelID   string `json:"effective_model_id,omitempty"`
+	EffectiveEndpoint  string `json:"effective_endpoint,omitempty"`
+	LastFallbackReason string `json:"last_fallback_reason,omitempty"`
 }
 
 func maskKey(key string) string {
