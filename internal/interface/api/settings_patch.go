@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 func decodeSettingsUpdateRequest(r *http.Request) (SettingsUpdateRequest, error) {
@@ -25,7 +26,7 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 		existing.GeminiAPIKey = req.GeminiAPIKey
 	}
 	if req.GeminiModel != "" {
-		existing.GeminiModel = req.GeminiModel
+		existing.GeminiModel = llm.NormalizeModelID(req.GeminiModel)
 	}
 	if req.DiscordToken != "" && !isMasked(req.DiscordToken) {
 		existing.DiscordToken = req.DiscordToken
@@ -124,7 +125,7 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.FallbackModelEnabled != nil {
 		existing.FallbackModelEnabled = *req.FallbackModelEnabled
 	}
-	existing.FallbackModel = req.FallbackModel
+	existing.FallbackModel = llm.NormalizeModelID(req.FallbackModel)
 	if req.MCP != nil {
 		prevMCP := existing.MCP
 		existing.MCP = convertMCPSettingsUpdate(*req.MCP)

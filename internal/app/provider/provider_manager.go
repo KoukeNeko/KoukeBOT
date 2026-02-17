@@ -63,7 +63,7 @@ func (pm *ProviderManager) ModelInfo() llm.ModelCapabilities {
 	pm.mu.RUnlock()
 
 	if p == nil {
-		return llm.ModelCapabilities{ProviderName: "not configured"}
+		return llm.ModelCapabilities{ProviderName: "not configured", Model: ""}
 	}
 	return p.ModelInfo()
 }

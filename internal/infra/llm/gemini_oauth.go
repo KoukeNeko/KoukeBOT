@@ -39,7 +39,7 @@ func NewGeminiOAuthProvider(ctx context.Context, tokenData *OAuthTokenData, mode
 
 	return &GeminiOAuthProvider{
 		httpClient: httpClient,
-		model:      model,
+		model:      NormalizeModelID(model),
 		projectID:  tokenData.ProjectID,
 	}, nil
 }
@@ -49,7 +49,7 @@ func NewGeminiOAuthProvider(ctx context.Context, tokenData *OAuthTokenData, mode
 func (g *GeminiOAuthProvider) WithModel(model string) Provider {
 	return &GeminiOAuthProvider{
 		httpClient: g.httpClient,
-		model:      model,
+		model:      NormalizeModelID(model),
 		projectID:  g.projectID,
 		tools:      append([]domain.Tool(nil), g.tools...),
 	}
@@ -322,6 +322,7 @@ func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 		MaxOutputTokens:   resolveMaxTokensForModel(g.model, defaultMaxOutputTokens),
 		SupportsStreaming: true,
 		ProviderName:      "gemini-oauth",
+		Model:             g.model,
 	}
 }
 

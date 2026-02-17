@@ -28,7 +28,7 @@ func NewGeminiAPIProvider(ctx context.Context, apiKey, model string) (*GeminiAPI
 
 	return &GeminiAPIProvider{
 		client: client,
-		model:  model,
+		model:  NormalizeModelID(model),
 	}, nil
 }
 
@@ -36,15 +36,8 @@ func (g *GeminiAPIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 	contents := buildContents(req.Messages)
 	config := buildConfig(req, g.model)
 
-	// Prepare config with optional tools
-	genConfig := &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText(req.SystemPrompt, genai.RoleUser),
-		Temperature:       genai.Ptr(float32(config.temperature)),
-		MaxOutputTokens:   int32(config.maxTokens),
-		TopP:              genai.Ptr(float32(config.topP)),
-		FrequencyPenalty:  genai.Ptr(float32(config.frequencyPenalty)),
-		PresencePenalty:   genai.Ptr(float32(config.presencePenalty)),
-	}
+	// Prepare config with optional tools and provider-compatible generation fields.
+	genConfig := buildGenerateContentConfig(req.SystemPrompt, config)
 
 	// Add tools if registered and request allows function calling.
 	if req.ToolMode != ToolModeDisabled && len(g.tools) > 0 {
@@ -68,15 +61,8 @@ func (g *GeminiAPIProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 	config := buildConfig(req, g.model)
 	ch := make(chan StreamChunk, 16)
 
-	// Prepare config with optional tools
-	genConfig := &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText(req.SystemPrompt, genai.RoleUser),
-		Temperature:       genai.Ptr(float32(config.temperature)),
-		MaxOutputTokens:   int32(config.maxTokens),
-		TopP:              genai.Ptr(float32(config.topP)),
-		FrequencyPenalty:  genai.Ptr(float32(config.frequencyPenalty)),
-		PresencePenalty:   genai.Ptr(float32(config.presencePenalty)),
-	}
+	// Prepare config with optional tools and provider-compatible generation fields.
+	genConfig := buildGenerateContentConfig(req.SystemPrompt, config)
 
 	// Add tools if registered and request allows function calling.
 	if req.ToolMode != ToolModeDisabled && len(g.tools) > 0 {
@@ -131,14 +117,8 @@ func (g *GeminiAPIProvider) StreamChatMultimodal(ctx context.Context, systemProm
 		defer close(ch)
 
 		var lastTokenCount int
-		iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, &genai.GenerateContentConfig{
-			SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
-			Temperature:       genai.Ptr(float32(config.temperature)),
-			MaxOutputTokens:   int32(config.maxTokens),
-			TopP:              genai.Ptr(float32(config.topP)),
-			FrequencyPenalty:  genai.Ptr(float32(config.frequencyPenalty)),
-			PresencePenalty:   genai.Ptr(float32(config.presencePenalty)),
-		})
+		genConfig := buildGenerateContentConfig(systemPrompt, config)
+		iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, genConfig)
 
 		for resp, err := range iter {
 			if err != nil {
@@ -169,6 +149,7 @@ func (g *GeminiAPIProvider) ModelInfo() ModelCapabilities {
 		MaxOutputTokens:   resolveMaxTokensForModel(g.model, defaultMaxOutputTokens),
 		SupportsStreaming: true,
 		ProviderName:      "gemini-api",
+		Model:             g.model,
 	}
 }
 
@@ -178,6 +159,23 @@ type genConfig struct {
 	topP             float64
 	frequencyPenalty float64
 	presencePenalty  float64
+}
+
+func buildGenerateContentConfig(systemPrompt string, cfg genConfig) *genai.GenerateContentConfig {
+	genConfig := &genai.GenerateContentConfig{
+		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
+		Temperature:       genai.Ptr(float32(cfg.temperature)),
+		MaxOutputTokens:   int32(cfg.maxTokens),
+		TopP:              genai.Ptr(float32(cfg.topP)),
+	}
+	// Some Gemini models reject penalty fields unless the feature is enabled.
+	if cfg.frequencyPenalty != 0 {
+		genConfig.FrequencyPenalty = genai.Ptr(float32(cfg.frequencyPenalty))
+	}
+	if cfg.presencePenalty != 0 {
+		genConfig.PresencePenalty = genai.Ptr(float32(cfg.presencePenalty))
+	}
+	return genConfig
 }
 
 // defaultMaxOutputTokens is the baseline maxOutputTokens for non-thinking models.
@@ -345,75 +343,181 @@ func convertToGeminiTools(tools []domain.Tool) []*genai.Tool {
 	return []*genai.Tool{{FunctionDeclarations: declarations}}
 }
 
-// convertJSONSchemaToGeminiSchema converts a JSON Schema map to genai.Schema
+// convertJSONSchemaToGeminiSchema converts a JSON Schema map to genai.Schema.
 func convertJSONSchemaToGeminiSchema(schema map[string]interface{}) *genai.Schema {
-	geminiSchema := &genai.Schema{
-		Type: genai.TypeObject,
+	converted := convertPropertyToSchema(schema)
+	if converted.Type == "" {
+		converted.Type = genai.TypeObject
+	}
+	return converted
+}
+
+// convertPropertyToSchema converts a property definition to genai.Schema recursively.
+func convertPropertyToSchema(prop map[string]interface{}) *genai.Schema {
+	schema := &genai.Schema{}
+
+	if schemaType := jsonSchemaTypeToGeminiType(prop); schemaType != "" {
+		schema.Type = schemaType
+	}
+	if schema.Type == "" {
+		if _, hasProps := prop["properties"]; hasProps {
+			schema.Type = genai.TypeObject
+		} else if _, hasItems := prop["items"]; hasItems {
+			schema.Type = genai.TypeArray
+		}
 	}
 
-	// Extract properties
-	if props, ok := schema["properties"].(map[string]interface{}); ok {
-		properties := make(map[string]*genai.Schema)
-		for key, val := range props {
+	if desc, ok := prop["description"].(string); ok {
+		schema.Description = desc
+	}
+	if title, ok := prop["title"].(string); ok {
+		schema.Title = title
+	}
+	if format, ok := prop["format"].(string); ok {
+		schema.Format = format
+	}
+	if nullable, ok := prop["nullable"].(bool); ok {
+		schema.Nullable = &nullable
+	}
+
+	if min, ok := asFloat64(prop["minimum"]); ok {
+		schema.Minimum = &min
+	}
+	if max, ok := asFloat64(prop["maximum"]); ok {
+		schema.Maximum = &max
+	}
+	if minLen, ok := asInt64(prop["minLength"]); ok {
+		schema.MinLength = &minLen
+	}
+	if maxLen, ok := asInt64(prop["maxLength"]); ok {
+		schema.MaxLength = &maxLen
+	}
+	if minItems, ok := asInt64(prop["minItems"]); ok {
+		schema.MinItems = &minItems
+	}
+	if maxItems, ok := asInt64(prop["maxItems"]); ok {
+		schema.MaxItems = &maxItems
+	}
+
+	if required := toStringSlice(prop["required"]); len(required) > 0 {
+		schema.Required = required
+	}
+	if enumVals := toStringSlice(prop["enum"]); len(enumVals) > 0 {
+		schema.Enum = enumVals
+	}
+	if anyOfRaw, ok := prop["anyOf"].([]interface{}); ok {
+		anyOf := make([]*genai.Schema, 0, len(anyOfRaw))
+		for _, entry := range anyOfRaw {
+			if entryMap, ok := entry.(map[string]interface{}); ok {
+				anyOf = append(anyOf, convertPropertyToSchema(entryMap))
+			}
+		}
+		if len(anyOf) > 0 {
+			schema.AnyOf = anyOf
+		}
+	}
+
+	if propsRaw, ok := prop["properties"].(map[string]interface{}); ok {
+		properties := make(map[string]*genai.Schema, len(propsRaw))
+		for key, val := range propsRaw {
 			if propMap, ok := val.(map[string]interface{}); ok {
 				properties[key] = convertPropertyToSchema(propMap)
 			}
 		}
-		geminiSchema.Properties = properties
-	}
-
-	// Extract required fields
-	if req, ok := schema["required"].([]string); ok {
-		geminiSchema.Required = req
-	} else if reqInterface, ok := schema["required"].([]interface{}); ok {
-		required := make([]string, len(reqInterface))
-		for i, v := range reqInterface {
-			if s, ok := v.(string); ok {
-				required[i] = s
-			}
-		}
-		geminiSchema.Required = required
-	}
-
-	return geminiSchema
-}
-
-// convertPropertyToSchema converts a property definition to genai.Schema
-func convertPropertyToSchema(prop map[string]interface{}) *genai.Schema {
-	schema := &genai.Schema{}
-
-	// Map JSON Schema types to Gemini types
-	if typeStr, ok := prop["type"].(string); ok {
-		switch typeStr {
-		case "string":
-			schema.Type = genai.TypeString
-		case "integer":
-			schema.Type = genai.TypeInteger
-		case "number":
-			schema.Type = genai.TypeNumber
-		case "boolean":
-			schema.Type = genai.TypeBoolean
-		case "array":
-			schema.Type = genai.TypeArray
-		case "object":
-			schema.Type = genai.TypeObject
+		if len(properties) > 0 {
+			schema.Properties = properties
 		}
 	}
 
-	// Description
-	if desc, ok := prop["description"].(string); ok {
-		schema.Description = desc
-	}
-
-	// Minimum/Maximum for numbers
-	if min, ok := prop["minimum"].(float64); ok {
-		schema.Minimum = &min
-	}
-	if max, ok := prop["maximum"].(float64); ok {
-		schema.Maximum = &max
+	if schema.Type == genai.TypeArray {
+		if itemsRaw, ok := prop["items"].(map[string]interface{}); ok && len(itemsRaw) > 0 {
+			schema.Items = convertPropertyToSchema(itemsRaw)
+		} else {
+			// Cloud Code Assist requires items for array schema definitions.
+			schema.Items = &genai.Schema{Type: genai.TypeString}
+		}
 	}
 
 	return schema
+}
+
+func jsonSchemaTypeToGeminiType(prop map[string]interface{}) genai.Type {
+	switch typeVal := prop["type"].(type) {
+	case string:
+		switch typeVal {
+		case "string":
+			return genai.TypeString
+		case "integer":
+			return genai.TypeInteger
+		case "number":
+			return genai.TypeNumber
+		case "boolean":
+			return genai.TypeBoolean
+		case "array":
+			return genai.TypeArray
+		case "object":
+			return genai.TypeObject
+		}
+	case []interface{}:
+		// Handle ["string", "null"] patterns by selecting the first non-null type.
+		for _, entry := range typeVal {
+			if s, ok := entry.(string); ok && s != "null" {
+				return jsonSchemaTypeToGeminiType(map[string]interface{}{"type": s})
+			}
+		}
+	}
+	return ""
+}
+
+func toStringSlice(raw interface{}) []string {
+	switch v := raw.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func asFloat64(raw interface{}) (float64, bool) {
+	switch v := raw.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
+}
+
+func asInt64(raw interface{}) (int64, bool) {
+	switch v := raw.(type) {
+	case int:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	case float64:
+		return int64(v), true
+	case float32:
+		return int64(v), true
+	default:
+		return 0, false
+	}
 }
 
 // extractFunctionCalls extracts function calls from Gemini response

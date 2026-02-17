@@ -14,6 +14,7 @@ type ModelCapabilities struct {
 	MaxOutputTokens   int    // Actual maxOutputTokens sent to the API (used as response reserve in budget calculation)
 	SupportsStreaming bool   // Whether streaming is available
 	ProviderName      string // Human-readable provider identifier
+	Model            string // Effective model identifier used by the provider
 }
 
 // ToolMode controls whether providers should expose tool declarations for a request.

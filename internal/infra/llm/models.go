@@ -19,7 +19,13 @@ type ModelEntry struct {
 // It tries API key first, then OAuth token. If neither is available,
 // returns a curated default list.
 func ListGeminiModels(ctx context.Context, apiKey string, oauthToken *OAuthTokenData) ([]ModelEntry, error) {
-	client, err := createListingClient(ctx, apiKey, oauthToken)
+	return ListGeminiModelsForProvider(ctx, apiKey, oauthToken, "")
+}
+
+// ListGeminiModelsForProvider fetches available models while respecting the
+// selected provider type. When providerType is OAuth, API-key listing is skipped.
+func ListGeminiModelsForProvider(ctx context.Context, apiKey string, oauthToken *OAuthTokenData, providerType string) ([]ModelEntry, error) {
+	client, err := createListingClient(ctx, apiKey, oauthToken, providerType)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +36,12 @@ func ListGeminiModels(ctx context.Context, apiKey string, oauthToken *OAuthToken
 	return fetchModelsFromAPI(ctx, client)
 }
 
-func createListingClient(ctx context.Context, apiKey string, oauthToken *OAuthTokenData) (*genai.Client, error) {
+func createListingClient(ctx context.Context, apiKey string, oauthToken *OAuthTokenData, providerType string) (*genai.Client, error) {
+	if strings.EqualFold(strings.TrimSpace(providerType), "oauth") {
+		// Cloud Code Assist API has no model listing endpoint.
+		return nil, nil
+	}
+
 	if apiKey != "" {
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{
 			APIKey:  apiKey,
@@ -73,7 +84,7 @@ func fetchModelsFromAPI(ctx context.Context, client *genai.Client) ([]ModelEntry
 		}
 
 		models = append(models, ModelEntry{
-			ID:          m.Name,
+			ID:          NormalizeModelID(m.Name),
 			DisplayName: displayName,
 		})
 	}
@@ -87,7 +98,7 @@ func fetchModelsFromAPI(ctx context.Context, client *genai.Client) ([]ModelEntry
 		return models[i].ID > models[j].ID
 	})
 
-	return models, nil
+	return normalizeModelEntries(models), nil
 }
 
 func supportsGeneration(m *genai.Model) bool {
@@ -100,7 +111,7 @@ func supportsGeneration(m *genai.Model) bool {
 }
 
 func defaultModels() []ModelEntry {
-	return []ModelEntry{
+	return normalizeModelEntries([]ModelEntry{
 		{ID: "gemini-3-pro-preview", DisplayName: "Gemini 3 Pro (Preview)"},
 		{ID: "gemini-3-flash-preview", DisplayName: "Gemini 3 Flash (Preview)"},
 		{ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro"},
@@ -109,5 +120,19 @@ func defaultModels() []ModelEntry {
 		{ID: "gemini-2.0-flash-lite", DisplayName: "Gemini 2.0 Flash Lite"},
 		{ID: "gemini-1.5-pro", DisplayName: "Gemini 1.5 Pro"},
 		{ID: "gemini-1.5-flash", DisplayName: "Gemini 1.5 Flash"},
+	})
+}
+
+func normalizeModelEntries(entries []ModelEntry) []ModelEntry {
+	if len(entries) == 0 {
+		return nil
 	}
+	out := make([]ModelEntry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, ModelEntry{
+			ID:          NormalizeModelID(entry.ID),
+			DisplayName: entry.DisplayName,
+		})
+	}
+	return out
 }
