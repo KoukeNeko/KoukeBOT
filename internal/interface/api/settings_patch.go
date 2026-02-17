@@ -41,7 +41,7 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 			}
 		case config.ProviderOAuth:
 			if req.ProviderID == "" && (existing.ProviderID == "" || existing.ProviderID == llm.ProviderGeminiAPIKey) {
-				existing.ProviderID = llm.ProviderGoogleGeminiCLI
+				existing.ProviderID = llm.ProviderGoogleAntigravity
 			}
 		}
 	}

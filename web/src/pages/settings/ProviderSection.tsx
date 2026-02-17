@@ -82,7 +82,7 @@ export default function ProviderSection({
   const isModalBusy = oauthStarting || oauthCompleting;
   const [errorDetailEmail, setErrorDetailEmail] = useState<string | null>(null);
   const selectedOAuthProviderID =
-    form.provider_id === "google-antigravity" ? "google-antigravity" : "google-gemini-cli";
+    form.provider_id === "google-gemini-cli" ? "google-gemini-cli" : "google-antigravity";
   const currentModelValue = form.model_id || form.gemini_model;
   const toLegacyModel = (modelID: string) =>
     modelID.includes("/") ? modelID.split("/").slice(1).join("/") : modelID;
