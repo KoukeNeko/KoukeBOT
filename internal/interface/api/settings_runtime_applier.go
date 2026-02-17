@@ -9,6 +9,7 @@ import (
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/app/tooling"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 const personaConfigsBaseDir = "configs/personas"
@@ -27,6 +28,11 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 		return nil, fmt.Errorf("handlers are not configured")
 	}
 
+	previous, err := h.settingsStore.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load current settings: %w", err)
+	}
+
 	if config.NormalizeWebToolMode(existing.WebToolMode) == config.WebToolModePlaywrightMCP {
 		nextServers, upserted := tooling.EnsureManagedPlaywrightMCPServer(existing.MCP.Servers)
 		existing.MCP.Servers = nextServers
@@ -35,8 +41,19 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 		}
 	}
 
-	logAPI.Logf("settings: saving model=%s provider=%s mode=%s websearch=%v reply=%v",
-		existing.GeminiModel, existing.ProviderType, existing.WebToolMode, existing.WebSearchEnabled, existing.DiscordUseReply)
+	providerRelatedChanged := hasProviderRelatedSettingsChange(previous, existing)
+	var builtProvider llm.Provider
+	if providerRelatedChanged {
+		strictOAuthProbe := shouldRunStrictOAuthProbe(existing)
+		logAPI.Logf("settings: provider-related fields changed, pre-validating provider (strict_oauth_probe=%v)", strictOAuthProbe)
+		builtProvider, err = h.buildProviderForSettings(existing, strictOAuthProbe)
+		if err != nil {
+			return nil, newSettingsClientError("provider validation failed: %v", err)
+		}
+	}
+
+	logAPI.Logf("settings: saving model=%s provider=%s mode=%s websearch=%v reply=%v provider_related_changed=%v",
+		existing.GeminiModel, existing.ProviderType, existing.WebToolMode, existing.WebSearchEnabled, existing.DiscordUseReply, providerRelatedChanged)
 
 	if err := h.settingsStore.Save(existing); err != nil {
 		return nil, fmt.Errorf("save settings: %w", err)
@@ -91,9 +108,13 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 	}
 
 	response := map[string]string{"status": "saved"}
-	if err := h.activateProvider(existing); err != nil {
-		logAPI.Warnf("settings: provider activation failed (settings saved): %v", err)
-		response["warning"] = err.Error()
+	if providerRelatedChanged {
+		if builtProvider == nil {
+			return nil, fmt.Errorf("provider validation returned nil provider")
+		}
+		h.providerManager.Update(builtProvider)
+		info := builtProvider.ModelInfo()
+		logAPI.Logf("provider hot-swapped: %s (model: %s)", info.ProviderName, info.Model)
 	}
 	if len(catalog.Warnings) > 0 {
 		warningText := fmt.Sprintf("MCP warnings: %s", strings.Join(catalog.Warnings, "; "))
@@ -106,4 +127,32 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 
 	logAPI.Logf("settings: saved (warning=%v)", response["warning"] != "")
 	return response, nil
+}
+
+func hasProviderRelatedSettingsChange(previous, next config.Settings) bool {
+	if normalizeProviderTypeForSelection(previous.ProviderType) != normalizeProviderTypeForSelection(next.ProviderType) {
+		return true
+	}
+	if llm.NormalizeModelID(previous.GeminiModel) != llm.NormalizeModelID(next.GeminiModel) {
+		return true
+	}
+	if previous.GeminiAPIKey != next.GeminiAPIKey {
+		return true
+	}
+	if previous.FallbackModelEnabled != next.FallbackModelEnabled {
+		return true
+	}
+	return llm.NormalizeModelID(previous.FallbackModel) != llm.NormalizeModelID(next.FallbackModel)
+}
+
+func shouldRunStrictOAuthProbe(settings config.Settings) bool {
+	switch normalizeProviderTypeForSelection(settings.ProviderType) {
+	case config.ProviderOAuth:
+		return true
+	case config.ProviderAPIKey:
+		return false
+	default:
+		// Auto mode falls back to OAuth when no API key exists.
+		return strings.TrimSpace(settings.GeminiAPIKey) == ""
+	}
 }

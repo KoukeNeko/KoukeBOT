@@ -213,6 +213,11 @@ export default function SettingsPage({ vm }: Props) {
 
   if (vm.loading) return <p>Loading settings...</p>;
 
+  const activeProviderLabel =
+    vm.status && vm.status.model
+      ? `${vm.status.provider_name} / ${vm.status.model}`
+      : vm.status?.provider_name ?? "";
+
   return (
     <div className="settings-page">
       <div className="settings-shell">
@@ -257,7 +262,7 @@ export default function SettingsPage({ vm }: Props) {
               className={`status-banner ${vm.status.configured ? "ok" : "warn"}`}
             >
               {vm.status.configured
-                ? `Provider active: ${vm.status.provider_name}`
+                ? `Provider active: ${activeProviderLabel}`
                 : "LLM provider not configured — set API key or use OAuth below."}
             </div>
           )}
