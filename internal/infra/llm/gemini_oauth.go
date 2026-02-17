@@ -8,9 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
@@ -114,43 +118,76 @@ func resolveOAuthEndpointCandidates(candidates []string, endpointPolicy string) 
 	return resolved
 }
 
+// Empty stream retry constants (aligned with pi-ai).
+const (
+	maxEmptyStreamRetries   = 2
+	emptyStreamBaseDelay    = 500 * time.Millisecond
+)
+
 func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	body, err := json.Marshal(g.buildRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, _, err := g.openStreamGenerateContent(ctx, body, "code assist request")
-	if err != nil {
-		return nil, err
+	// Retry loop for empty streams (pi-ai: MAX_EMPTY_STREAM_RETRIES = 2).
+	for emptyRetry := 0; emptyRetry <= maxEmptyStreamRetries; emptyRetry++ {
+		resp, _, err := g.openStreamGenerateContent(ctx, body, "code assist request")
+		if err != nil {
+			return nil, err
+		}
+
+		result, emptyStream := g.consumeSSEResponse(resp)
+		if !emptyStream {
+			return result.chatResponse, result.err
+		}
+
+		resp.Body.Close()
+		if emptyRetry < maxEmptyStreamRetries {
+			delay := emptyStreamBaseDelay * time.Duration(1<<emptyRetry)
+			logOAuth.Warnf("empty stream (attempt %d/%d), retrying in %s",
+				emptyRetry+1, maxEmptyStreamRetries+1, delay)
+			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+				return nil, sleepErr
+			}
+			continue
+		}
 	}
+
+	return nil, fmt.Errorf("empty stream: server returned 200 OK but no content after %d retries", maxEmptyStreamRetries+1)
+}
+
+// chatResult holds the result of consuming an SSE response for Chat().
+type chatResult struct {
+	chatResponse *ChatResponse
+	err          error
+}
+
+// consumeSSEResponse reads an SSE stream and returns the parsed result.
+// Returns (result, true) if the stream was empty (should retry).
+func (g *GeminiOAuthProvider) consumeSSEResponse(resp *http.Response) (chatResult, bool) {
 	defer resp.Body.Close()
 
-	// Collect all SSE chunks into a single response.
 	var fullText strings.Builder
 	var totalTokens int
 	var lastFinishReason string
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20) // 1 MB max line
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 	for scanner.Scan() {
 		data, ok := parseSSEData(scanner.Text())
 		if !ok {
 			continue
 		}
-
 		var chunk caResponseChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
-
-		// Track finish reason
 		if chunk.Response != nil && len(chunk.Response.Candidates) > 0 {
 			if fr := chunk.Response.Candidates[0].FinishReason; fr != "" {
 				lastFinishReason = fr
 			}
 		}
-
 		parsed := extractCAChunkFull(chunk)
 		fullText.WriteString(parsed.text)
 		if parsed.tokens > 0 {
@@ -159,36 +196,35 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read SSE stream: %w", err)
+		return chatResult{err: fmt.Errorf("read SSE stream: %w", err)}, false
 	}
 
 	finalContent := fullText.String()
 
-	// Empty stream: 200 OK but no content received — likely a transient server issue.
+	// Empty stream detection — signal caller to retry.
 	if finalContent == "" && totalTokens == 0 && lastFinishReason == "" {
-		return nil, fmt.Errorf("empty stream: server returned 200 OK but no content")
+		return chatResult{}, true
 	}
 
-	// Check for abnormal finish reasons
 	switch lastFinishReason {
 	case "MAX_TOKENS":
 		logOAuth.Warnf("response truncated (MAX_TOKENS) — consider increasing max_tokens")
 	case "SAFETY":
-		return nil, fmt.Errorf("response blocked by safety filters")
+		return chatResult{err: fmt.Errorf("response blocked by safety filters")}, false
 	case "RECITATION":
-		return nil, fmt.Errorf("response blocked due to recitation concerns")
+		return chatResult{err: fmt.Errorf("response blocked due to recitation concerns")}, false
 	case "BLOCKLIST":
-		return nil, fmt.Errorf("response blocked by content blocklist")
+		return chatResult{err: fmt.Errorf("response blocked by content blocklist")}, false
 	case "", "STOP":
 		// Normal completion
 	default:
 		logOAuth.Warnf("unexpected finish reason: %s", lastFinishReason)
 	}
 
-	return &ChatResponse{
+	return chatResult{chatResponse: &ChatResponse{
 		Content:    finalContent,
 		TokensUsed: totalTokens,
-	}, nil
+	}}, false
 }
 
 func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error) {
@@ -197,83 +233,135 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, _, err := g.openStreamGenerateContent(ctx, body, "code assist stream")
-	if err != nil {
-		return nil, err
+	// Retry empty streams at HTTP level before handing off to the streaming goroutine.
+	var resp *http.Response
+	for emptyRetry := 0; emptyRetry <= maxEmptyStreamRetries; emptyRetry++ {
+		var openErr error
+		resp, _, openErr = g.openStreamGenerateContent(ctx, body, "code assist stream")
+		if openErr != nil {
+			return nil, openErr
+		}
+
+		// Peek: try to read until we get the first data line or EOF.
+		// If we can confirm it's a non-empty stream, break and stream it.
+		// For streaming we can't fully consume, so we stream directly and
+		// handle empty stream in the goroutine with retry signaling.
+		break
 	}
 
 	ch := make(chan StreamChunk, 16)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		g.streamSSEWithEmptyRetry(ctx, body, resp, ch)
+	}()
 
-		var lastUsage *caUsage
-		var lastFinishReason string
-		var responseLen int
-		var responsePreview string
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
-		for scanner.Scan() {
-			data, ok := parseSSEData(scanner.Text())
-			if !ok {
-				continue
-			}
-			var chunk caResponseChunk
-			if json.Unmarshal([]byte(data), &chunk) != nil {
-				continue
-			}
-			parsed := extractCAChunkFull(chunk)
-			if parsed.usage != nil {
-				lastUsage = parsed.usage
-			}
-			if parsed.finishReason != "" {
-				lastFinishReason = parsed.finishReason
-			}
+	return ch, nil
+}
 
-			// Emit function calls to trigger the tool calling loop
-			if len(parsed.toolCalls) > 0 {
-				logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
-				logUsage(lastUsage)
-				tokens := 0
-				if lastUsage != nil {
-					tokens = lastUsage.TotalTokenCount
-				}
-				ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true, TokensUsed: tokens}
-				return
-			}
+// streamSSEWithEmptyRetry reads an SSE stream and retries on empty streams.
+func (g *GeminiOAuthProvider) streamSSEWithEmptyRetry(ctx context.Context, body []byte, resp *http.Response, ch chan<- StreamChunk) {
+	for emptyRetry := 0; emptyRetry <= maxEmptyStreamRetries; emptyRetry++ {
+		emptyStream := g.consumeStreamSSE(resp, ch)
+		resp.Body.Close()
 
-			if parsed.text != "" {
-				responseLen += len(parsed.text)
-				if len(responsePreview) < 80 {
-					responsePreview += parsed.text
-				}
-				ch <- StreamChunk{Content: parsed.text}
-			}
+		if !emptyStream {
+			return // Normal completion or error already sent to channel
 		}
-		if err := scanner.Err(); err != nil {
-			ch <- StreamChunk{Error: err, Done: true}
-			return
-		}
-		// Empty stream: 200 OK but no content — likely transient server issue.
-		if responseLen == 0 && lastFinishReason == "" {
+
+		// Empty stream — retry if we have attempts left.
+		if emptyRetry >= maxEmptyStreamRetries {
 			ch <- StreamChunk{
-				Error: fmt.Errorf("empty stream: server returned 200 OK but no content"),
+				Error: fmt.Errorf("empty stream: server returned 200 OK but no content after %d retries", maxEmptyStreamRetries+1),
 				Done:  true,
 			}
 			return
 		}
-		logCompletion(lastUsage, responsePreview, responseLen)
-		if lastFinishReason == "MAX_TOKENS" {
-			logOAuth.Warnf("stream response truncated (MAX_TOKENS) — consider increasing max_tokens")
-		}
-		tokens := 0
-		if lastUsage != nil {
-			tokens = lastUsage.TotalTokenCount
-		}
-		ch <- StreamChunk{Done: true, TokensUsed: tokens, FinishReason: lastFinishReason}
-	}()
 
-	return ch, nil
+		delay := emptyStreamBaseDelay * time.Duration(1<<emptyRetry)
+		logOAuth.Warnf("empty stream (attempt %d/%d), retrying in %s",
+			emptyRetry+1, maxEmptyStreamRetries+1, delay)
+		if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+			ch <- StreamChunk{Error: sleepErr, Done: true}
+			return
+		}
+
+		// Re-open the stream for retry.
+		var openErr error
+		resp, _, openErr = g.openStreamGenerateContent(ctx, body, "code assist stream")
+		if openErr != nil {
+			ch <- StreamChunk{Error: openErr, Done: true}
+			return
+		}
+	}
+}
+
+// consumeStreamSSE reads an SSE stream into the channel.
+// Returns true if the stream was empty (caller should retry).
+func (g *GeminiOAuthProvider) consumeStreamSSE(resp *http.Response, ch chan<- StreamChunk) bool {
+	var lastUsage *caUsage
+	var lastFinishReason string
+	var responseLen int
+	var responsePreview string
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
+	for scanner.Scan() {
+		data, ok := parseSSEData(scanner.Text())
+		if !ok {
+			continue
+		}
+		var chunk caResponseChunk
+		if json.Unmarshal([]byte(data), &chunk) != nil {
+			continue
+		}
+		parsed := extractCAChunkFull(chunk)
+		if parsed.usage != nil {
+			lastUsage = parsed.usage
+		}
+		if parsed.finishReason != "" {
+			lastFinishReason = parsed.finishReason
+		}
+
+		// Emit function calls to trigger the tool calling loop
+		if len(parsed.toolCalls) > 0 {
+			logOAuth.Logf("functionCall: %s", formatToolCallNames(parsed.toolCalls))
+			logUsage(lastUsage)
+			tokens := 0
+			if lastUsage != nil {
+				tokens = lastUsage.TotalTokenCount
+			}
+			ch <- StreamChunk{ToolCalls: parsed.toolCalls, Done: true, TokensUsed: tokens}
+			return false
+		}
+
+		if parsed.text != "" {
+			responseLen += len(parsed.text)
+			if len(responsePreview) < 80 {
+				responsePreview += parsed.text
+			}
+			ch <- StreamChunk{Content: parsed.text}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		ch <- StreamChunk{Error: err, Done: true}
+		return false
+	}
+
+	// Empty stream: signal caller to retry.
+	if responseLen == 0 && lastFinishReason == "" {
+		return true
+	}
+
+	logCompletion(lastUsage, responsePreview, responseLen)
+	if lastFinishReason == "MAX_TOKENS" {
+		logOAuth.Warnf("stream response truncated (MAX_TOKENS) — consider increasing max_tokens")
+	}
+	tokens := 0
+	if lastUsage != nil {
+		tokens = lastUsage.TotalTokenCount
+	}
+	ch <- StreamChunk{Done: true, TokensUsed: tokens, FinishReason: lastFinishReason}
+	return false
 }
 
 func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan StreamChunk, error) {
@@ -601,12 +689,34 @@ func setCodeAssistHeaders(req *http.Request) {
 	req.Header.Set("Client-Metadata", `{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}`)
 }
 
+// HTTP retry constants (aligned with pi-ai's google-gemini-cli provider).
+const (
+	httpMaxRetries        = 3             // Total retry attempts (4 attempts including initial)
+	httpBaseDelay         = 1 * time.Second
+	httpMaxServerDelay    = 60 * time.Second // If server requests longer, return error to pool layer
+)
+
 func (g *GeminiOAuthProvider) openStreamGenerateContent(ctx context.Context, body []byte, label string) (*http.Response, string, error) {
 	candidates := g.currentEndpointCandidates()
+	if len(candidates) == 0 {
+		return nil, "", fmt.Errorf("%s: no endpoint candidates available", label)
+	}
+
 	var lastErr error
 	var lastErrEndpoint string
 
-	for idx, endpoint := range candidates {
+	for attempt := 0; attempt <= httpMaxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, lastErrEndpoint, ctx.Err()
+		}
+
+		// Rotate endpoint on each attempt (pi-ai: endpoints[min(attempt, len-1)]).
+		endpointIdx := attempt
+		if endpointIdx >= len(candidates) {
+			endpointIdx = len(candidates) - 1
+		}
+		endpoint := candidates[endpointIdx]
+
 		reqURL := strings.TrimRight(endpoint, "/") + "/v1internal:streamGenerateContent?alt=sse"
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
 		if err != nil {
@@ -618,8 +728,13 @@ func (g *GeminiOAuthProvider) openStreamGenerateContent(ctx context.Context, bod
 		if err != nil {
 			lastErr = fmt.Errorf("%s: %w", label, err)
 			lastErrEndpoint = endpoint
-			if idx+1 < len(candidates) {
-				logOAuth.Warnf("%s endpoint=%s failed (%v), retrying fallback endpoint", label, endpoint, err)
+			if attempt < httpMaxRetries {
+				delay := httpBackoffDelay(attempt)
+				logOAuth.Warnf("%s endpoint=%s attempt=%d failed (%v), retrying in %s",
+					label, endpoint, attempt+1, err, delay)
+				if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+					return nil, endpoint, sleepErr
+				}
 				continue
 			}
 			return nil, endpoint, lastErr
@@ -640,10 +755,31 @@ func (g *GeminiOAuthProvider) openStreamGenerateContent(ctx context.Context, bod
 		lastErr = formattedErr
 		lastErrEndpoint = endpoint
 
-		if isEndpointFallbackEligibleStatus(resp.StatusCode) && idx+1 < len(candidates) {
-			logOAuth.Warnf("%s endpoint=%s status=%d, retrying fallback endpoint", label, endpoint, resp.StatusCode)
+		// Check if this error is retryable at the HTTP level.
+		if attempt < httpMaxRetries && isHTTPRetryable(resp.StatusCode, string(respBody)) {
+			// Extract server-recommended delay from headers and body.
+			serverDelay := extractHTTPRetryDelay(string(respBody), resp)
+
+			// If server requests more than maxServerDelay, stop retrying at HTTP
+			// level and let the pool layer handle it with account rotation.
+			if serverDelay > httpMaxServerDelay {
+				logOAuth.Warnf("%s endpoint=%s status=%d: server requested %s delay (max %s), deferring to pool",
+					label, endpoint, resp.StatusCode, serverDelay, httpMaxServerDelay)
+				return nil, endpoint, formattedErr
+			}
+
+			delay := httpBackoffDelay(attempt)
+			if serverDelay > delay {
+				delay = serverDelay
+			}
+			logOAuth.Warnf("%s endpoint=%s status=%d attempt=%d, retrying in %s",
+				label, endpoint, resp.StatusCode, attempt+1, delay)
+			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+				return nil, endpoint, sleepErr
+			}
 			continue
 		}
+
 		return nil, endpoint, formattedErr
 	}
 
@@ -653,13 +789,91 @@ func (g *GeminiOAuthProvider) openStreamGenerateContent(ctx context.Context, bod
 	return nil, "", fmt.Errorf("%s: no endpoint candidates available", label)
 }
 
-func isEndpointFallbackEligibleStatus(statusCode int) bool {
-	if statusCode >= 500 {
+// isHTTPRetryable checks if an HTTP error should be retried at the transport level.
+// Aligned with pi-ai's isRetryableError: 429, 5xx, and retryable body patterns.
+func isHTTPRetryable(statusCode int, body string) bool {
+	if statusCode == http.StatusTooManyRequests ||
+		statusCode >= 500 {
 		return true
 	}
-	return statusCode == http.StatusRequestTimeout ||
-		statusCode == http.StatusTooManyRequests // 429: try sandbox endpoint before failing
+	return httpRetryableBodyRe.MatchString(body)
 }
+
+var httpRetryableBodyRe = regexp.MustCompile(`(?i)resource.?exhausted|rate.?limit|overloaded|service.?unavailable|other.?side.?closed`)
+
+// httpBackoffDelay returns exponential backoff: 1s, 2s, 4s, ...
+func httpBackoffDelay(attempt int) time.Duration {
+	return httpBaseDelay * time.Duration(math.Pow(2, float64(attempt)))
+}
+
+// sleepWithContext sleeps for the given duration, returning early if ctx is cancelled.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// extractHTTPRetryDelay extracts the server-recommended retry delay from
+// HTTP response headers and body text. Returns 0 if no delay is found.
+// Aligned with pi-ai's extractRetryDelay.
+func extractHTTPRetryDelay(errorText string, resp *http.Response) time.Duration {
+	if resp != nil {
+		// 1. Retry-After header (seconds or HTTP-date)
+		if v := resp.Header.Get("Retry-After"); v != "" {
+			if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+				return time.Duration(secs)*time.Second + time.Second
+			}
+		}
+		// 2. X-RateLimit-Reset-After header
+		if v := resp.Header.Get("X-RateLimit-Reset-After"); v != "" {
+			if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+				return time.Duration(secs)*time.Second + time.Second
+			}
+		}
+	}
+	// 3. Body: "reset after 18h31m10s" / "reset after 39s"
+	if m := httpResetAfterRe.FindStringSubmatch(errorText); len(m) >= 4 {
+		h, _ := strconv.Atoi(m[1])
+		min, _ := strconv.Atoi(m[2])
+		sec, _ := strconv.ParseFloat(m[3], 64)
+		total := time.Duration(h)*time.Hour + time.Duration(min)*time.Minute + time.Duration(sec*float64(time.Second))
+		if total > 0 {
+			return total + time.Second
+		}
+	}
+	// 4. Body: "Please retry in Xs" or "Please retry in Xms"
+	if m := httpRetryInRe.FindStringSubmatch(errorText); len(m) >= 3 {
+		val, _ := strconv.ParseFloat(m[1], 64)
+		if val > 0 {
+			if strings.ToLower(m[2]) == "ms" {
+				return time.Duration(val*float64(time.Millisecond)) + time.Second
+			}
+			return time.Duration(val*float64(time.Second)) + time.Second
+		}
+	}
+	// 5. Body JSON: "retryDelay": "34.074824224s"
+	if m := httpRetryDelayJSONRe.FindStringSubmatch(errorText); len(m) >= 3 {
+		val, _ := strconv.ParseFloat(m[1], 64)
+		if val > 0 {
+			if strings.ToLower(m[2]) == "ms" {
+				return time.Duration(val*float64(time.Millisecond)) + time.Second
+			}
+			return time.Duration(val*float64(time.Second)) + time.Second
+		}
+	}
+	return 0
+}
+
+var (
+	httpResetAfterRe    = regexp.MustCompile(`(?i)reset after (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s`)
+	httpRetryInRe       = regexp.MustCompile(`(?i)Please retry in ([0-9.]+)(ms|s)`)
+	httpRetryDelayJSONRe = regexp.MustCompile(`(?i)"retryDelay"\s*:\s*"([0-9.]+)(ms|s)"`)
+)
 
 func (g *GeminiOAuthProvider) currentEndpointCandidates() []string {
 	g.endpointMu.RLock()
