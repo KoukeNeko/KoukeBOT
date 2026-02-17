@@ -133,7 +133,25 @@ func (f *GeminiOAuthFlow) HandleCallbackWithFlow(ctx context.Context, flowID, co
 		EndpointPolicyPrimaryThenSandbox,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("project discovery: %w", err)
+		logFlow.Warnf("project discovery failed during OAuth callback: %v (token will still be persisted)", err)
+		if previous, loadErr := LoadStoredToken(f.tokenPath); loadErr == nil && previous != nil {
+			if projectID == "" {
+				projectID = strings.TrimSpace(previous.ProjectID)
+			}
+			if tierID == "" {
+				tierID = strings.TrimSpace(previous.TierID)
+			}
+			if endpointUsed == "" {
+				endpointUsed = strings.TrimSpace(previous.EndpointUsed)
+			}
+		}
+		if endpointUsed == "" {
+			spec := googleProviderSpec(flow.ProviderID)
+			endpointUsed = firstEndpointOrDefault(resolveOAuthEndpointCandidates(spec.EndpointCandidates, EndpointPolicyPrimaryThenSandbox))
+		}
+		if tierID == "" {
+			tierID = "unknown"
+		}
 	}
 
 	data := &OAuthTokenData{

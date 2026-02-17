@@ -3,10 +3,13 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,5 +209,119 @@ func TestStartFlowV2CleansExpiredFlows(t *testing.T) {
 	defer flow.mu.Unlock()
 	if _, ok := flow.flows["expired"]; ok {
 		t.Fatalf("expired flow should be cleaned up")
+	}
+}
+
+type oauthMockDoer struct {
+	do func(req *http.Request) (*http.Response, error)
+}
+
+func (m oauthMockDoer) Do(req *http.Request) (*http.Response, error) {
+	return m.do(req)
+}
+
+func httpJSONResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestHandleCallbackWithFlowPersistsTokenWhenProjectDiscoveryFails(t *testing.T) {
+	originalEndpoint := google.Endpoint
+	originalHTTPClient := oauthHTTPClient
+	defer func() {
+		google.Endpoint = originalEndpoint
+		oauthHTTPClient = originalHTTPClient
+	}()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"access_token":  "access-token-1",
+			"refresh_token": "refresh-token-1",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer tokenServer.Close()
+
+	google.Endpoint = oauth2.Endpoint{
+		AuthURL:  "https://example.com/auth",
+		TokenURL: tokenServer.URL,
+	}
+
+	oauthHTTPClient = oauthMockDoer{
+		do: func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Host, "www.googleapis.com") && strings.Contains(req.URL.Path, "/userinfo") {
+				return httpJSONResponse(http.StatusOK, `{"email":"pool-user@example.com"}`), nil
+			}
+			if strings.Contains(req.URL.Host, "cloudcode-pa.googleapis.com") ||
+				strings.Contains(req.URL.Host, "daily-cloudcode-pa.sandbox.googleapis.com") {
+				return httpJSONResponse(http.StatusInternalServerError, `{"error":"discovery down"}`), nil
+			}
+			return nil, fmt.Errorf("unexpected request: %s", req.URL.String())
+		},
+	}
+
+	tmpDir := t.TempDir()
+	tokenPath := filepath.Join(tmpDir, "gemini_oauth.json")
+	poolPath := filepath.Join(tmpDir, "oauth_pool.json")
+	flow := NewGeminiOAuthFlow(tokenPath, poolPath, "http://localhost:8080/api/oauth/gemini/callback")
+
+	startInfo, err := flow.StartFlowWithProvider(
+		"client-id",
+		"client-secret",
+		"remote",
+		"https://bot.example.com/api/oauth/gemini/callback",
+		ProviderGoogleAntigravity,
+	)
+	if err != nil {
+		t.Fatalf("StartFlowWithProvider() error = %v", err)
+	}
+
+	data, err := flow.HandleCallbackWithFlow(context.Background(), startInfo.FlowID, "auth-code", "")
+	if err != nil {
+		t.Fatalf("HandleCallbackWithFlow() error = %v", err)
+	}
+	if data == nil {
+		t.Fatalf("token data is nil")
+	}
+	if data.Email != "pool-user@example.com" {
+		t.Fatalf("email = %q, want pool-user@example.com", data.Email)
+	}
+	if data.AccessToken == "" || data.RefreshToken == "" {
+		t.Fatalf("tokens should be persisted even when discovery fails: %+v", data)
+	}
+	if data.EndpointUsed == "" {
+		t.Fatalf("endpointUsed should be set from defaults")
+	}
+	if data.TierID == "" {
+		t.Fatalf("tier should have fallback value")
+	}
+
+	stored, err := LoadStoredToken(tokenPath)
+	if err != nil {
+		t.Fatalf("LoadStoredToken() error = %v", err)
+	}
+	if stored == nil || stored.Email != "pool-user@example.com" {
+		t.Fatalf("stored token mismatch: %+v", stored)
+	}
+
+	pool, err := LoadOAuthPool(poolPath)
+	if err != nil {
+		t.Fatalf("LoadOAuthPool() error = %v", err)
+	}
+	if len(pool) != 1 {
+		t.Fatalf("pool size = %d, want 1", len(pool))
+	}
+	if pool[0].Email != "pool-user@example.com" {
+		t.Fatalf("pool email = %q, want pool-user@example.com", pool[0].Email)
 	}
 }
