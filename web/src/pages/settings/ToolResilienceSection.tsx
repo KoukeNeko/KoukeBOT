@@ -1,15 +1,44 @@
 import type { Dispatch, SetStateAction } from "react";
+import Select from "../../components/ui/Select";
 import Checkbox from "../../components/ui/Checkbox";
 import type { SettingsData } from "../../types";
+
+type SelectOption = {
+  value: string;
+  label: string;
+};
 
 type Props = {
   form: SettingsData;
   setForm: Dispatch<SetStateAction<SettingsData>>;
+  modelOptions: SelectOption[];
   saving: boolean;
   onSave: () => void;
 };
 
-export default function ToolResilienceSection({ form, setForm, saving, onSave }: Props) {
+export default function ToolResilienceSection({ form, setForm, modelOptions, saving, onSave }: Props) {
+  const fallbackValueFromSettings = form.fallback_model_id || form.fallback_model || "";
+  const resolvedFallbackValue =
+    modelOptions.find((option) => option.value === fallbackValueFromSettings)?.value ||
+    modelOptions.find((option) => option.value.endsWith(`/${fallbackValueFromSettings}`))?.value ||
+    fallbackValueFromSettings;
+  const fallbackOptions: SelectOption[] = [
+    { value: "", label: "不使用備用模型" },
+    ...modelOptions,
+  ];
+  if (
+    resolvedFallbackValue &&
+    !fallbackOptions.some((option) => option.value === resolvedFallbackValue)
+  ) {
+    fallbackOptions.splice(1, 0, {
+      value: resolvedFallbackValue,
+      label: resolvedFallbackValue,
+    });
+  }
+
+  const toLegacyModel = (modelID: string) =>
+    modelID.includes("/") ? modelID.split("/").slice(1).join("/") : modelID;
+
   return (
     <section className="settings-section">
       <h3 className="settings-section-title">Tool Loop Guard / Resilience</h3>
@@ -107,15 +136,18 @@ export default function ToolResilienceSection({ form, setForm, saving, onSave }:
       </div>
 
       <label className="form-field">
-        <span>備用模型名稱</span>
-        <input
-          type="text"
-          value={form.fallback_model ?? ""}
-          onChange={(e) =>
-            setForm({ ...form, fallback_model: e.target.value })
+        <span>備用模型</span>
+        <Select
+          value={resolvedFallbackValue}
+          onChange={(val) =>
+            setForm({
+              ...form,
+              fallback_model_id: val,
+              fallback_model: toLegacyModel(val),
+            })
           }
+          options={fallbackOptions}
           disabled={!form.fallback_model_enabled}
-          placeholder="例如 gemini-2.0-flash"
         />
         <span className="hint">
           主模型因容量不足（MODEL_CAPACITY）失敗時，會嘗試此備用模型。預設關閉。

@@ -159,6 +159,7 @@ export default function SettingsPage({ vm }: Props) {
           <ToolResilienceSection
             form={vm.form}
             setForm={vm.setForm}
+            modelOptions={vm.modelOptions}
             saving={vm.saving}
             onSave={saveSettings}
           />
