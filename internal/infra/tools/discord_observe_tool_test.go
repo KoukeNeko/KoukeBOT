@@ -1,4 +1,4 @@
-package llm
+package tools
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	discordruntime "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 func TestDiscordObserveTool_InputSchema(t *testing.T) {
@@ -57,8 +58,8 @@ func TestDiscordObserveTool_DenyNonDiscordSource(t *testing.T) {
 
 func TestDiscordObserveTool_DenyDMContext(t *testing.T) {
 	tool := NewDiscordObserveTool(discordruntime.NewRuntime(discordruntime.RuntimeOptions{}))
-	ctx := WithRequestContext(context.Background(), RequestContext{
-		Source:    RequestSourceDiscord,
+	ctx := llm.WithRequestContext(context.Background(), llm.RequestContext{
+		Source:    llm.RequestSourceDiscord,
 		GuildID:   "",
 		ChannelID: "123",
 		UserID:    "456",
@@ -85,8 +86,8 @@ func TestDiscordObserveTool_CapabilitiesWithWarnings(t *testing.T) {
 		MessageScope:          discordruntime.ObserveScopeCurrentGuild,
 		MaxResults:            25,
 	}))
-	ctx := WithRequestContext(context.Background(), RequestContext{
-		Source:    RequestSourceDiscord,
+	ctx := llm.WithRequestContext(context.Background(), llm.RequestContext{
+		Source:    llm.RequestSourceDiscord,
 		GuildID:   "guild-1",
 		ChannelID: "channel-1",
 		UserID:    "user-1",

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
-	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/tools"
 )
 
 // executeTools executes a list of tool calls and returns the results.
@@ -130,11 +130,11 @@ func (s *ChatService) resolveTool(name, personaID string) (domain.Tool, error) {
 		}
 		switch name {
 		case "file_read":
-			return llm.NewFileReadTool(personaDir), nil
+			return tools.NewFileReadTool(personaDir), nil
 		case "file_write":
-			return llm.NewFileWriteTool(personaDir), nil
+			return tools.NewFileWriteTool(personaDir), nil
 		case "file_append":
-			return llm.NewFileAppendTool(personaDir), nil
+			return tools.NewFileAppendTool(personaDir), nil
 		}
 	}
 

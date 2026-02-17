@@ -1,4 +1,4 @@
-package llm
+package tools
 
 import "github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 

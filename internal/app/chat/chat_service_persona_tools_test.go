@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
-	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/tools"
 )
 
 func TestExecuteToolsFileWriteUsesRuntimePersona(t *testing.T) {
@@ -18,7 +18,7 @@ func TestExecuteToolsFileWriteUsesRuntimePersona(t *testing.T) {
 
 	// Simulate startup declarations being bound to a different persona.
 	service := NewChatService(nil, nil, nil, nil, 0, nil, []domain.Tool{
-		llm.NewFileWriteTool(filepath.Join(personaConfigsBaseDir, "start")),
+		tools.NewFileWriteTool(filepath.Join(personaConfigsBaseDir, "start")),
 	}, nil)
 
 	results := service.executeTools(context.Background(), []domain.ToolCall{

@@ -1,4 +1,4 @@
-package llm
+package tools
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 const (
@@ -105,8 +106,8 @@ func (t *SchedulerTool) Execute(ctx context.Context, input map[string]interface{
 		return scheduleToolError("scheduler service is not configured"), nil
 	}
 
-	reqCtx, ok := GetRequestContext(ctx)
-	if !ok || reqCtx.Source != RequestSourceDiscord {
+	reqCtx, ok := llm.GetRequestContext(ctx)
+	if !ok || reqCtx.Source != llm.RequestSourceDiscord {
 		return scheduleToolError("schedule_manager is only available for Discord requests"), nil
 	}
 	if strings.TrimSpace(reqCtx.ChannelID) == "" || strings.TrimSpace(reqCtx.UserID) == "" {
@@ -143,7 +144,7 @@ func (t *SchedulerTool) Execute(ctx context.Context, input map[string]interface{
 	}
 }
 
-func (t *SchedulerTool) handleCreateReminder(ctx context.Context, input map[string]interface{}, reqCtx RequestContext, personaID string, now time.Time) domain.ToolResult {
+func (t *SchedulerTool) handleCreateReminder(ctx context.Context, input map[string]interface{}, reqCtx llm.RequestContext, personaID string, now time.Time) domain.ToolResult {
 	targets := parseStringSlice(input["target_user_ids"])
 	if len(targets) == 0 {
 		targets = []string{reqCtx.UserID}
@@ -179,7 +180,7 @@ func (t *SchedulerTool) handleCreateReminder(ctx context.Context, input map[stri
 	return scheduleToolOK(payload)
 }
 
-func (t *SchedulerTool) handleCreateMonitor(ctx context.Context, input map[string]interface{}, reqCtx RequestContext, personaID string) domain.ToolResult {
+func (t *SchedulerTool) handleCreateMonitor(ctx context.Context, input map[string]interface{}, reqCtx llm.RequestContext, personaID string) domain.ToolResult {
 	durationSeconds, err := readInt64(input, "duration_seconds")
 	if err != nil {
 		return scheduleToolError("duration_seconds is required for create_monitor")
@@ -228,7 +229,7 @@ func (t *SchedulerTool) handleCreateMonitor(ctx context.Context, input map[strin
 	return scheduleToolOK(payload)
 }
 
-func (t *SchedulerTool) handleListTasks(ctx context.Context, input map[string]interface{}, reqCtx RequestContext) domain.ToolResult {
+func (t *SchedulerTool) handleListTasks(ctx context.Context, input map[string]interface{}, reqCtx llm.RequestContext) domain.ToolResult {
 	includeInactive := readBool(input, "include_inactive")
 	tasks, err := t.service.ListTasks(ctx, scheduler.ListTasksRequest{
 		ChannelID:       reqCtx.ChannelID,
@@ -255,7 +256,7 @@ func (t *SchedulerTool) handleListTasks(ctx context.Context, input map[string]in
 	return scheduleToolOK(payload)
 }
 
-func (t *SchedulerTool) handleCancelTask(ctx context.Context, input map[string]interface{}, reqCtx RequestContext) domain.ToolResult {
+func (t *SchedulerTool) handleCancelTask(ctx context.Context, input map[string]interface{}, reqCtx llm.RequestContext) domain.ToolResult {
 	taskID := strings.TrimSpace(readString(input, "task_id"))
 	if taskID == "" {
 		return scheduleToolError("task_id is required for cancel_task")
@@ -278,7 +279,7 @@ func (t *SchedulerTool) handleCancelTask(ctx context.Context, input map[string]i
 	return scheduleToolOK(payload)
 }
 
-func (t *SchedulerTool) handleCancelAll(ctx context.Context, input map[string]interface{}, reqCtx RequestContext) domain.ToolResult {
+func (t *SchedulerTool) handleCancelAll(ctx context.Context, input map[string]interface{}, reqCtx llm.RequestContext) domain.ToolResult {
 	includeInactive := readBool(input, "include_inactive")
 	count, err := t.service.CancelAll(ctx, scheduler.CancelAllRequest{
 		ChannelID:       reqCtx.ChannelID,

@@ -1,4 +1,4 @@
-package llm
+package tools
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	discordruntime "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/util"
 	"github.com/bwmarrin/discordgo"
 )
@@ -103,8 +104,8 @@ func (t *DiscordObserveTool) Execute(ctx context.Context, input map[string]inter
 		return t.errorResult(action, "missing required field: action", nil, map[string]any{})
 	}
 
-	reqCtx, ok := GetRequestContext(ctx)
-	if !ok || reqCtx.Source != RequestSourceDiscord {
+	reqCtx, ok := llm.GetRequestContext(ctx)
+	if !ok || reqCtx.Source != llm.RequestSourceDiscord {
 		metricLogf("discord_tool.denied_non_discord_source", &discordToolDeniedNonDiscordSource)
 		logTool.Warnf("discord_observe denied: action=%s reason=non_discord_source source=%s", action, reqCtx.Source)
 		return t.errorResult(action, "discord_observe is only available for Discord-origin requests", nil, map[string]any{
@@ -176,7 +177,7 @@ func (t *DiscordObserveTool) Execute(ctx context.Context, input map[string]inter
 	return result, err
 }
 
-func (t *DiscordObserveTool) capabilitiesResult(reqCtx RequestContext) domain.ToolResult {
+func (t *DiscordObserveTool) capabilitiesResult(reqCtx llm.RequestContext) domain.ToolResult {
 	caps := t.runtime.Capabilities()
 	warnings := make([]string, 0, 2)
 	if !caps.MemberIntentEnabled {
@@ -215,7 +216,7 @@ func (t *DiscordObserveTool) capabilitiesResult(reqCtx RequestContext) domain.To
 	return encodeObserveResult(data, meta, warnings, "", false)
 }
 
-func (t *DiscordObserveTool) guildInfo(ctx context.Context, reqCtx RequestContext, action string) (domain.ToolResult, error) {
+func (t *DiscordObserveTool) guildInfo(ctx context.Context, reqCtx llm.RequestContext, action string) (domain.ToolResult, error) {
 	guild, err := t.runtime.Guild(ctx, reqCtx.GuildID)
 	if err != nil {
 		return t.errorResult(action, "fetch guild info failed: "+err.Error(), nil, t.baseMeta(reqCtx, action))
@@ -236,7 +237,7 @@ func (t *DiscordObserveTool) guildInfo(ctx context.Context, reqCtx RequestContex
 	return encodeObserveResult(data, t.baseMeta(reqCtx, action), nil, "", false), nil
 }
 
-func (t *DiscordObserveTool) listChannels(ctx context.Context, reqCtx RequestContext, action string) (domain.ToolResult, error) {
+func (t *DiscordObserveTool) listChannels(ctx context.Context, reqCtx llm.RequestContext, action string) (domain.ToolResult, error) {
 	channels, err := t.runtime.GuildChannels(ctx, reqCtx.GuildID)
 	if err != nil {
 		return t.errorResult(action, "list channels failed: "+err.Error(), nil, t.baseMeta(reqCtx, action))
@@ -271,7 +272,7 @@ func (t *DiscordObserveTool) listChannels(ctx context.Context, reqCtx RequestCon
 	return encodeObserveResult(items, meta, nil, "", false), nil
 }
 
-func (t *DiscordObserveTool) listRoles(ctx context.Context, reqCtx RequestContext, action string) (domain.ToolResult, error) {
+func (t *DiscordObserveTool) listRoles(ctx context.Context, reqCtx llm.RequestContext, action string) (domain.ToolResult, error) {
 	guild, err := t.runtime.Guild(ctx, reqCtx.GuildID)
 	if err != nil {
 		return t.errorResult(action, "fetch guild roles failed: "+err.Error(), nil, t.baseMeta(reqCtx, action))
@@ -306,7 +307,7 @@ func (t *DiscordObserveTool) listRoles(ctx context.Context, reqCtx RequestContex
 	return encodeObserveResult(items, meta, nil, "", false), nil
 }
 
-func (t *DiscordObserveTool) listMembers(ctx context.Context, reqCtx RequestContext, action string, limit int) (domain.ToolResult, error) {
+func (t *DiscordObserveTool) listMembers(ctx context.Context, reqCtx llm.RequestContext, action string, limit int) (domain.ToolResult, error) {
 	members, err := t.runtime.GuildMembers(ctx, reqCtx.GuildID, "", limit)
 	if err != nil {
 		if errors.Is(err, discordruntime.ErrMissingMemberIntent) {
@@ -350,7 +351,7 @@ func (t *DiscordObserveTool) listMembers(ctx context.Context, reqCtx RequestCont
 	return encodeObserveResult(items, meta, nil, "", false), nil
 }
 
-func (t *DiscordObserveTool) getMember(ctx context.Context, reqCtx RequestContext, action, userID string) (domain.ToolResult, error) {
+func (t *DiscordObserveTool) getMember(ctx context.Context, reqCtx llm.RequestContext, action, userID string) (domain.ToolResult, error) {
 	member, err := t.runtime.GuildMember(ctx, reqCtx.GuildID, userID)
 	if err != nil {
 		return t.errorResult(action, "get member failed: "+err.Error(), nil, t.baseMeta(reqCtx, action))
@@ -377,7 +378,7 @@ func (t *DiscordObserveTool) getMember(ctx context.Context, reqCtx RequestContex
 	return encodeObserveResult(data, meta, nil, "", false), nil
 }
 
-func (t *DiscordObserveTool) listPresences(reqCtx RequestContext, action string) (domain.ToolResult, error) {
+func (t *DiscordObserveTool) listPresences(reqCtx llm.RequestContext, action string) (domain.ToolResult, error) {
 	presences, err := t.runtime.GuildPresences(reqCtx.GuildID)
 	if err != nil {
 		if errors.Is(err, discordruntime.ErrMissingPresenceIntent) {
@@ -424,7 +425,7 @@ func (t *DiscordObserveTool) listPresences(reqCtx RequestContext, action string)
 	return encodeObserveResult(items, meta, nil, "", false), nil
 }
 
-func (t *DiscordObserveTool) listMessages(ctx context.Context, reqCtx RequestContext, action, requestedChannelID, before string, limit int) (domain.ToolResult, error) {
+func (t *DiscordObserveTool) listMessages(ctx context.Context, reqCtx llm.RequestContext, action, requestedChannelID, before string, limit int) (domain.ToolResult, error) {
 	channelID, err := t.resolveMessageChannel(ctx, reqCtx, requestedChannelID)
 	if err != nil {
 		return t.errorResult(action, err.Error(), nil, t.baseMeta(reqCtx, action))
@@ -489,7 +490,7 @@ func (t *DiscordObserveTool) listMessages(ctx context.Context, reqCtx RequestCon
 	return encodeObserveResult(items, meta, nil, "", false), nil
 }
 
-func (t *DiscordObserveTool) resolveMessageChannel(ctx context.Context, reqCtx RequestContext, requestedChannelID string) (string, error) {
+func (t *DiscordObserveTool) resolveMessageChannel(ctx context.Context, reqCtx llm.RequestContext, requestedChannelID string) (string, error) {
 	channelID := strings.TrimSpace(requestedChannelID)
 	if channelID == "" {
 		channelID = strings.TrimSpace(reqCtx.ChannelID)
@@ -570,7 +571,7 @@ func (t *DiscordObserveTool) parseLimit(input map[string]interface{}) int {
 	return limit
 }
 
-func (t *DiscordObserveTool) baseMeta(reqCtx RequestContext, action string) map[string]any {
+func (t *DiscordObserveTool) baseMeta(reqCtx llm.RequestContext, action string) map[string]any {
 	return map[string]any{
 		"action":     action,
 		"source":     reqCtx.Source,

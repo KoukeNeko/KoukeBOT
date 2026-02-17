@@ -1,4 +1,4 @@
-package llm
+package tools
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
 type stubSchedulerService struct {
@@ -92,8 +93,8 @@ func TestSchedulerTool_CreateReminderUsesRequestContext(t *testing.T) {
 	stub := &stubSchedulerService{}
 	tool := NewSchedulerTool(stub)
 
-	ctx := WithRequestContext(context.Background(), RequestContext{
-		Source:    RequestSourceDiscord,
+	ctx := llm.WithRequestContext(context.Background(), llm.RequestContext{
+		Source:    llm.RequestSourceDiscord,
 		ChannelID: "ch-1",
 		UserID:    "u-1",
 		PersonaID: "persona-a",
@@ -124,8 +125,8 @@ func TestSchedulerTool_CreateMonitorSupportsMultiTargets(t *testing.T) {
 	stub := &stubSchedulerService{}
 	tool := NewSchedulerTool(stub)
 
-	ctx := WithRequestContext(context.Background(), RequestContext{
-		Source:    RequestSourceDiscord,
+	ctx := llm.WithRequestContext(context.Background(), llm.RequestContext{
+		Source:    llm.RequestSourceDiscord,
 		ChannelID: "ch-1",
 		UserID:    "u-1",
 		PersonaID: "persona-a",

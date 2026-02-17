@@ -11,8 +11,8 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	discordruntime "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
-	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/mcp"
+	toolspkg "github.com/KoukeNeko/KoukeBOT/internal/infra/tools"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/search"
 )
 
@@ -45,14 +45,14 @@ func BuildCatalog(
 			effective.SearchProvider,
 		)
 		if router.IsConfigured() {
-			tools = append(tools, llm.NewWebSearchTool(router))
+			tools = append(tools, toolspkg.NewWebSearchTool(router))
 			names = append(names, fmt.Sprintf("web_search (provider: %s)", effective.SearchProvider))
 		}
 	}
 
 	// Web Fetch Tool
 	if effective.WebFetchEnabled {
-		tools = append(tools, llm.NewWebFetchTool(search.NewWebFetcher()))
+		tools = append(tools, toolspkg.NewWebFetchTool(search.NewWebFetcher()))
 		names = append(names, "web_fetch")
 	}
 
@@ -65,7 +65,7 @@ func BuildCatalog(
 	if timeFormat == "" {
 		timeFormat = "auto"
 	}
-	tools = append(tools, llm.NewSessionStatusTool(timezone, timeFormat))
+	tools = append(tools, toolspkg.NewSessionStatusTool(timezone, timeFormat))
 	names = append(names, fmt.Sprintf("session_status (tz: %s)", timezone))
 
 	// Discord observe tool (read-only; Discord-source only).
@@ -76,13 +76,13 @@ func BuildCatalog(
 			MessageScope:          effective.DiscordObserveMessageScope,
 			MaxResults:            effective.DiscordObserveMaxResults,
 		})
-		tools = append(tools, llm.NewDiscordObserveTool(discordRuntime))
+		tools = append(tools, toolspkg.NewDiscordObserveTool(discordRuntime))
 		names = append(names, "discord_observe (read-only; current guild scope)")
 	}
 
 	// Scheduler tool (Discord source only).
 	if schedulerService != nil {
-		tools = append(tools, llm.NewSchedulerTool(schedulerService))
+		tools = append(tools, toolspkg.NewSchedulerTool(schedulerService))
 		names = append(names, "schedule_manager (discord only)")
 	}
 
@@ -93,9 +93,9 @@ func BuildCatalog(
 	}
 	declarationDir := filepath.Join("configs/personas", declarationPersonaID)
 	tools = append(tools,
-		llm.NewFileReadTool(declarationDir),
-		llm.NewFileWriteTool(declarationDir),
-		llm.NewFileAppendTool(declarationDir),
+		toolspkg.NewFileReadTool(declarationDir),
+		toolspkg.NewFileWriteTool(declarationDir),
+		toolspkg.NewFileAppendTool(declarationDir),
 	)
 	names = append(names, "file_read, file_write, file_append (declarations only; runtime persona-bound execution enabled)")
 

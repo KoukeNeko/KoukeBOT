@@ -8,6 +8,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/tools"
 )
 
 func TestHandleMessagePersistsRawLLMInputSnapshots(t *testing.T) {
@@ -154,7 +155,7 @@ func TestHandleMessageStreamBreaksEarlyWhenAllToolCallsBlocked(t *testing.T) {
 		map[string]*domain.PersonaModule{
 			"persona-a": rawInputTestPersona("persona-a"),
 		},
-		[]domain.Tool{llm.NewSessionStatusTool("Asia/Taipei", "24")},
+		[]domain.Tool{tools.NewSessionStatusTool("Asia/Taipei", "24")},
 		nil,
 	)
 
