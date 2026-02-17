@@ -82,6 +82,10 @@ func NormalizeGoogleModelAlias(model string) string {
 		return "gemini-3-pro-preview"
 	case "gemini-3-flash":
 		return "gemini-3-flash-preview"
+	case "claude-opus-4-6":
+		return "claude-opus-4-6-thinking"
+	case "claude-sonnet-4":
+		return "claude-sonnet-4-thinking"
 	default:
 		return normalized
 	}

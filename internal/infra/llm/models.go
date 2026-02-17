@@ -34,8 +34,13 @@ func ListGeminiModels(ctx context.Context, apiKey string, oauthToken *OAuthToken
 func ListGeminiModelsForProvider(ctx context.Context, apiKey string, oauthToken *OAuthTokenData, providerType string) ([]ModelEntry, error) {
 	providerID := NormalizeGoogleProviderID(providerType)
 
-	// For OAuth-based providers, try dynamic model discovery first.
-	if providerID == ProviderGoogleAntigravity || providerID == ProviderGoogleGeminiCLI {
+	// google-gemini-cli is a local CLI runtime provider; no remote discovery needed.
+	if providerID == ProviderGoogleGeminiCLI {
+		return staticCatalogForProvider(providerID), nil
+	}
+
+	// For antigravity, try dynamic model discovery first.
+	if providerID == ProviderGoogleAntigravity {
 		if oauthToken != nil && oauthToken.AccessToken != "" {
 			dynamicModels, err := FetchAvailableModels(ctx, oauthToken, providerID)
 			if err == nil && len(dynamicModels) > 0 {

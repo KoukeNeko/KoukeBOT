@@ -240,11 +240,20 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	providerID := strings.TrimSpace(r.URL.Query().Get("provider_id"))
+	if providerID == "" {
+		providerID = settings.ProviderID
+	}
+	if providerID == "" {
+		providerID = settings.ProviderType
+	}
+	providerID = llm.NormalizeGoogleProviderID(providerID)
+
 	var oauthToken *llm.OAuthTokenData
-	// Prefer pool token (has ProjectID) for dynamic model discovery.
+	// Prefer provider-matched pool token (has ProjectID) for dynamic discovery.
 	if poolPath := h.oauthFlow.PoolPath(); poolPath != "" {
 		if tokens, err := llm.LoadOAuthPool(poolPath); err == nil && len(tokens) > 0 {
-			oauthToken = tokens[0]
+			oauthToken = selectOAuthTokenForProvider(tokens, providerID)
 		}
 	}
 	if oauthToken == nil {
@@ -253,13 +262,6 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	providerID := strings.TrimSpace(r.URL.Query().Get("provider_id"))
-	if providerID == "" {
-		providerID = settings.ProviderID
-	}
-	if providerID == "" {
-		providerID = settings.ProviderType
-	}
 	models, err := llm.ListGeminiModelsForProvider(r.Context(), settings.GeminiAPIKey, oauthToken, providerID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list models: "+err.Error())
@@ -271,6 +273,7 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model string, strictOAuthProbe bool) (llm.Provider, error) {
 	logAPI.Logf("build-provider: switching to OAuth provider=%s", providerID)
+	targetProviderID := llm.NormalizeGoogleProviderID(providerID)
 	poolPath := h.oauthFlow.PoolPath()
 	tokens, err := llm.LoadOAuthPool(poolPath)
 	if err != nil || len(tokens) == 0 {
@@ -299,6 +302,11 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 	probeSuccess := false
 	probeNotFound := false
 	for _, tokenData := range tokens {
+		tokenProviderID := llm.NormalizeGoogleProviderID(tokenData.ProviderID)
+		if tokenProviderID != "" && tokenProviderID != targetProviderID {
+			continue
+		}
+
 		if err := llm.RefreshIfNeeded(h.ctx, tokenData, ""); err != nil {
 			logAPI.Warnf("build-provider: token refresh failed for %s: %v", tokenData.Email, err)
 			continue
@@ -339,12 +347,33 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 		if strictOAuthProbe && probeNotFound {
 			return nil, fmt.Errorf("OAuth model %q is not available (404 NOT_FOUND)", model)
 		}
-		return nil, fmt.Errorf("no OAuth accounts available")
+		return nil, fmt.Errorf("no OAuth accounts available for provider %s", targetProviderID)
 	}
 	if strictOAuthProbe && !probeSuccess {
 		return nil, fmt.Errorf("OAuth model probe failed for all accounts")
 	}
 	return pool, nil
+}
+
+func selectOAuthTokenForProvider(tokens []*llm.OAuthTokenData, providerID string) *llm.OAuthTokenData {
+	if len(tokens) == 0 {
+		return nil
+	}
+	targetProviderID := llm.NormalizeGoogleProviderID(providerID)
+	if targetProviderID == "" {
+		return tokens[0]
+	}
+	for _, token := range tokens {
+		if llm.NormalizeGoogleProviderID(token.ProviderID) == targetProviderID {
+			return token
+		}
+	}
+	for _, token := range tokens {
+		if strings.TrimSpace(token.ProviderID) == "" {
+			return token
+		}
+	}
+	return tokens[0]
 }
 
 func (h *Handlers) probeOAuthProviderStrict(

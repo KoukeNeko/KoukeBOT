@@ -217,3 +217,25 @@ func TestNormalizeSettingsWebToolModeDefaults(t *testing.T) {
 		t.Fatalf("invalid WebToolMode normalized to %q, want %q", gotInvalid.WebToolMode, WebToolModeClassic)
 	}
 }
+
+func TestNormalizeSettingsNormalizesLegacyClaudeModelAlias(t *testing.T) {
+	in := Settings{
+		ProviderType: ProviderOAuth,
+		ProviderID:   "google-antigravity",
+		ModelID:      "google-antigravity/claude-opus-4-6",
+		GeminiModel:  "claude-opus-4-6",
+	}
+	raw := map[string]json.RawMessage{
+		"provider_id":  json.RawMessage(`"google-antigravity"`),
+		"model_id":     json.RawMessage(`"google-antigravity/claude-opus-4-6"`),
+		"gemini_model": json.RawMessage(`"claude-opus-4-6"`),
+	}
+
+	got := normalizeSettings(in, raw)
+	if got.GeminiModel != "claude-opus-4-6-thinking" {
+		t.Fatalf("GeminiModel = %q, want %q", got.GeminiModel, "claude-opus-4-6-thinking")
+	}
+	if got.ModelID != "google-antigravity/claude-opus-4-6-thinking" {
+		t.Fatalf("ModelID = %q, want %q", got.ModelID, "google-antigravity/claude-opus-4-6-thinking")
+	}
+}

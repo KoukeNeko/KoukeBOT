@@ -128,10 +128,9 @@ export function useSettingsData() {
       getProviderStatus(),
       getRuntimeMetrics().catch(() => null as RuntimeMetrics | null),
       oauth.refreshOAuthSnapshot().catch(() => ({ oauth: null, poolEntries: [] })),
-      listModels(),
       listPersonas(),
     ])
-      .then(([settings, currentStatus, metrics, oauthSnapshot, modelList, personaList]) => {
+      .then(async ([settings, currentStatus, metrics, oauthSnapshot, personaList]) => {
         setForm(settings)
         setStatus(currentStatus)
         setRuntimeMetrics(metrics)
@@ -139,7 +138,6 @@ export function useSettingsData() {
           oauth.setOAuthStatus(oauthSnapshot.oauth)
         }
         oauth.setPool(oauthSnapshot.poolEntries)
-        setModels(modelList)
         setPersonas(personaList)
 
         if (settings.provider_id === 'gemini-api-key' || settings.provider_type === 'api-key') {
@@ -147,6 +145,12 @@ export function useSettingsData() {
         } else {
           oauth.setProviderTab('oauth')
         }
+
+        const initialProviderID = settings.provider_id || settings.provider_type || 'google-antigravity'
+        return listModels(initialProviderID)
+      })
+      .then((modelList) => {
+        setModels(modelList)
       })
       .catch((error) => setMessage({ type: 'err', text: error instanceof Error ? error.message : 'Failed to load settings' }))
       .finally(() => setLoading(false))
@@ -235,7 +239,7 @@ export function useSettingsData() {
         label: `${model.display_name}${model.reasoning ? ' · Reasoning' : ''}${model.supports_multimodal ? ' · MM' : ''}${model.supports_tools ? ' · Tools' : ''}`,
       }))
     }
-    const fallback = form.model_id || form.gemini_model || 'google-gemini-cli/gemini-3-pro-preview'
+    const fallback = form.model_id || form.gemini_model || defaultModelForProvider(selectedProviderID)
     return [{ value: fallback, label: fallback }]
   }, [form.gemini_model, form.model_id, models, selectedProviderID])
 
