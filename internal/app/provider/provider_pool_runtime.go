@@ -123,9 +123,20 @@ func executeWithRetry[T any](
 }
 
 func (pp *ProviderPool) handleQuotaError(email string, err error) {
-	resetDuration := parseResetDelay(err.Error())
-	pp.markExhausted(email, resetDuration, err)
-	logPool.Logf("account %s exhausted (reset in %s) — trying next...", email, formatDuration(resetDuration))
+	// Use server-provided reset delay if available, otherwise escalate based on error count.
+	serverDelay := parseResetDelay(err.Error())
+	failures := pp.failureCount(email)
+	escalated := quotaCooldownDuration(failures + 1)
+
+	// Pick whichever is longer: server hint or escalated formula.
+	resetDuration := serverDelay
+	if escalated > resetDuration {
+		resetDuration = escalated
+	}
+
+	pp.markCooldown(email, resetDuration, err)
+	logPool.Logf("account %s cooldown %s (server=%s, escalated=%s) — trying next...",
+		email, formatDuration(resetDuration), formatDuration(serverDelay), formatDuration(escalated))
 	logPool.Logf("quota error detail: %s", truncateError(err, 300))
 }
 
@@ -136,14 +147,27 @@ func (pp *ProviderPool) handleModelCapacityError(email string, err error) {
 	pp.globalCooldownUntil = now.Add(cooldown)
 	for i := range pp.entries {
 		next := now.Add(cooldown)
-		if pp.entries[i].exhaustedUntil.Before(next) {
-			pp.entries[i].exhaustedUntil = next
+		if pp.entries[i].cooldownUntil.Before(next) {
+			pp.entries[i].cooldownUntil = next
 		}
 	}
 	pp.mu.Unlock()
 	atomic.AddUint64(&pp.metricModelCapacityGlobalCooldown, 1)
 	logPool.Warnf("MODEL_CAPACITY: global cooldown %s applied to all %d account(s) (triggered by %s): %s",
 		formatDuration(cooldown), pp.Size(), email, truncateError(err, 200))
+}
+
+func (pp *ProviderPool) handleBillingError(email string, err error) {
+	failures := pp.failureCount(email)
+	duration := billingDisableDuration(failures + 1)
+	pp.markDisabled(email, duration, "billing", err)
+	logPool.Warnf("BILLING: account %s disabled for %s: %s", email, formatDuration(duration), truncateError(err, 200))
+}
+
+func (pp *ProviderPool) handleOverloadedError(email string, err error) {
+	cooldown := overloadedCooldown()
+	pp.markCooldown(email, cooldown, err)
+	logPool.Warnf("OVERLOADED: account %s cooldown %s: %s", email, formatDuration(cooldown), truncateError(err, 200))
 }
 
 func (pp *ProviderPool) handleTransientError(email string, err error) {

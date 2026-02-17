@@ -235,8 +235,8 @@ func TestMarkTransientFailureUpdatesPoolStatus(t *testing.T) {
 	if entries[0].LastError == "" {
 		t.Fatalf("last error should not be empty")
 	}
-	if entries[0].Status != "exhausted" {
-		t.Fatalf("status = %s, want exhausted", entries[0].Status)
+	if entries[0].Status != "cooldown" {
+		t.Fatalf("status = %s, want cooldown", entries[0].Status)
 	}
 }
 
@@ -395,8 +395,8 @@ func TestProviderPoolQuotaErrorFailsOverToNextAccount(t *testing.T) {
 		t.Fatalf("entries length = %d, want 2", len(entries))
 	}
 	for _, entry := range entries {
-		if entry.Email == "first@example.com" && entry.Status != "exhausted" {
-			t.Fatalf("first account status = %s, want exhausted", entry.Status)
+		if entry.Email == "first@example.com" && entry.Status != "cooldown" {
+			t.Fatalf("first account status = %s, want cooldown", entry.Status)
 		}
 	}
 }
@@ -425,11 +425,11 @@ func TestProviderPoolModelCapacityAppliesGlobalCooldown(t *testing.T) {
 		t.Fatalf("first provider calls = %d, want 1", first.calls)
 	}
 
-	// Both accounts should be exhausted due to global cooldown.
+	// Both accounts should be in cooldown due to global cooldown.
 	entries := pool.Entries()
 	for _, e := range entries {
-		if e.Status != "exhausted" {
-			t.Fatalf("account %s status = %s, want exhausted", e.Email, e.Status)
+		if e.Status != "cooldown" {
+			t.Fatalf("account %s status = %s, want cooldown", e.Email, e.Status)
 		}
 	}
 
@@ -631,6 +631,19 @@ func TestProviderPoolCircuitBreakerRejectsWhenOpen(t *testing.T) {
 	})
 	if !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("expected ErrCircuitOpen, got: %v", err)
+	}
+}
+
+func TestProviderPoolSetCircuitBreakerDisable(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetCircuitBreaker(1, time.Second)
+	if pool.circuitBreaker == nil {
+		t.Fatal("expected circuit breaker to be enabled")
+	}
+
+	pool.SetCircuitBreaker(0, 0)
+	if pool.circuitBreaker != nil {
+		t.Fatal("expected circuit breaker to be disabled")
 	}
 }
 

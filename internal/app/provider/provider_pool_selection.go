@@ -17,10 +17,13 @@ func (pp *ProviderPool) selectNextProviderLocked(now time.Time) (int, bool) {
 		return -1, false
 	}
 
+	// Clear expired cooldowns and reset error counts before selection.
+	pp.clearExpiredCooldowns(now)
+
 	available := make([]int, 0, len(pp.entries))
 	for i := range pp.entries {
 		e := &pp.entries[i]
-		if e.exhaustedUntil.IsZero() || !e.exhaustedUntil.After(now) {
+		if e.isAvailable(now) {
 			available = append(available, i)
 		}
 	}
@@ -105,9 +108,10 @@ func (pp *ProviderPool) findEarliestResetTimeLocked(now time.Time) (time.Time, s
 	var earliestEmail string
 
 	for _, e := range pp.entries {
-		if e.exhaustedUntil.After(now) {
-			if earliest.IsZero() || e.exhaustedUntil.Before(earliest) {
-				earliest = e.exhaustedUntil
+		effective := e.effectiveExhaustedUntil()
+		if effective.After(now) {
+			if earliest.IsZero() || effective.Before(earliest) {
+				earliest = effective
 				earliestEmail = e.email
 			}
 		}
@@ -117,4 +121,28 @@ func (pp *ProviderPool) findEarliestResetTimeLocked(now time.Time) (time.Time, s
 		return time.Time{}, "", false
 	}
 	return earliest, earliestEmail, true
+}
+
+// clearExpiredCooldowns resets expired timers and error counts.
+// Must be called with pp.mu held (write lock).
+func (pp *ProviderPool) clearExpiredCooldowns(now time.Time) {
+	for i := range pp.entries {
+		e := &pp.entries[i]
+		cooldownExpired := !e.cooldownUntil.IsZero() && !e.cooldownUntil.After(now)
+		disabledExpired := !e.disabledUntil.IsZero() && !e.disabledUntil.After(now)
+
+		if cooldownExpired {
+			e.cooldownUntil = time.Time{}
+		}
+		if disabledExpired {
+			e.disabledUntil = time.Time{}
+			e.disabledReason = ""
+		}
+
+		// Reset error count only when ALL timers have cleared.
+		allClear := e.cooldownUntil.IsZero() && e.disabledUntil.IsZero()
+		if allClear && e.consecutiveFailures > 0 && (cooldownExpired || disabledExpired) {
+			e.consecutiveFailures = 0
+		}
+	}
 }

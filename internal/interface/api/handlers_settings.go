@@ -285,19 +285,9 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 	}
 
 	pool := app.NewProviderPool()
-	pool.SetPoolStorePath(poolPath)
-	if s.AutoRetryCount > 0 {
-		pool.SetAutoRetryCount(s.AutoRetryCount)
-	}
-	pool.SetTransientRecoveryWait(
-		s.TransientRecoveryWaitEnabled,
-		time.Duration(s.TransientRecoveryWaitMaxSeconds)*time.Second,
-	)
+	configureOAuthPoolFromSettings(pool, s, providerID, poolPath)
 	fallbackEnabled := s.FallbackEnabled || s.FallbackModelEnabled
 	fallbackModel := resolveFallbackModelShort(s, providerID)
-	if fallbackModel != "" && fallbackEnabled {
-		pool.SetFallbackModel(fallbackModel)
-	}
 
 	probeSuccess := false
 	probeNotFound := false

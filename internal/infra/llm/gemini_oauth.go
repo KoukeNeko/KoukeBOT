@@ -164,6 +164,11 @@ func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatR
 
 	finalContent := fullText.String()
 
+	// Empty stream: 200 OK but no content received — likely a transient server issue.
+	if finalContent == "" && totalTokens == 0 && lastFinishReason == "" {
+		return nil, fmt.Errorf("empty stream: server returned 200 OK but no content")
+	}
+
 	// Check for abnormal finish reasons
 	switch lastFinishReason {
 	case "MAX_TOKENS":
@@ -247,6 +252,14 @@ func (g *GeminiOAuthProvider) StreamChat(ctx context.Context, req ChatRequest) (
 		}
 		if err := scanner.Err(); err != nil {
 			ch <- StreamChunk{Error: err, Done: true}
+			return
+		}
+		// Empty stream: 200 OK but no content — likely transient server issue.
+		if responseLen == 0 && lastFinishReason == "" {
+			ch <- StreamChunk{
+				Error: fmt.Errorf("empty stream: server returned 200 OK but no content"),
+				Done:  true,
+			}
 			return
 		}
 		logCompletion(lastUsage, responsePreview, responseLen)
@@ -619,7 +632,11 @@ func (g *GeminiOAuthProvider) openStreamGenerateContent(ctx context.Context, bod
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		formattedErr := fmt.Errorf("%s HTTP %d: %s", label, resp.StatusCode, string(respBody))
+
+		// Embed rate-limit headers into the error message so the upper-layer
+		// parseResetDelay() can extract the server's recommended wait time.
+		headerInfo := extractRateLimitHeaders(resp)
+		formattedErr := fmt.Errorf("%s HTTP %d:%s %s", label, resp.StatusCode, headerInfo, string(respBody))
 		lastErr = formattedErr
 		lastErrEndpoint = endpoint
 
@@ -640,7 +657,8 @@ func isEndpointFallbackEligibleStatus(statusCode int) bool {
 	if statusCode >= 500 {
 		return true
 	}
-	return statusCode == http.StatusRequestTimeout
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooManyRequests // 429: try sandbox endpoint before failing
 }
 
 func (g *GeminiOAuthProvider) currentEndpointCandidates() []string {
@@ -656,6 +674,26 @@ func (g *GeminiOAuthProvider) setEffectiveEndpoint(endpoint string) {
 	g.endpointMu.Lock()
 	defer g.endpointMu.Unlock()
 	g.effectiveEndpoint = endpoint
+}
+
+// extractRateLimitHeaders builds a bracketed string of rate-limit headers from
+// the HTTP response. The format is designed to be parsed by parseResetDelay()
+// in the provider pool layer (e.g., "[retry-after:39] [x-ratelimit-reset-after:45]").
+func extractRateLimitHeaders(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	var sb strings.Builder
+	if v := resp.Header.Get("Retry-After"); v != "" {
+		sb.WriteString(fmt.Sprintf(" [retry-after:%s]", v))
+	}
+	if v := resp.Header.Get("X-RateLimit-Reset-After"); v != "" {
+		sb.WriteString(fmt.Sprintf(" [x-ratelimit-reset-after:%s]", v))
+	}
+	if v := resp.Header.Get("X-RateLimit-Reset"); v != "" {
+		sb.WriteString(fmt.Sprintf(" [x-ratelimit-reset:%s]", v))
+	}
+	return sb.String()
 }
 
 // parseSSEData extracts the JSON payload from an SSE data line.

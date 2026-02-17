@@ -35,8 +35,11 @@ export interface OAuthStatus {
 
 export interface PoolEntry {
   email: string
-  status: 'available' | 'exhausted'
-  exhausted_until?: string
+  status: 'available' | 'cooldown' | 'disabled'
+  exhausted_until?: string   // Backward compat: max(cooldown_until, disabled_until)
+  cooldown_until?: string    // Short-term rate limit cooldown
+  disabled_until?: string    // Long-term billing/auth disable
+  disabled_reason?: string   // Why disabled ("billing", "auth", etc.)
   current?: boolean
 
   request_count: number
@@ -53,4 +56,28 @@ export interface PoolEntry {
   consecutive_failures?: number
   last_error?: string
   last_success_at?: string
+}
+
+export interface PoolVerifyResult {
+  email: string
+  project_id?: string
+  provider_id?: string
+  tier_id?: string
+  endpoint_used?: string
+  verified: boolean
+  latency_ms?: number
+  preview?: string
+  error?: string
+  checked_at: string
+}
+
+export interface PoolVerifyResponse {
+  status: string
+  model: string
+  endpoint: string
+  checked_at: string
+  results: PoolVerifyResult[]
+  verified_count: number
+  failed_count: number
+  pool_size: number
 }

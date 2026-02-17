@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
@@ -89,15 +88,7 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 		})
 	}
 	if pool := h.providerManager.GetPool(); pool != nil {
-		pool.SetTransientRecoveryWait(
-			existing.TransientRecoveryWaitEnabled,
-			time.Duration(existing.TransientRecoveryWaitMaxSeconds)*time.Second,
-		)
-		if fallbackModel := resolveFallbackModelShort(existing, existing.ProviderID); fallbackModel != "" && (existing.FallbackEnabled || existing.FallbackModelEnabled) {
-			pool.SetFallbackModel(fallbackModel)
-		} else {
-			pool.SetFallbackModel("")
-		}
+		configureOAuthPoolFromSettings(pool, existing, existing.ProviderID, h.oauthFlow.PoolPath())
 	}
 
 	fileToolPersonaID := tooling.SelectFileToolPersonaID(personaConfigsBaseDir, existing.DiscordPersonaID)

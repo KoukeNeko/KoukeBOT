@@ -112,6 +112,8 @@ export default function SettingsPage({ vm }: Props) {
             pool={vm.oauth.pool}
             removingEmail={vm.oauth.removingEmail}
             onRemovePoolAccount={vm.oauth.handleRemovePoolAccount}
+            verifyingPool={vm.oauth.verifyingPool}
+            onVerifyPool={vm.oauth.handleVerifyPool}
             saving={vm.saving}
             onSave={vm.handleSave}
             addAccountOpen={vm.oauth.addAccountOpen}

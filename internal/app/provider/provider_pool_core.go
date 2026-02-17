@@ -35,7 +35,9 @@ func (pp *ProviderPool) AddOrReplaceWithUsage(provider llm.Provider, email strin
 			continue
 		}
 		pp.entries[i].provider = provider
-		pp.entries[i].exhaustedUntil = time.Time{}
+		pp.entries[i].cooldownUntil = time.Time{}
+		pp.entries[i].disabledUntil = time.Time{}
+		pp.entries[i].disabledReason = ""
 		pp.entries[i].consecutiveFailures = 0
 		pp.entries[i].lastError = ""
 		if usage != nil {
@@ -92,12 +94,27 @@ func (pp *ProviderPool) Entries() []PoolStatus {
 	result := make([]PoolStatus, len(pp.entries))
 	for i, e := range pp.entries {
 		status := "available"
-		var until *time.Time
-		if !e.exhaustedUntil.IsZero() && e.exhaustedUntil.After(now) {
-			status = "exhausted"
-			t := e.exhaustedUntil
-			until = &t
+		var cooldownUntil, disabledUntil, exhaustedUntil *time.Time
+
+		isDisabled := !e.disabledUntil.IsZero() && e.disabledUntil.After(now)
+		isCooldown := !e.cooldownUntil.IsZero() && e.cooldownUntil.After(now)
+
+		if isDisabled {
+			status = "disabled"
+			t := e.disabledUntil
+			disabledUntil = &t
+		} else if isCooldown {
+			status = "cooldown"
+			t := e.cooldownUntil
+			cooldownUntil = &t
 		}
+
+		// Backward compat: ExhaustedUntil = max(cooldownUntil, disabledUntil)
+		effective := e.effectiveExhaustedUntil()
+		if effective.After(now) {
+			exhaustedUntil = &effective
+		}
+
 		var lastSuccessAt *time.Time
 		if !e.lastSuccessAt.IsZero() {
 			t := e.lastSuccessAt
@@ -112,7 +129,10 @@ func (pp *ProviderPool) Entries() []PoolStatus {
 		result[i] = PoolStatus{
 			Email:               e.email,
 			Status:              status,
-			ExhaustedUntil:      until,
+			ExhaustedUntil:      exhaustedUntil,
+			CooldownUntil:       cooldownUntil,
+			DisabledUntil:       disabledUntil,
+			DisabledReason:      e.disabledReason,
 			Current:             e.email == pp.lastUsedEmail,
 			RequestCount:        attempts24h,
 			TotalRequests:       attemptsTotal,
@@ -162,8 +182,8 @@ func (pp *ProviderPool) MarkTransientFailure(email string, err error, cooldown t
 	entry.lastError = truncateError(err, 240)
 	if cooldown > 0 {
 		next := now.Add(cooldown)
-		if entry.exhaustedUntil.Before(next) {
-			entry.exhaustedUntil = next
+		if entry.cooldownUntil.Before(next) {
+			entry.cooldownUntil = next
 		}
 	}
 }
@@ -301,6 +321,15 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		switch errType {
 		case errorQuota:
 			pp.handleQuotaError(selection.email, err)
+			continue
+		case errorBilling:
+			pp.handleBillingError(selection.email, err)
+			continue
+		case errorOverloaded:
+			pp.handleOverloadedError(selection.email, err)
+			continue
+		case errorEmptyStream:
+			pp.handleTransientError(selection.email, err)
 			continue
 		case errorModelCapacity:
 			pp.handleModelCapacityError(selection.email, err)

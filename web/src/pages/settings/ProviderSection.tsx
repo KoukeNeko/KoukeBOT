@@ -24,6 +24,8 @@ type Props = {
   pool: PoolEntry[];
   removingEmail: string | null;
   onRemovePoolAccount: (email: string) => Promise<void>;
+  verifyingPool: boolean;
+  onVerifyPool: (providerID: string) => Promise<void>;
   saving: boolean;
   onSave: (overrideProviderType?: string) => void;
   addAccountOpen: boolean;
@@ -57,6 +59,8 @@ export default function ProviderSection({
   pool,
   removingEmail,
   onRemovePoolAccount,
+  verifyingPool,
+  onVerifyPool,
   saving,
   onSave,
   addAccountOpen,
@@ -164,7 +168,7 @@ export default function ProviderSection({
               {pool.length > 0 && (
                 <div className="pool-cards compact">
                   {pool.map((entry) => (
-                    <div key={entry.email} className={`pool-card ${entry.status === "exhausted" ? "exhausted" : ""} ${entry.current ? "current" : ""}`}>
+                    <div key={entry.email} className={`pool-card ${entry.status !== "available" ? "exhausted" : ""} ${entry.current ? "current" : ""}`}>
                       <div className="pool-card-header">
                         <div className="pool-card-avatar">
                           {entry.email.charAt(0).toUpperCase()}
@@ -177,11 +181,22 @@ export default function ProviderSection({
                           <div className={`pool-card-status ${entry.status}`}>
                             {entry.status === "available" ? (
                               <><span className="pool-dot available" /> 可用</>
-                            ) : (
-                              <><span className="pool-dot exhausted" /> 配額耗盡
-                                {entry.exhausted_until && (
+                            ) : entry.status === "disabled" ? (
+                              <><span className="pool-dot disabled" /> 已停用
+                                {entry.disabled_reason && (
+                                  <span className="pool-reset-hint">({entry.disabled_reason})</span>
+                                )}
+                                {entry.disabled_until && (
                                   <span className="pool-reset-hint">
-                                    (重置於 {new Date(entry.exhausted_until).toLocaleTimeString()})
+                                    — 恢復於 {new Date(entry.disabled_until).toLocaleTimeString()}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <><span className="pool-dot cooldown" /> 冷卻中
+                                {entry.cooldown_until && (
+                                  <span className="pool-reset-hint">
+                                    (重置於 {new Date(entry.cooldown_until).toLocaleTimeString()})
                                   </span>
                                 )}
                               </>
@@ -303,13 +318,24 @@ export default function ProviderSection({
                 </div>
               )}
 
-              <button
-                className="btn-secondary pool-add-account-button"
-                onClick={onOpenAddAccount}
-                style={{ marginTop: pool.length > 0 ? "0.75rem" : 0 }}
-              >
-                <span style={{ fontSize: "1.1rem" }}>+</span> 新增帳號
-              </button>
+              <div style={{ display: "flex", gap: "0.5rem", marginTop: pool.length > 0 ? "0.75rem" : 0 }}>
+                <button
+                  className="btn-secondary pool-add-account-button"
+                  onClick={onOpenAddAccount}
+                >
+                  <span style={{ fontSize: "1.1rem" }}>+</span> 新增帳號
+                </button>
+                {pool.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => { void onVerifyPool(selectedOAuthProviderID); }}
+                    disabled={verifyingPool}
+                  >
+                    {verifyingPool ? "驗證中..." : "驗證全部帳號"}
+                  </button>
+                )}
+              </div>
 
               {pool.length > 0 && (
                 <div className="oauth-section-subtle">

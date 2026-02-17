@@ -9,6 +9,7 @@ import {
   importPastedToken,
   removeOAuthPoolAccount,
   startGeminiOAuth,
+  verifyOAuthPool,
 } from '../../../api'
 import type { OAuthStartResult, OAuthStatus, PoolEntry, ProviderStatus } from '../../../types'
 
@@ -37,6 +38,7 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
   const [importingPasted, setImportingPasted] = useState(false)
   const [pool, setPool] = useState<PoolEntry[]>([])
   const [removingEmail, setRemovingEmail] = useState<string | null>(null)
+  const [verifyingPool, setVerifyingPool] = useState(false)
 
   const refreshPool = useCallback(async (): Promise<PoolEntry[]> => {
     try {
@@ -201,6 +203,44 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     }
   }, [refreshOAuthSnapshot, setMessage])
 
+  const handleVerifyPool = useCallback(async (providerID: string) => {
+    if (pool.length === 0) {
+      setMessage({ type: 'err', text: '目前沒有可驗證的 OAuth 帳號。' })
+      return
+    }
+
+    setVerifyingPool(true)
+    setMessage(null)
+    try {
+      const result = await verifyOAuthPool({
+        providerId: providerID,
+        timeoutSeconds: 25,
+      })
+      await refreshOAuthSnapshot()
+
+      if (result.failed_count > 0) {
+        const firstError = result.results.find((entry) => !entry.verified)?.error
+        setMessage({
+          type: 'err',
+          text: `驗證完成：成功 ${result.verified_count}，失敗 ${result.failed_count}${firstError ? `。首個錯誤：${firstError}` : ''}`,
+        })
+        return
+      }
+
+      setMessage({
+        type: 'ok',
+        text: `驗證完成：${result.verified_count} 個帳號全部可用（${result.model}）。`,
+      })
+    } catch (error) {
+      setMessage({
+        type: 'err',
+        text: error instanceof Error ? error.message : '帳號驗證失敗',
+      })
+    } finally {
+      setVerifyingPool(false)
+    }
+  }, [pool.length, refreshOAuthSnapshot, setMessage])
+
   const handleOpenAddAccount = useCallback(() => {
     setOAuthFlow(null)
     setOAuthCallbackURL('')
@@ -233,6 +273,7 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     pool,
     setPool,
     removingEmail,
+    verifyingPool,
     refreshPool,
     refreshOAuthSnapshot,
     handleStartOAuth,
@@ -240,6 +281,7 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     handleImportCLIToken,
     handleImportPastedToken,
     handleRemovePoolAccount,
+    handleVerifyPool,
     handleOpenAddAccount,
     handleCloseAddAccount,
   }

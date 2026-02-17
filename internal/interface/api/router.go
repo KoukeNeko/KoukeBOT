@@ -91,6 +91,7 @@ func (r *Router) registerRoutes() {
 
 	// OAuth Pool
 	r.mux.HandleFunc("GET /api/oauth/pool", r.handlers.OAuthPoolList)
+	r.mux.HandleFunc("POST /api/oauth/pool/verify", r.handlers.OAuthPoolVerify)
 	r.mux.HandleFunc("DELETE /api/oauth/pool/{email}", r.handlers.OAuthPoolRemove)
 
 	// Health

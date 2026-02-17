@@ -34,11 +34,14 @@ func (pp *ProviderPool) markSuccess(email string, now time.Time) {
 	}
 	entry.consecutiveFailures = 0
 	entry.lastError = ""
-	entry.exhaustedUntil = time.Time{}
+	entry.cooldownUntil = time.Time{}
+	entry.disabledUntil = time.Time{}
+	entry.disabledReason = ""
 	entry.lastSuccessAt = now
 }
 
-func (pp *ProviderPool) markExhausted(email string, resetDuration time.Duration, err error) {
+// markCooldown sets a short-term cooldown (rate limit / overloaded).
+func (pp *ProviderPool) markCooldown(email string, duration time.Duration, err error) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
 
@@ -47,10 +50,38 @@ func (pp *ProviderPool) markExhausted(email string, resetDuration time.Duration,
 		return
 	}
 	now := time.Now()
-	entry.exhaustedUntil = now.Add(resetDuration)
+	next := now.Add(duration)
+	if entry.cooldownUntil.Before(next) {
+		entry.cooldownUntil = next
+	}
 	entry.consecutiveFailures++
 	entry.lastError = truncateError(err, 240)
 	entry.lastFailureAt = now
+}
+
+// markDisabled sets a long-term disable (billing / auth failure).
+func (pp *ProviderPool) markDisabled(email string, duration time.Duration, reason string, err error) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+
+	entry := pp.findEntryByEmailLocked(email)
+	if entry == nil {
+		return
+	}
+	now := time.Now()
+	next := now.Add(duration)
+	if entry.disabledUntil.Before(next) {
+		entry.disabledUntil = next
+	}
+	entry.disabledReason = reason
+	entry.consecutiveFailures++
+	entry.lastError = truncateError(err, 240)
+	entry.lastFailureAt = now
+}
+
+// markExhausted is a backward-compatible wrapper that sets a short-term cooldown.
+func (pp *ProviderPool) markExhausted(email string, resetDuration time.Duration, err error) {
+	pp.markCooldown(email, resetDuration, err)
 }
 
 func (pp *ProviderPool) failureCount(email string) int {

@@ -15,10 +15,14 @@ var logPool = logger.New("llm", logger.Yellow)
 
 // poolEntry holds a single provider with its status.
 type poolEntry struct {
-	provider       llm.Provider
-	email          string
-	exhaustedUntil time.Time
-	lastUsed       time.Time
+	provider llm.Provider
+	email    string
+	lastUsed time.Time
+
+	// Dual timer: short cooldown for rate limits, long disable for billing errors.
+	cooldownUntil  time.Time // Short cooldown (rate_limit/overloaded: 1m→5m→25m→1h)
+	disabledUntil  time.Time // Long disable (billing/auth: 5h→10h→20h→24h)
+	disabledReason string    // Why this account is disabled ("billing", "auth", etc.)
 
 	usage *llm.OAuthUsageStats
 
@@ -28,11 +32,34 @@ type poolEntry struct {
 	lastFailureAt       time.Time
 }
 
+// isAvailable returns true if the account is not in cooldown or disabled.
+func (e *poolEntry) isAvailable(now time.Time) bool {
+	if !e.disabledUntil.IsZero() && e.disabledUntil.After(now) {
+		return false
+	}
+	if !e.cooldownUntil.IsZero() && e.cooldownUntil.After(now) {
+		return false
+	}
+	return true
+}
+
+// effectiveExhaustedUntil returns the later of cooldownUntil and disabledUntil
+// for backward compatibility with code that needs a single "exhausted until" time.
+func (e *poolEntry) effectiveExhaustedUntil() time.Time {
+	if e.disabledUntil.After(e.cooldownUntil) {
+		return e.disabledUntil
+	}
+	return e.cooldownUntil
+}
+
 // PoolStatus is the public view of a pool entry for API responses.
 type PoolStatus struct {
 	Email          string     `json:"email"`
-	Status         string     `json:"status"`
-	ExhaustedUntil *time.Time `json:"exhausted_until,omitempty"`
+	Status         string     `json:"status"` // "available", "cooldown", "disabled"
+	ExhaustedUntil *time.Time `json:"exhausted_until,omitempty"` // Backward compat: max(cooldownUntil, disabledUntil)
+	CooldownUntil  *time.Time `json:"cooldown_until,omitempty"`
+	DisabledUntil  *time.Time `json:"disabled_until,omitempty"`
+	DisabledReason string     `json:"disabled_reason,omitempty"`
 	Current        bool       `json:"current"`
 
 	RequestCount   int        `json:"request_count"`
@@ -166,6 +193,10 @@ func (pp *ProviderPool) QueueDepth() int {
 func (pp *ProviderPool) SetCircuitBreaker(failureThreshold int, openDuration time.Duration) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
+	if failureThreshold <= 0 || openDuration <= 0 {
+		pp.circuitBreaker = nil
+		return
+	}
 	pp.circuitBreaker = newCircuitBreaker(failureThreshold, openDuration)
 }
 

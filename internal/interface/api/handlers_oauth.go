@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -11,7 +13,6 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
-	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
@@ -136,8 +137,7 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state, expectedProviderID
 		model = "gemini-3-pro-preview"
 	}
 	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
-	var loadedSettings config.Settings
-	loadedSettings, _ = h.settingsStore.Load()
+	loadedSettings := h.loadSettingsOrDefault()
 	endpointPolicy = llm.ResolveEndpointPolicy(loadedSettings.EndpointPolicy)
 	settingProviderID, settingModel, _ := llm.ResolveProviderAndModel(loadedSettings.ProviderID, loadedSettings.ModelID, loadedSettings.GeminiModel)
 	if settingProviderID == providerID && settingModel != "" {
@@ -149,42 +149,12 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state, expectedProviderID
 		return nil, fmt.Errorf("provider creation: %w", err)
 	}
 
-	pool := h.providerManager.GetPool()
-	poolPath := h.oauthFlow.PoolPath()
-	if pool == nil {
-		pool = app.NewProviderPool()
-		pool.SetPoolStorePath(poolPath)
-		if loadedSettings.AutoRetryCount > 0 {
-			pool.SetAutoRetryCount(loadedSettings.AutoRetryCount)
-		}
-		pool.SetTransientRecoveryWait(
-			loadedSettings.TransientRecoveryWaitEnabled,
-			time.Duration(loadedSettings.TransientRecoveryWaitMaxSeconds)*time.Second,
-		)
-		h.providerManager.Update(pool)
-	} else {
-		pool.SetPoolStorePath(poolPath)
-		if loadedSettings.AutoRetryCount > 0 {
-			pool.SetAutoRetryCount(loadedSettings.AutoRetryCount)
-		}
-		pool.SetTransientRecoveryWait(
-			loadedSettings.TransientRecoveryWaitEnabled,
-			time.Duration(loadedSettings.TransientRecoveryWaitMaxSeconds)*time.Second,
-		)
-	}
+	pool := h.ensureOAuthPool(loadedSettings, providerID)
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("OAuth account added to pool: %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
-		s.ProviderType = config.ProviderOAuth
-		s.ProviderID = providerID
-		if _, settingModelID := llm.SplitProviderModelID(s.ModelID); settingModelID == "" {
-			s.ModelID = llm.DefaultProviderModelID(providerID)
-		}
-		_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
-		_ = h.settingsStore.Save(s)
-	}
+	h.persistOAuthProviderSelection(providerID)
 
 	return tokenData, nil
 }
@@ -362,9 +332,10 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 
 	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
 	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
-		endpointPolicy = llm.ResolveEndpointPolicy(s.EndpointPolicy)
-		spid, smodel, _ := llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
+	loadedSettings := h.loadSettingsOrDefault()
+	endpointPolicy = llm.ResolveEndpointPolicy(loadedSettings.EndpointPolicy)
+	if loadedSettings.ProviderID != "" {
+		spid, smodel, _ := llm.ResolveProviderAndModel(loadedSettings.ProviderID, loadedSettings.ModelID, loadedSettings.GeminiModel)
 		if spid == providerID && smodel != "" {
 			model = smodel
 		}
@@ -376,28 +347,12 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	pool := h.providerManager.GetPool()
-	poolPath := h.oauthFlow.PoolPath()
-	if pool == nil {
-		pool = app.NewProviderPool()
-		pool.SetPoolStorePath(poolPath)
-		h.providerManager.Update(pool)
-	} else {
-		pool.SetPoolStorePath(poolPath)
-	}
+	pool := h.ensureOAuthPool(loadedSettings, providerID)
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("Imported pasted token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
-		s.ProviderType = config.ProviderOAuth
-		s.ProviderID = providerID
-		if _, mid := llm.SplitProviderModelID(s.ModelID); mid == "" {
-			s.ModelID = llm.DefaultProviderModelID(providerID)
-		}
-		_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
-		_ = h.settingsStore.Save(s)
-	}
+	h.persistOAuthProviderSelection(providerID)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"email":         tokenData.Email,
@@ -428,9 +383,10 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 
 	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
 	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
-		endpointPolicy = llm.ResolveEndpointPolicy(s.EndpointPolicy)
-		spid, smodel, _ := llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
+	loadedSettings := h.loadSettingsOrDefault()
+	endpointPolicy = llm.ResolveEndpointPolicy(loadedSettings.EndpointPolicy)
+	if loadedSettings.ProviderID != "" {
+		spid, smodel, _ := llm.ResolveProviderAndModel(loadedSettings.ProviderID, loadedSettings.ModelID, loadedSettings.GeminiModel)
 		if spid == providerID && smodel != "" {
 			model = smodel
 		}
@@ -442,28 +398,12 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pool := h.providerManager.GetPool()
-	poolPath := h.oauthFlow.PoolPath()
-	if pool == nil {
-		pool = app.NewProviderPool()
-		pool.SetPoolStorePath(poolPath)
-		h.providerManager.Update(pool)
-	} else {
-		pool.SetPoolStorePath(poolPath)
-	}
+	pool := h.ensureOAuthPool(loadedSettings, providerID)
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("Imported Gemini CLI token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
 
-	if s, loadErr := h.settingsStore.Load(); loadErr == nil {
-		s.ProviderType = config.ProviderOAuth
-		s.ProviderID = providerID
-		if _, mid := llm.SplitProviderModelID(s.ModelID); mid == "" {
-			s.ModelID = llm.DefaultProviderModelID(providerID)
-		}
-		_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
-		_ = h.settingsStore.Save(s)
-	}
+	h.persistOAuthProviderSelection(providerID)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"email":         tokenData.Email,
@@ -524,6 +464,203 @@ func (h *Handlers) OAuthPoolList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pool.Entries())
 }
 
+type OAuthPoolVerifyRequest struct {
+	Email          string `json:"email,omitempty"`
+	ProviderID     string `json:"provider_id,omitempty"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+}
+
+type OAuthPoolVerifyResult struct {
+	Email        string `json:"email"`
+	ProjectID    string `json:"project_id,omitempty"`
+	ProviderID   string `json:"provider_id,omitempty"`
+	TierID       string `json:"tier_id,omitempty"`
+	EndpointUsed string `json:"endpoint_used,omitempty"`
+	Verified     bool   `json:"verified"`
+	LatencyMS    int64  `json:"latency_ms,omitempty"`
+	Preview      string `json:"preview,omitempty"`
+	Error        string `json:"error,omitempty"`
+	CheckedAt    string `json:"checked_at"`
+}
+
+type OAuthPoolVerifyResponse struct {
+	Status        string                  `json:"status"`
+	Model         string                  `json:"model"`
+	Endpoint      string                  `json:"endpoint"`
+	CheckedAt     string                  `json:"checked_at"`
+	Results       []OAuthPoolVerifyResult `json:"results"`
+	VerifiedCount int                     `json:"verified_count"`
+	FailedCount   int                     `json:"failed_count"`
+	PoolSize      int                     `json:"pool_size"`
+}
+
+// OAuthPoolVerify probes OAuth accounts end-to-end:
+// refresh token -> discover project -> send a minimal generation request.
+func (h *Handlers) OAuthPoolVerify(w http.ResponseWriter, r *http.Request) {
+	var req OAuthPoolVerifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	settings := h.loadSettingsOrDefault()
+	settingsProviderID, model, _ := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
+	providerID := settingsProviderID
+	if override := llm.NormalizeGoogleProviderID(req.ProviderID); override != "" {
+		providerID = override
+		if llm.NormalizeGoogleProviderID(settingsProviderID) != override {
+			if _, defaultModel := llm.SplitProviderModelID(llm.DefaultProviderModelID(override)); defaultModel != "" {
+				model = defaultModel
+			}
+		}
+	}
+	providerID = llm.NormalizeGoogleProviderID(providerID)
+	if providerID == "" {
+		providerID = llm.ProviderGoogleAntigravity
+	}
+	if strings.TrimSpace(model) == "" {
+		if _, defaultModel := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID)); defaultModel != "" {
+			model = defaultModel
+		}
+	}
+	endpointPolicy := llm.ResolveEndpointPolicy(settings.EndpointPolicy)
+
+	timeoutSeconds := req.TimeoutSeconds
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 25
+	}
+	if timeoutSeconds > 120 {
+		timeoutSeconds = 120
+	}
+	verifyTimeout := time.Duration(timeoutSeconds) * time.Second
+	targetEmail := strings.TrimSpace(req.Email)
+
+	poolPath := h.oauthFlow.PoolPath()
+	tokens, err := llm.LoadOAuthPool(poolPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load OAuth pool: "+err.Error())
+		return
+	}
+	if len(tokens) == 0 {
+		if token, statusErr := h.oauthFlow.GetStatus(); statusErr == nil && token != nil {
+			tokens = []*llm.OAuthTokenData{token}
+		}
+	}
+	if targetEmail != "" {
+		filtered := make([]*llm.OAuthTokenData, 0, len(tokens))
+		for _, token := range tokens {
+			if token == nil {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(token.Email), targetEmail) {
+				filtered = append(filtered, token)
+			}
+		}
+		tokens = filtered
+	}
+	if len(tokens) == 0 {
+		writeError(w, http.StatusNotFound, "no OAuth account found to verify")
+		return
+	}
+
+	pool := h.ensureOAuthPool(settings, providerID)
+	checkedAt := time.Now().UTC().Format(time.RFC3339)
+	results := make([]OAuthPoolVerifyResult, 0, len(tokens))
+	verifiedCount := 0
+
+	for _, tokenData := range tokens {
+		if tokenData == nil {
+			continue
+		}
+		originalEmail := strings.TrimSpace(tokenData.Email)
+		result := OAuthPoolVerifyResult{
+			Email:        firstNonEmpty(targetEmail, originalEmail),
+			ProviderID:   llm.NormalizeGoogleProviderID(firstNonEmpty(tokenData.ProviderID, providerID)),
+			ProjectID:    strings.TrimSpace(tokenData.ProjectID),
+			TierID:       strings.TrimSpace(tokenData.TierID),
+			EndpointUsed: strings.TrimSpace(tokenData.EndpointUsed),
+			CheckedAt:    checkedAt,
+		}
+
+		verifyCtx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
+		probe, verifyErr := llm.VerifyOAuthAccountWithProvider(
+			verifyCtx,
+			tokenData,
+			result.ProviderID,
+			model,
+			endpointPolicy,
+		)
+		cancel()
+		if verifyErr != nil {
+			result.Verified = false
+			result.Error = verifyErr.Error()
+			emailForPool := firstNonEmpty(strings.TrimSpace(tokenData.Email), originalEmail, result.Email)
+			if emailForPool != "" {
+				result.Email = emailForPool
+				pool.MarkTransientFailure(emailForPool, verifyErr, 45*time.Second)
+			}
+			results = append(results, result)
+			continue
+		}
+
+		if probe != nil {
+			result.Email = firstNonEmpty(probe.Email, tokenData.Email, originalEmail, result.Email)
+			result.ProviderID = llm.NormalizeGoogleProviderID(firstNonEmpty(probe.ProviderID, tokenData.ProviderID, result.ProviderID))
+			result.ProjectID = firstNonEmpty(probe.ProjectID, tokenData.ProjectID, result.ProjectID)
+			result.TierID = firstNonEmpty(probe.TierID, tokenData.TierID, result.TierID)
+			result.EndpointUsed = firstNonEmpty(probe.EndpointUsed, tokenData.EndpointUsed, result.EndpointUsed)
+			result.Preview = strings.TrimSpace(probe.Preview)
+			result.LatencyMS = probe.Latency.Milliseconds()
+		}
+
+		provider, providerErr := llm.NewGeminiOAuthProviderWithProvider(
+			h.ctx,
+			tokenData,
+			result.ProviderID,
+			model,
+			endpointPolicy,
+		)
+		if providerErr != nil {
+			result.Verified = false
+			result.Error = "provider creation: " + providerErr.Error()
+			if result.Email != "" {
+				pool.MarkTransientFailure(result.Email, providerErr, 45*time.Second)
+			}
+			results = append(results, result)
+			continue
+		}
+
+		emailForPool := firstNonEmpty(result.Email, tokenData.Email, originalEmail, targetEmail)
+		if emailForPool != "" {
+			result.Email = emailForPool
+			pool.AddOrReplaceWithUsage(provider, emailForPool, tokenData.UsageStats)
+		}
+		result.Verified = true
+		verifiedCount++
+		results = append(results, result)
+	}
+
+	if poolPath != "" {
+		if err := llm.SaveOAuthPool(poolPath, tokens); err != nil {
+			logAPI.Warnf("OAuth pool verify: persist pool failed: %v", err)
+		}
+	}
+
+	failedCount := len(results) - verifiedCount
+	logAPI.Logf("OAuth pool verify: checked=%d ok=%d fail=%d provider=%s model=%s", len(results), verifiedCount, failedCount, providerID, model)
+
+	writeJSON(w, http.StatusOK, OAuthPoolVerifyResponse{
+		Status:        "ok",
+		Model:         model,
+		Endpoint:      "cloudcode-pa.googleapis.com/*:streamGenerateContent?alt=sse",
+		CheckedAt:     checkedAt,
+		Results:       results,
+		VerifiedCount: verifiedCount,
+		FailedCount:   failedCount,
+		PoolSize:      pool.Size(),
+	})
+}
+
 // OAuthPoolRemove removes an account from the OAuth pool by email.
 func (h *Handlers) OAuthPoolRemove(w http.ResponseWriter, r *http.Request) {
 	email := r.PathValue("email")
@@ -557,4 +694,14 @@ func (h *Handlers) OAuthPoolRemove(w http.ResponseWriter, r *http.Request) {
 		"email":     email,
 		"pool_size": pool.Size(),
 	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

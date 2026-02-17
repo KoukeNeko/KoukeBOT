@@ -1,6 +1,7 @@
 import type {
   OAuthCompleteResult,
   OAuthDetectResult,
+  PoolVerifyResponse,
   OAuthStartResult,
   OAuthStatus,
   PoolEntry,
@@ -72,5 +73,21 @@ export function getOAuthPool(): Promise<PoolEntry[]> {
 export function removeOAuthPoolAccount(email: string): Promise<{ status: string; pool_size: number }> {
   return fetchJSON(`${BASE}/oauth/pool/${encodeURIComponent(email)}`, {
     method: 'DELETE',
+  })
+}
+
+export function verifyOAuthPool(options?: {
+  email?: string
+  providerId?: string
+  timeoutSeconds?: number
+}): Promise<PoolVerifyResponse> {
+  return fetchJSON(`${BASE}/oauth/pool/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: options?.email ?? '',
+      provider_id: options?.providerId ?? '',
+      timeout_seconds: options?.timeoutSeconds ?? 25,
+    }),
   })
 }
