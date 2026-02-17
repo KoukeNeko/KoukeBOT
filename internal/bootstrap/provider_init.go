@@ -19,6 +19,14 @@ func initProvider(
 	paths Paths,
 	logs Loggers,
 ) {
+	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderGoogleGeminiCLI {
+		if initGeminiCLIProvider(pm, model, logs) {
+			return
+		}
+		logs.LLM.Warnf("Google Gemini CLI selected but local gemini binary unavailable — configure at http://localhost:%s/settings", port)
+		return
+	}
+
 	switch resolveBootstrapProviderType(settings, providerID) {
 	case config.ProviderOAuth:
 		if initOAuthProvider(ctx, settings, pm, providerID, model, paths, logs) {
@@ -41,6 +49,17 @@ func initProvider(
 		}
 		logs.LLM.Warnf("no LLM credentials — configure at http://localhost:%s/settings", port)
 	}
+}
+
+func initGeminiCLIProvider(pm *app.ProviderManager, model string, logs Loggers) bool {
+	provider, err := llm.NewGeminiCLIProvider(model)
+	if err != nil {
+		logs.LLM.Warnf("failed to init Gemini CLI provider: %v", err)
+		return false
+	}
+	pm.Update(provider)
+	logs.LLM.Logf("%s (model: %s)", provider.ModelInfo().ProviderName, provider.ModelInfo().Model)
+	return true
 }
 
 func initAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderManager, model string, logs Loggers) bool {
@@ -154,7 +173,9 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 	switch llm.NormalizeGoogleProviderID(providerID) {
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
-	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+	case llm.ProviderGoogleAntigravity:
+		return config.ProviderOAuth
+	case llm.ProviderGoogleGeminiCLI:
 		return config.ProviderOAuth
 	}
 	switch settings.ProviderType {

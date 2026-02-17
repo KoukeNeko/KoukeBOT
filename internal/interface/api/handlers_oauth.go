@@ -61,7 +61,7 @@ func (h *Handlers) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	providerID := llm.NormalizeGoogleProviderID(req.ProviderID)
 	if providerID == "" {
-		providerID = llm.ProviderGoogleGeminiCLI
+		providerID = llm.ProviderGoogleAntigravity
 	}
 
 	// If no credentials provided, try auto-detect.
@@ -124,7 +124,7 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state, expectedProviderID
 
 	providerID := llm.NormalizeGoogleProviderID(tokenData.ProviderID)
 	if providerID == "" {
-		providerID = llm.ProviderGoogleGeminiCLI
+		providerID = llm.ProviderGoogleAntigravity
 	}
 	if expected := llm.NormalizeGoogleProviderID(expectedProviderID); expected != "" && expected != providerID {
 		return nil, fmt.Errorf("OAuth provider mismatch: expected %s, got %s", expected, providerID)
@@ -356,7 +356,7 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 		providerID = llm.NormalizeGoogleProviderID(tokenData.ProviderID)
 	}
 	if providerID == "" {
-		providerID = llm.ProviderGoogleGeminiCLI
+		providerID = llm.ProviderGoogleAntigravity
 	}
 	tokenData.ProviderID = providerID
 
@@ -422,7 +422,7 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 		providerID = llm.NormalizeGoogleProviderID(tokenData.ProviderID)
 	}
 	if providerID == "" {
-		providerID = llm.ProviderGoogleGeminiCLI
+		providerID = llm.ProviderGoogleAntigravity
 	}
 	tokenData.ProviderID = providerID
 

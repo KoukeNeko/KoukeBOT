@@ -181,6 +181,7 @@ func TestSaveAndHotSwapSettingsRejectsProviderRelatedChangeWhenProviderValidatio
 
 	_, err = h.saveAndHotSwapSettings(config.Settings{
 		ProviderType: config.ProviderOAuth,
+		ProviderID:   llm.ProviderGoogleAntigravity,
 		GeminiModel:  "gemini-2.5-pro",
 	})
 	if err == nil {
@@ -438,6 +439,20 @@ func TestShouldRunStrictOAuthProbe(t *testing.T) {
 		settings config.Settings
 		want     bool
 	}{
+		{
+			name: "explicit antigravity provider",
+			settings: config.Settings{
+				ProviderID: llm.ProviderGoogleAntigravity,
+			},
+			want: true,
+		},
+		{
+			name: "explicit gemini cli provider",
+			settings: config.Settings{
+				ProviderID: llm.ProviderGoogleGeminiCLI,
+			},
+			want: false,
+		},
 		{
 			name: "oauth provider",
 			settings: config.Settings{

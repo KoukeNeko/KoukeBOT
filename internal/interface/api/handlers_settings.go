@@ -135,6 +135,7 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 
 func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe bool) (llm.Provider, error) {
 	providerID, model, modelID := llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
+	normalizedProviderID := llm.NormalizeGoogleProviderID(providerID)
 	providerType := resolveProviderTypeForSettings(s, providerID)
 	logAPI.Logf(
 		"build-provider: type=%s provider_id=%s model_id=%s strict_oauth_probe=%v",
@@ -143,6 +144,13 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 		modelID,
 		strictOAuthProbe,
 	)
+
+	// OpenClaw-aligned behavior:
+	// - google-gemini-cli/* runs via local Gemini CLI.
+	// - google-antigravity/* runs via Cloud Code Assist OAuth bridge.
+	if normalizedProviderID == llm.ProviderGoogleGeminiCLI {
+		return h.buildGeminiCLIProvider(model)
+	}
 
 	switch providerType {
 	case config.ProviderOAuth:
@@ -169,6 +177,14 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 		// Auto mode without API key falls back to OAuth credentials.
 		return h.buildOAuthPoolProvider(s, providerID, model, strictOAuthProbe)
 	}
+}
+
+func (h *Handlers) buildGeminiCLIProvider(model string) (llm.Provider, error) {
+	provider, err := llm.NewGeminiCLIProvider(model)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Gemini CLI runtime: %w", err)
+	}
+	return provider, nil
 }
 
 func (h *Handlers) GetProviderStatus(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +257,9 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model string, strictOAuthProbe bool) (llm.Provider, error) {
+	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderGoogleGeminiCLI {
+		return nil, fmt.Errorf("google-gemini-cli uses local CLI runtime, not OAuth pool")
+	}
 	logAPI.Logf("build-provider: switching to OAuth provider=%s", providerID)
 	poolPath := h.oauthFlow.PoolPath()
 	tokens, err := llm.LoadOAuthPool(poolPath)

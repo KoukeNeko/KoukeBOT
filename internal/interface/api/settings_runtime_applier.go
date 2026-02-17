@@ -196,8 +196,10 @@ func hasProviderRelatedSettingsChange(previous, next config.Settings) bool {
 func shouldRunStrictOAuthProbe(settings config.Settings) bool {
 	if strings.TrimSpace(settings.ProviderID) != "" {
 		switch llm.NormalizeGoogleProviderID(settings.ProviderID) {
-		case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+		case llm.ProviderGoogleAntigravity:
 			return true
+		case llm.ProviderGoogleGeminiCLI:
+			return false
 		case llm.ProviderGeminiAPIKey:
 			return false
 		}
