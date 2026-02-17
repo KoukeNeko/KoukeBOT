@@ -2,6 +2,8 @@ package llm
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,6 +37,61 @@ func TestFormatGeminiCLICommandErrorCapacityNormalization(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "HTTP 429") {
 		t.Fatalf("expected normalized 429 error, got: %v", err)
+	}
+}
+
+func TestFormatGeminiCLICommandErrorAuthGuidance(t *testing.T) {
+	raw := []byte("Please set an Auth method in your /home/node/.gemini/settings.json or specify GEMINI_API_KEY")
+	err := formatGeminiCLICommandError("gemini-2.5-pro", errors.New("exit status 41"), raw)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "gemini CLI auth is not configured on server") {
+		t.Fatalf("expected auth guidance error, got: %v", err)
+	}
+}
+
+func TestValidateGeminiCLIAuthConfiguredByEnv(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "")
+	t.Setenv("GOOGLE_GENAI_USE_GCA", "")
+	if err := validateGeminiCLIAuthConfigured(); err != nil {
+		t.Fatalf("expected env auth to pass, got: %v", err)
+	}
+}
+
+func TestValidateGeminiCLIAuthConfiguredBySettingsFile(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "")
+	t.Setenv("GOOGLE_GENAI_USE_GCA", "")
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsDir := filepath.Join(home, ".gemini")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatalf("mkdir settings dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{"auth":"ok"}`), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	if err := validateGeminiCLIAuthConfigured(); err != nil {
+		t.Fatalf("expected settings file auth to pass, got: %v", err)
+	}
+}
+
+func TestValidateGeminiCLIAuthConfiguredMissing(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "")
+	t.Setenv("GOOGLE_GENAI_USE_GCA", "")
+	t.Setenv("HOME", t.TempDir())
+
+	err := validateGeminiCLIAuthConfigured()
+	if err == nil {
+		t.Fatalf("expected missing auth error")
+	}
+	if !strings.Contains(err.Error(), "google-antigravity") {
+		t.Fatalf("expected guidance to google-antigravity, got: %v", err)
 	}
 }
 

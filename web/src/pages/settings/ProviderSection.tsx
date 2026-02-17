@@ -42,9 +42,9 @@ type Props = {
   pastedTokenJSON: string;
   setPastedTokenJSON: (value: string) => void;
   importingPasted: boolean;
-  onImportPastedToken: () => void;
+  onImportPastedToken: (providerID: string) => void;
   importingCLI: boolean;
-  onImportCLIToken: () => void;
+  onImportCLIToken: (providerID: string) => void;
 };
 
 export default function ProviderSection({
@@ -329,10 +329,13 @@ export default function ProviderSection({
                         });
                       }}
                       options={[
-                        { value: "google-gemini-cli", label: "Google Gemini CLI" },
-                        { value: "google-antigravity", label: "Google Antigravity" },
+                        { value: "google-antigravity", label: "Google Antigravity (OAuth Pool / Recommended)" },
+                        { value: "google-gemini-cli", label: "Google Gemini CLI (Local CLI Runtime)" },
                       ]}
                     />
+                    <span className="hint">
+                      Google Gemini CLI 會在伺服器本機執行 `gemini` 指令，不使用帳號池 token。若要使用 OAuth 帳號池，請選 Google Antigravity。
+                    </span>
                   </label>
 
                   <label className="form-field">
@@ -465,7 +468,7 @@ export default function ProviderSection({
                   disabled={importingPasted}
                 />
                 <button
-                  onClick={onImportPastedToken}
+                  onClick={() => onImportPastedToken(selectedOAuthProviderID)}
                   disabled={importingPasted || !pastedTokenJSON.trim()}
                   className="btn-primary"
                 >
@@ -477,7 +480,7 @@ export default function ProviderSection({
 
               <div className="oauth-detect-block">
                 <button
-                  onClick={onImportCLIToken}
+                  onClick={() => onImportCLIToken(selectedOAuthProviderID)}
                   disabled={importingCLI}
                   className="btn-secondary"
                 >

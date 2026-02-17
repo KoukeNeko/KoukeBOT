@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
@@ -17,6 +18,8 @@ const (
 	defaultGeminiCLIBinary = "gemini"
 	geminiCLIOutputFormat  = "stream-json"
 )
+
+const geminiCLIAuthGuidance = "gemini CLI auth is not configured on server (missing ~/.gemini/settings.json and env GEMINI_API_KEY/GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_GENAI_USE_GCA). For OAuth pool accounts, select provider google-antigravity"
 
 // GeminiCLIProvider executes the local Gemini CLI in headless mode.
 // It mirrors OpenClaw's google-gemini-cli direction (local CLI runtime).
@@ -46,6 +49,9 @@ func NewGeminiCLIProvider(model string) (*GeminiCLIProvider, error) {
 	}
 	if _, err := exec.LookPath(binary); err != nil {
 		return nil, fmt.Errorf("gemini CLI binary %q not found in PATH: %w", binary, err)
+	}
+	if err := validateGeminiCLIAuthConfigured(); err != nil {
+		return nil, err
 	}
 
 	normalizedModel := NormalizeGoogleModelAlias(model)
@@ -218,6 +224,12 @@ func formatGeminiCLICommandError(model string, cmdErr error, rawOutput []byte) e
 		strings.Contains(lower, "you have exhausted your capacity") {
 		return fmt.Errorf("gemini cli HTTP 429: No capacity available for model %s on the server", model)
 	}
+	if strings.Contains(lower, "please set an auth method") ||
+		strings.Contains(lower, "gemini_api_key") ||
+		strings.Contains(lower, "google_genai_use_vertexai") ||
+		strings.Contains(lower, "google_genai_use_gca") {
+		return fmt.Errorf(geminiCLIAuthGuidance)
+	}
 
 	if out == "" {
 		return fmt.Errorf("gemini CLI command failed: %w", cmdErr)
@@ -225,6 +237,32 @@ func formatGeminiCLICommandError(model string, cmdErr error, rawOutput []byte) e
 
 	preview := summarizeGeminiCLIOutput(out, 1200)
 	return fmt.Errorf("gemini CLI command failed: %v: %s", cmdErr, preview)
+}
+
+func validateGeminiCLIAuthConfigured() error {
+	if strings.TrimSpace(os.Getenv("GEMINI_API_KEY")) != "" {
+		return nil
+	}
+	if envBoolEnabled("GOOGLE_GENAI_USE_VERTEXAI") || envBoolEnabled("GOOGLE_GENAI_USE_GCA") {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && strings.TrimSpace(home) != "" {
+		if _, statErr := os.Stat(filepath.Join(home, ".gemini", "settings.json")); statErr == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf(geminiCLIAuthGuidance)
+}
+
+func envBoolEnabled(key string) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func summarizeGeminiCLIOutput(raw string, maxLen int) string {

@@ -155,11 +155,11 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     }
   }, [oauthCallbackURL, oauthFlow, refreshOAuthSnapshot, setMessage])
 
-  const handleImportCLIToken = useCallback(async () => {
+  const handleImportCLIToken = useCallback(async (providerID: string) => {
     setImportingCLI(true)
     setMessage(null)
     try {
-      const result = await importGeminiCLIToken()
+      const result = await importGeminiCLIToken(providerID)
       await refreshOAuthSnapshot()
       setMessage({ type: 'ok', text: `已匯入 Gemini CLI Token：${result.email}` })
       setAddAccountOpen(false)
@@ -170,13 +170,13 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     }
   }, [refreshOAuthSnapshot, setMessage])
 
-  const handleImportPastedToken = useCallback(async () => {
+  const handleImportPastedToken = useCallback(async (providerID: string) => {
     if (!pastedTokenJSON.trim()) return
 
     setImportingPasted(true)
     setMessage(null)
     try {
-      const result = await importPastedToken(pastedTokenJSON.trim())
+      const result = await importPastedToken(pastedTokenJSON.trim(), undefined, undefined, providerID)
       await refreshOAuthSnapshot()
       setMessage({ type: 'ok', text: `已匯入 Token：${result.email}` })
       setAddAccountOpen(false)
