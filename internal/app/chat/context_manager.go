@@ -12,6 +12,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
+	"github.com/KoukeNeko/KoukeBOT/internal/util"
 )
 
 var logCtx = logger.New("context", logger.Yellow)
@@ -200,9 +201,10 @@ func (cm *ContextManager) buildDigest(messages []domain.Message, persona *domain
 	var coldScore, irritatedScore, composedScore int
 
 	// Focus on the tail segment of the removed block (most relevant before compaction).
+	const digestTailSegmentSize = 24
 	start := 0
-	if len(messages) > 24 {
-		start = len(messages) - 24
+	if len(messages) > digestTailSegmentSize {
+		start = len(messages) - digestTailSegmentSize
 	}
 	for _, msg := range messages[start:] {
 		text := normalizeText(humanizeConversationTextForDigest(msg.Content))
@@ -553,8 +555,5 @@ func extractPersonaStyleLexicon(persona *domain.PersonaModule) []string {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
+	return util.TruncateWithEllipsis(s, maxLen)
 }

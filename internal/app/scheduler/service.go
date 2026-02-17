@@ -22,6 +22,7 @@ const (
 	retryWindow                = 10 * time.Minute
 	messagePaginationPageLimit = 5
 	messagePaginationPageSize  = 100
+	schedulerErrorMaxLen       = 220
 )
 
 var retryDelays = []time.Duration{

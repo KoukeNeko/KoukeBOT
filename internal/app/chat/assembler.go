@@ -259,26 +259,9 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 		return "", fmt.Errorf("execute system template: %w", err)
 	}
 
-	// Inject UserProfile (if exists)
-	if persona.UserProfile != "" {
-		buf.WriteString("\n\n---\n\n")
-		buf.WriteString("## About Your User\n\n")
-		buf.WriteString(persona.UserProfile)
-	}
-
-	// Inject LongTermMemory (if exists)
-	if persona.LongTermMemory != "" {
-		buf.WriteString("\n\n---\n\n")
-		buf.WriteString("## Your Long-Term Memory\n\n")
-		buf.WriteString(persona.LongTermMemory)
-	}
-
-	// Inject DailyMemory (if exists)
-	if persona.DailyMemory != "" {
-		buf.WriteString("\n\n---\n\n")
-		buf.WriteString("## Today's Memory Log\n\n")
-		buf.WriteString(persona.DailyMemory)
-	}
+	appendSection(&buf, "About Your User", persona.UserProfile)
+	appendSection(&buf, "Your Long-Term Memory", persona.LongTermMemory)
+	appendSection(&buf, "Today's Memory Log", persona.DailyMemory)
 
 	// Append system-level tool usage instructions (non-persona-specific)
 	buf.WriteString("\n\n---\n\n")
@@ -470,8 +453,9 @@ func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budge
 			continue
 		}
 		compact := domain.Message{Role: msg.Role, Content: msg.Content}
-		if len(selected) >= 4 && len(compact.Content) > 4000 {
-			compact.Content = compact.Content[:4000] + "\n...[history truncated for token budget]"
+		const historyMessageTruncateChars = 4000
+		if len(selected) >= 4 && len(compact.Content) > historyMessageTruncateChars {
+			compact.Content = compact.Content[:historyMessageTruncateChars] + "\n...[history truncated for token budget]"
 		}
 
 		cost := estimateTokens(compact.Content)
@@ -704,6 +688,19 @@ func formatAnchorsForTemplate(anchors []domain.Anchor) string {
 
 func normalizeTimezoneValue(timezone string) string {
 	return strings.TrimSpace(timezone)
+}
+
+// appendSection writes a markdown section with a horizontal rule separator.
+// Skips silently if content is empty.
+func appendSection(buf *bytes.Buffer, title, content string) {
+	if content == "" {
+		return
+	}
+	buf.WriteString("\n\n---\n\n")
+	buf.WriteString("## ")
+	buf.WriteString(title)
+	buf.WriteString("\n\n")
+	buf.WriteString(content)
 }
 
 func resolveEffectiveTimezone(globalTimezone string) string {

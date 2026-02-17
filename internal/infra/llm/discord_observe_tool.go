@@ -12,6 +12,7 @@ import (
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	discordruntime "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
+	"github.com/KoukeNeko/KoukeBOT/internal/util"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -673,13 +674,7 @@ func truncateObserveLogField(text string, maxLen int) string {
 	}
 	text = strings.ReplaceAll(text, "\n", " ")
 	text = strings.ReplaceAll(text, "\r", " ")
-	if maxLen <= 0 || len(text) <= maxLen {
-		return text
-	}
-	if maxLen <= 3 {
-		return text[:maxLen]
-	}
-	return text[:maxLen-3] + "..."
+	return util.TruncateWithEllipsis(text, maxLen)
 }
 
 func logObserveCompletion(action string, result domain.ToolResult, execErr error) {

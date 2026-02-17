@@ -91,28 +91,36 @@ func formatToolResultsLegacy(toolCalls []domain.ToolCall, results []domain.ToolR
 	return formatted
 }
 
+const (
+	toolResultDefaultMaxChars       = 6000
+	toolResultWebFetchMaxChars      = 3500
+	toolResultWebFetchBodyMaxChars  = 2200
+	toolResultWebSearchMaxChars     = 3000
+	toolResultDiscordObserveMaxChar = 3000
+	toolResultFileReadMaxChars      = 2500
+)
+
 func compressToolResult(toolName, content string) string {
 	if content == "" {
 		return content
 	}
 
-	maxChars := 6000
+	maxChars := toolResultDefaultMaxChars
 	switch toolName {
 	case "web_fetch":
-		// Keep metadata and a smaller excerpt of content body.
-		maxChars = 3500
+		maxChars = toolResultWebFetchMaxChars
 		if start := strings.Index(content, "--- CONTENT START ---"); start > 0 {
 			header := content[:start]
 			body := content[start:]
-			body = truncateLog(body, 2200)
+			body = truncateLog(body, toolResultWebFetchBodyMaxChars)
 			return header + body + "\n\n[tool output truncated for token efficiency]"
 		}
 	case "web_search":
-		maxChars = 3000
+		maxChars = toolResultWebSearchMaxChars
 	case "discord_observe":
-		maxChars = 3000
+		maxChars = toolResultDiscordObserveMaxChar
 	case "file_read":
-		maxChars = 2500
+		maxChars = toolResultFileReadMaxChars
 	}
 
 	if len(content) <= maxChars {

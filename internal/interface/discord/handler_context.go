@@ -91,11 +91,6 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 
 // buildChannelHistoryEntries builds structured channel history entries with image association.
 func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, personaID, currentMessageID string, cutoff *time.Time) []domain.ChannelHistoryEntry {
-	const (
-		maxHistoryImageScan = 10
-		maxHistoryImages    = 5
-		historyCharBudget   = 4500
-	)
 
 	messages, err := s.ChannelMessages(channelID, defaultGroupHistoryLimit, currentMessageID, "", "")
 	if err != nil {

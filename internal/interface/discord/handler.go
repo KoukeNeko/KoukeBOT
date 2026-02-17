@@ -20,6 +20,9 @@ const (
 	llmTimeout               = 300 * time.Second
 	defaultGroupHistoryLimit = 24
 	defaultHistoryTarget     = 12
+	maxHistoryImageScan      = 10
+	maxHistoryImages         = 5
+	historyCharBudget        = 4500
 )
 
 // Handler bridges Discord events to the ChatService.

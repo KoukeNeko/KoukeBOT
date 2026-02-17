@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
+	"github.com/KoukeNeko/KoukeBOT/internal/util"
 )
 
 func (s *Service) sendPersonaNotification(ctx context.Context, task *domain.ScheduledTask, prompt string) error {
@@ -75,15 +76,5 @@ func safeReminderText(text string) string {
 }
 
 func truncateSchedulerError(text string, maxLen int) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	if maxLen <= 0 || len(text) <= maxLen {
-		return text
-	}
-	if maxLen <= 3 {
-		return text[:maxLen]
-	}
-	return text[:maxLen-3] + "..."
+	return util.TruncateWithEllipsis(strings.TrimSpace(text), maxLen)
 }

@@ -9,12 +9,20 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 )
 
+// saveTaskOrWarn persists task state, logging a warning on failure instead of
+// silently discarding the error. Scheduler tick must not abort on save failure.
+func (s *Service) saveTaskOrWarn(ctx context.Context, task *domain.ScheduledTask) {
+	if err := s.repo.Save(ctx, task); err != nil {
+		logScheduler.Warnf("save task %s failed: %v", task.ID, err)
+	}
+}
+
 func (s *Service) handleReminderTask(ctx context.Context, task *domain.ScheduledTask, now time.Time) {
 	if task.RunAt == nil {
 		task.Status = domain.ScheduledTaskStatusFailed
 		task.RetryState.LastError = "run_at is missing"
 		task.NextRunAt = nil
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 	if task.NextRunAt == nil {
@@ -32,13 +40,13 @@ func (s *Service) handleReminderTask(ctx context.Context, task *domain.Scheduled
 		task.NextRunAt = nil
 		task.RetryState = domain.ScheduledTaskRetryState{}
 		task.UpdatedAt = now
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 
 	if s.scheduleRetry(task, now, notifyErr) {
 		task.UpdatedAt = now
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 
@@ -46,17 +54,17 @@ func (s *Service) handleReminderTask(ctx context.Context, task *domain.Scheduled
 	fallbackErr := s.sendFallbackNotification(ctx, task, fallback)
 	if fallbackErr != nil {
 		task.Status = domain.ScheduledTaskStatusFailed
-		task.RetryState.LastError = truncateSchedulerError(fallbackErr.Error(), 220)
+		task.RetryState.LastError = truncateSchedulerError(fallbackErr.Error(), schedulerErrorMaxLen)
 		task.NextRunAt = nil
 		task.UpdatedAt = now
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 	task.Status = domain.ScheduledTaskStatusCompleted
 	task.RetryState = domain.ScheduledTaskRetryState{}
 	task.NextRunAt = nil
 	task.UpdatedAt = now
-	_ = s.repo.Save(ctx, task)
+	s.saveTaskOrWarn(ctx, task)
 }
 
 func (s *Service) handleMonitorTask(ctx context.Context, task *domain.ScheduledTask, now time.Time) {
@@ -64,7 +72,7 @@ func (s *Service) handleMonitorTask(ctx context.Context, task *domain.ScheduledT
 		task.Status = domain.ScheduledTaskStatusFailed
 		task.RetryState.LastError = "end_at is missing"
 		task.NextRunAt = nil
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 	if !now.Before(task.EndAt.UTC()) {
@@ -73,7 +81,7 @@ func (s *Service) handleMonitorTask(ctx context.Context, task *domain.ScheduledT
 		task.PendingAlert = nil
 		task.RetryState = domain.ScheduledTaskRetryState{}
 		task.UpdatedAt = now
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 
@@ -95,9 +103,9 @@ func (s *Service) handleMonitorTask(ctx context.Context, task *domain.ScheduledT
 	lastChecked := now.UTC()
 	task.LastCheckedAt = &lastChecked
 	if err != nil {
-		task.RetryState.LastError = truncateSchedulerError(err.Error(), 220)
+		task.RetryState.LastError = truncateSchedulerError(err.Error(), schedulerErrorMaxLen)
 		task.UpdatedAt = now
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 
@@ -124,14 +132,14 @@ func (s *Service) handleMonitorTask(ctx context.Context, task *domain.ScheduledT
 					task.RetryState = domain.ScheduledTaskRetryState{}
 				} else {
 					task.PendingAlert = nil
-					task.RetryState = domain.ScheduledTaskRetryState{LastError: truncateSchedulerError(fallbackErr.Error(), 220)}
+					task.RetryState = domain.ScheduledTaskRetryState{LastError: truncateSchedulerError(fallbackErr.Error(), schedulerErrorMaxLen)}
 				}
 			}
 		}
 	}
 
 	task.UpdatedAt = now
-	_ = s.repo.Save(ctx, task)
+	s.saveTaskOrWarn(ctx, task)
 }
 
 func (s *Service) retryMonitorAlert(ctx context.Context, task *domain.ScheduledTask, now time.Time) {
@@ -145,12 +153,12 @@ func (s *Service) retryMonitorAlert(ctx context.Context, task *domain.ScheduledT
 		task.PendingAlert = nil
 		task.RetryState = domain.ScheduledTaskRetryState{}
 		task.UpdatedAt = now
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 	if s.scheduleRetry(task, now, notifyErr) {
 		task.UpdatedAt = now
-		_ = s.repo.Save(ctx, task)
+		s.saveTaskOrWarn(ctx, task)
 		return
 	}
 	fallback := fmt.Sprintf("偵測到監控期間有 %d 則活動訊息。", task.PendingAlert.ViolationCount)
@@ -159,10 +167,10 @@ func (s *Service) retryMonitorAlert(ctx context.Context, task *domain.ScheduledT
 		task.RetryState = domain.ScheduledTaskRetryState{}
 	} else {
 		task.PendingAlert = nil
-		task.RetryState = domain.ScheduledTaskRetryState{LastError: truncateSchedulerError(fallbackErr.Error(), 220)}
+		task.RetryState = domain.ScheduledTaskRetryState{LastError: truncateSchedulerError(fallbackErr.Error(), schedulerErrorMaxLen)}
 	}
 	task.UpdatedAt = now
-	_ = s.repo.Save(ctx, task)
+	s.saveTaskOrWarn(ctx, task)
 }
 
 func (s *Service) countViolations(ctx context.Context, task *domain.ScheduledTask, now time.Time) (int, error) {
@@ -220,13 +228,13 @@ func (s *Service) scheduleRetry(task *domain.ScheduledTask, now time.Time, err e
 	}
 	if task.RetryState.Attempts >= len(retryDelays) {
 		task.RetryState.NextRetryAt = nil
-		task.RetryState.LastError = truncateSchedulerError(err.Error(), 220)
+		task.RetryState.LastError = truncateSchedulerError(err.Error(), schedulerErrorMaxLen)
 		return false
 	}
 
 	delay := retryDelays[task.RetryState.Attempts]
 	task.RetryState.Attempts++
-	task.RetryState.LastError = truncateSchedulerError(err.Error(), 220)
+	task.RetryState.LastError = truncateSchedulerError(err.Error(), schedulerErrorMaxLen)
 	next := normalizedNow.Add(delay).UTC()
 	task.RetryState.NextRetryAt = &next
 	if task.Type == domain.ScheduledTaskTypeReminder {

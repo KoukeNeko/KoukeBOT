@@ -33,8 +33,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	conv.AppendUserMessage(contextForLLM)
 
 	modelInfo := s.provider.ModelInfo()
-	fmt.Printf("[ChatService] Assembling context - Provider: %s, SupportsThinking: %v\n",
-		modelInfo.ProviderName, modelInfo.SupportsThinking)
+	logChat.Logf("assembling context: provider=%s supports_thinking=%v", modelInfo.ProviderName, modelInfo.SupportsThinking)
 
 	assembled, err := s.assembler.Assemble(persona, conv, modelInfo)
 	if err != nil {
@@ -44,8 +43,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	rawInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
 	rawInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 
-	fmt.Printf("[ChatService] Calling LLM - System prompt length: %d, Messages: %d\n",
-		len(assembled.SystemPrompt), len(assembled.Messages))
+	logChat.Logf("calling LLM: system_prompt_len=%d messages=%d", len(assembled.SystemPrompt), len(assembled.Messages))
 
 	resp, err := s.provider.Chat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
@@ -57,7 +55,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 		return "", fmt.Errorf("llm chat: %w", err)
 	}
 
-	fmt.Printf("[ChatService] LLM response received - Length: %d chars\n", len(resp.Content))
+	logChat.Logf("LLM response received: chars=%d", len(resp.Content))
 
 	view := s.prepareAssistantOutputForStorage(resp.Content)
 	if len(conv.Messages) > 0 {
