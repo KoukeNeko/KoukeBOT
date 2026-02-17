@@ -28,6 +28,19 @@ func TestShouldIncludeDiscordTimestamp(t *testing.T) {
 	}
 }
 
+func TestHistoryRecentOffset(t *testing.T) {
+	total := 24
+	if got := historyRecentOffset(total, total-1); got != 0 {
+		t.Fatalf("newest message offset = %d, want 0", got)
+	}
+	if got := historyRecentOffset(total, total-2); got != 1 {
+		t.Fatalf("second newest message offset = %d, want 1", got)
+	}
+	if got := historyRecentOffset(total, 0); got != total-1 {
+		t.Fatalf("oldest message offset = %d, want %d", got, total-1)
+	}
+}
+
 func TestBuildReplyReferenceEntryRespectsCutoff(t *testing.T) {
 	h := &Handler{}
 	cutoff := time.Date(2026, time.February, 14, 10, 0, 0, 0, time.UTC)

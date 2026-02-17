@@ -119,8 +119,9 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 			continue
 		}
 
+		recentOffset := historyRecentOffset(len(messages), i)
 		var entryImages []domain.ImageInput
-		if i < maxHistoryImageScan && imageCount < maxHistoryImages {
+		if recentOffset < maxHistoryImageScan && imageCount < maxHistoryImages {
 			for _, att := range msg.Attachments {
 				if imageCount >= maxHistoryImages {
 					break
@@ -192,6 +193,10 @@ func shouldIncludeDiscordTimestamp(ts time.Time, cutoff *time.Time) bool {
 		return true
 	}
 	return ts.After(*cutoff)
+}
+
+func historyRecentOffset(totalMessages, messageIndex int) int {
+	return totalMessages - 1 - messageIndex
 }
 
 // buildContextForLLM rebuilds flat context string from structured history entries.

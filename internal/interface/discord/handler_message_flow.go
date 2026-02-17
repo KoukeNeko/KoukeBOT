@@ -91,9 +91,10 @@ func (h *Handler) buildInboundContext(
 	}
 	messageToStore = content
 
-	if !isDM(m) {
-		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, personaID, m.ID, historyCutoff)
-	}
+	// Even in DM channels, users may send image and text as separate Discord events.
+	// We still need recent channel history so the follow-up tagged message can retain
+	// the image context from immediately preceding messages.
+	historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, personaID, m.ID, historyCutoff)
 	if replyEntry := h.buildReplyReferenceEntry(s, m, personaID, historyCutoff); replyEntry != nil {
 		historyEntries = append(historyEntries, *replyEntry)
 	}
