@@ -96,6 +96,12 @@ export function useSettingsData() {
     }
   }, [])
 
+  const selectedProviderID = useMemo(() => {
+    if (form.provider_id) return form.provider_id
+    if (form.provider_type === 'api-key') return 'gemini-api-key'
+    return 'google-gemini-cli'
+  }, [form.provider_id, form.provider_type])
+
   useEffect(() => {
     Promise.all([
       getSettings(),
@@ -128,6 +134,21 @@ export function useSettingsData() {
   }, [])
 
   useEffect(() => {
+    if (loading) return
+    let cancelled = false
+    listModels(selectedProviderID)
+      .then((modelList) => {
+        if (!cancelled) setModels(modelList)
+      })
+      .catch(() => {
+        // Ignore model refresh failures while editing provider selection.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [loading, selectedProviderID])
+
+  useEffect(() => {
     const id = window.setInterval(() => {
       void refreshRuntimeMetrics()
     }, 10_000)
@@ -149,11 +170,11 @@ export function useSettingsData() {
       }
 
       const result = await updateSettings(payload)
-      const [nextStatus, updated, modelList] = await Promise.all([
+      const [nextStatus, updated] = await Promise.all([
         getProviderStatus(),
         getSettings(),
-        listModels(),
       ])
+      const modelList = await listModels(updated.provider_id || updated.provider_type)
       setStatus(nextStatus)
       setForm(updated)
       setModels(modelList)
@@ -170,16 +191,21 @@ export function useSettingsData() {
     }
   }, [form])
 
-  const modelOptions = useMemo(
-    () =>
-      models.length > 0
-        ? models.map((model) => ({
-            value: model.id,
-            label: `${model.display_name}${model.reasoning ? ' · Reasoning' : ''}${model.supports_multimodal ? ' · MM' : ''}${model.supports_tools ? ' · Tools' : ''}`,
-          }))
-        : [{ value: form.model_id || form.gemini_model || 'google-gemini-cli/gemini-3-pro-preview', label: form.model_id || form.gemini_model || 'google-gemini-cli/gemini-3-pro-preview' }],
-    [form.gemini_model, form.model_id, models],
-  )
+  const modelOptions = useMemo(() => {
+    const scoped = models.filter((model) => {
+      const modelProviderID = (model.provider_id || '').trim()
+      if (!modelProviderID) return true
+      return modelProviderID === selectedProviderID
+    })
+    if (scoped.length > 0) {
+      return scoped.map((model) => ({
+        value: model.id,
+        label: `${model.display_name}${model.reasoning ? ' · Reasoning' : ''}${model.supports_multimodal ? ' · MM' : ''}${model.supports_tools ? ' · Tools' : ''}`,
+      }))
+    }
+    const fallback = form.model_id || form.gemini_model || 'google-gemini-cli/gemini-3-pro-preview'
+    return [{ value: fallback, label: fallback }]
+  }, [form.gemini_model, form.model_id, models, selectedProviderID])
 
   const personaOptions = useMemo(
     () => personas.map((persona) => ({ value: persona.id, label: `${persona.name} (${persona.id})` })),

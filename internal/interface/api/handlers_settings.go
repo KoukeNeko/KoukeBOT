@@ -243,7 +243,10 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		oauthToken = data
 	}
 
-	providerID := settings.ProviderID
+	providerID := strings.TrimSpace(r.URL.Query().Get("provider_id"))
+	if providerID == "" {
+		providerID = settings.ProviderID
+	}
 	if providerID == "" {
 		providerID = settings.ProviderType
 	}

@@ -85,6 +85,47 @@ func TestListModelsPrefersOAuthModeOverAPIKey(t *testing.T) {
 	}
 }
 
+func TestListModelsRespectsProviderIDQueryOverride(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := config.NewSettingsStore(filepath.Join(dir, "settings.json"))
+	if err := settingsStore.Save(config.Settings{
+		ProviderType: config.ProviderOAuth,
+		ProviderID:   llm.ProviderGoogleGeminiCLI,
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	h := &Handlers{
+		settingsStore: settingsStore,
+		oauthFlow: llm.NewGeminiOAuthFlow(
+			filepath.Join(dir, "oauth.json"),
+			filepath.Join(dir, "pool.json"),
+			"http://127.0.0.1:8080/api/oauth/gemini/callback",
+		),
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/models?provider_id=google-antigravity", nil)
+	h.ListModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var models []llm.ModelEntry
+	if err := json.Unmarshal(rec.Body.Bytes(), &models); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(models) == 0 {
+		t.Fatalf("expected non-empty model list")
+	}
+	for _, model := range models {
+		if !strings.HasPrefix(model.ID, llm.ProviderGoogleAntigravity+"/") {
+			t.Fatalf("model id = %q, want %q prefix", model.ID, llm.ProviderGoogleAntigravity+"/")
+		}
+	}
+}
+
 type statusStubProvider struct {
 	info llm.ModelCapabilities
 }

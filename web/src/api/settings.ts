@@ -21,6 +21,7 @@ export function getRuntimeMetrics(): Promise<RuntimeMetrics> {
   return fetchJSON(`${BASE}/metrics/runtime`)
 }
 
-export function listModels(): Promise<ModelEntry[]> {
-  return fetchJSON(`${BASE}/models`)
+export function listModels(providerId?: string): Promise<ModelEntry[]> {
+  const suffix = providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ''
+  return fetchJSON(`${BASE}/models${suffix}`)
 }
