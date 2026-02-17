@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import Select from "../../components/ui/Select";
 import type { SettingsData, OAuthStatus, PoolEntry, OAuthStartResult } from "../../types";
 
@@ -80,6 +80,7 @@ export default function ProviderSection({
   onImportCLIToken,
 }: Props) {
   const isModalBusy = oauthStarting || oauthCompleting;
+  const [errorDetailEmail, setErrorDetailEmail] = useState<string | null>(null);
 
   return (
     <>
@@ -245,7 +246,18 @@ export default function ProviderSection({
                                   {entry.last_error && (
                                     <div className="pool-quota-row">
                                       <span className="pool-quota-label">最後錯誤:</span>
-                                      <span className="pool-quota-time">{entry.last_error.slice(0, 64)}</span>
+                                      <span className="pool-quota-time">
+                                        {entry.last_error.slice(0, 64)}
+                                        {entry.last_error.length > 64 && "…"}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        className="btn-error-detail"
+                                        onClick={() => setErrorDetailEmail(entry.email)}
+                                        title="檢視完整錯誤"
+                                      >
+                                        詳細
+                                      </button>
                                     </div>
                                   )}
                                 </>
@@ -439,6 +451,38 @@ export default function ProviderSection({
           </div>
         </div>
       )}
+
+      {errorDetailEmail && (() => {
+        const entry = pool.find((e) => e.email === errorDetailEmail);
+        if (!entry?.last_error) return null;
+        return (
+          <div className="modal-overlay" onClick={() => setErrorDetailEmail(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3 className="modal-title">錯誤詳情 — {entry.email}</h3>
+                <button className="modal-close" onClick={() => setErrorDetailEmail(null)}>
+                  &times;
+                </button>
+              </div>
+              <div className="modal-body">
+                <pre style={{
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                  fontSize: "0.85rem",
+                  fontFamily: "monospace",
+                  background: "rgba(0,0,0,0.3)",
+                  padding: "1rem",
+                  borderRadius: "6px",
+                  maxHeight: "60vh",
+                  overflow: "auto",
+                }}>
+                  {entry.last_error}
+                </pre>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }
