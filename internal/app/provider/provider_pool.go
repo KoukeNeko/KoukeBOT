@@ -64,10 +64,24 @@ type ProviderPool struct {
 	transientRecoveryWaitEnabled bool
 	transientRecoveryWaitMax     time.Duration
 
+	// Global cooldown: blocks ALL accounts when model server has no capacity.
+	globalCooldownUntil time.Time
+
+	// Circuit breaker: trips open after repeated model capacity failures.
+	circuitBreaker *circuitBreaker
+
+	// Fallback model: tried when primary model has no capacity.
+	fallbackModel string
+
+	// Request queue: buffers requests when all accounts are in cooldown.
+	queue        *requestQueue
+	queueEnabled bool
+
 	metricTransientWaitRetry          uint64
 	metricTransientWaitRetrySucceeded uint64
 	metricTransientWaitRetryFailed    uint64
 	metricAllAccountsExhausted        uint64
+	metricModelCapacityGlobalCooldown uint64
 }
 
 // NewProviderPool creates an empty provider pool.
@@ -107,11 +121,53 @@ func (pp *ProviderPool) SetTransientRecoveryWait(enabled bool, maxWait time.Dura
 	pp.transientRecoveryWaitMax = maxWait
 }
 
+// SetFallbackModel configures a fallback model to try when the primary model
+// has no capacity. Empty string disables fallback.
+func (pp *ProviderPool) SetFallbackModel(model string) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	pp.fallbackModel = strings.TrimSpace(model)
+}
+
+// SetQueueConfig enables or disables the request queue that buffers incoming
+// requests when all accounts are in cooldown.
+func (pp *ProviderPool) SetQueueConfig(enabled bool, capacity int, timeout time.Duration) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	pp.queueEnabled = enabled
+	if enabled {
+		pp.queue = newRequestQueue(capacity, timeout)
+	} else {
+		pp.queue = nil
+	}
+}
+
+// QueueDepth returns the number of requests currently waiting in the queue.
+func (pp *ProviderPool) QueueDepth() int {
+	pp.mu.RLock()
+	q := pp.queue
+	pp.mu.RUnlock()
+	if q == nil {
+		return 0
+	}
+	return q.depth()
+}
+
+// SetCircuitBreaker enables a circuit breaker that trips open after the given
+// number of consecutive model-capacity failures across all accounts, preventing
+// wasteful retries for the specified duration.
+func (pp *ProviderPool) SetCircuitBreaker(failureThreshold int, openDuration time.Duration) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	pp.circuitBreaker = newCircuitBreaker(failureThreshold, openDuration)
+}
+
 type ProviderPoolMetrics struct {
 	TransientWaitRetry          uint64 `json:"transient_wait_retry"`
 	TransientWaitRetrySucceeded uint64 `json:"transient_wait_retry_succeeded"`
 	TransientWaitRetryFailed    uint64 `json:"transient_wait_retry_failed"`
 	AllAccountsExhausted        uint64 `json:"all_accounts_exhausted"`
+	ModelCapacityGlobalCooldown uint64 `json:"model_capacity_global_cooldown"`
 }
 
 func (pp *ProviderPool) MetricsSnapshot() ProviderPoolMetrics {
@@ -123,5 +179,6 @@ func (pp *ProviderPool) MetricsSnapshot() ProviderPoolMetrics {
 		TransientWaitRetrySucceeded: atomic.LoadUint64(&pp.metricTransientWaitRetrySucceeded),
 		TransientWaitRetryFailed:    atomic.LoadUint64(&pp.metricTransientWaitRetryFailed),
 		AllAccountsExhausted:        atomic.LoadUint64(&pp.metricAllAccountsExhausted),
+		ModelCapacityGlobalCooldown: atomic.LoadUint64(&pp.metricModelCapacityGlobalCooldown),
 	}
 }

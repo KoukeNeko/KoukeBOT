@@ -13,6 +13,9 @@ const (
 	ErrorKindAuth
 	ErrorKindNetwork
 	ErrorKindRateLimit
+	ErrorKindModelCapacity
+	ErrorKindCircuitOpen
+	ErrorKindQueueFull
 )
 
 type ParsedError struct {
@@ -28,6 +31,22 @@ func ParseLLMError(err error) ParsedError {
 	errMsg := err.Error()
 	lower := strings.ToLower(errMsg)
 	out := ParsedError{RawMessage: errMsg, Kind: ErrorKindUnknown}
+
+	// Model capacity must be checked before generic quota (both contain "429").
+	if strings.Contains(lower, "no capacity available") ||
+		strings.Contains(lower, "model_capacity") ||
+		strings.Contains(lower, "model capacity") {
+		out.Kind = ErrorKindModelCapacity
+		return out
+	}
+	if strings.Contains(lower, "circuit breaker open") {
+		out.Kind = ErrorKindCircuitOpen
+		return out
+	}
+	if strings.Contains(lower, "request queue full") {
+		out.Kind = ErrorKindQueueFull
+		return out
+	}
 
 	if strings.Contains(lower, "429") ||
 		strings.Contains(lower, "quota_exhausted") ||

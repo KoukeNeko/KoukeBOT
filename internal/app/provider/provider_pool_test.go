@@ -40,6 +40,16 @@ func (p *stubProvider) RegisterTools(tools []domain.Tool) {
 	p.tools = append([]domain.Tool(nil), tools...)
 }
 
+// switchableErrProvider fails on the primary model but yields a switchable fallback.
+type switchableErrProvider struct {
+	errProvider
+	fallbackID string
+}
+
+func (p *switchableErrProvider) WithModel(model string) llm.Provider {
+	return &stubProvider{id: p.fallbackID}
+}
+
 type errProvider struct {
 	err   error
 	calls int
@@ -93,9 +103,9 @@ func TestParseResetDelay(t *testing.T) {
 			expected: 2 * time.Hour,
 		},
 		{
-			name:     "No capacity available (transient overload)",
+			name:     "No capacity available now handled by modelCapacityCooldown",
 			errMsg:   `No capacity available for model gemini-3-pro-preview on the server`,
-			expected: 30 * time.Second,
+			expected: 2 * time.Minute, // No longer special-cased in parseResetDelay
 		},
 		{
 			name:     "Unparseable error (fallback)",
@@ -149,6 +159,21 @@ func TestClassifyError(t *testing.T) {
 		msg  string
 		want errorType
 	}{
+		{
+			name: "model capacity: No capacity available",
+			msg:  "code assist HTTP 429: No capacity available for model gemini-3-pro-preview on the server",
+			want: errorModelCapacity,
+		},
+		{
+			name: "model capacity: MODEL_CAPACITY reason",
+			msg:  `429 RESOURCE_EXHAUSTED MODEL_CAPACITY: no available instances`,
+			want: errorModelCapacity,
+		},
+		{
+			name: "model capacity: model capacity lowercase",
+			msg:  "model capacity exhausted on server",
+			want: errorModelCapacity,
+		},
 		{
 			name: "quota by status code",
 			msg:  "http 429 rate limit exceeded",
@@ -373,6 +398,236 @@ func TestProviderPoolQuotaErrorFailsOverToNextAccount(t *testing.T) {
 		if entry.Email == "first@example.com" && entry.Status != "exhausted" {
 			t.Fatalf("first account status = %s, want exhausted", entry.Status)
 		}
+	}
+}
+
+func TestProviderPoolModelCapacityAppliesGlobalCooldown(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	first := &errProvider{err: errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")}
+	second := &stubProvider{id: "ok"}
+	pool.AddOrReplace(first, "first@example.com")
+	pool.AddOrReplace(second, "second@example.com")
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected model capacity error, got nil")
+	}
+	if !strings.Contains(err.Error(), "No capacity available") {
+		t.Fatalf("expected model capacity error, got: %v", err)
+	}
+
+	// First should be called exactly once; second should NOT be called.
+	if first.calls != 1 {
+		t.Fatalf("first provider calls = %d, want 1", first.calls)
+	}
+
+	// Both accounts should be exhausted due to global cooldown.
+	entries := pool.Entries()
+	for _, e := range entries {
+		if e.Status != "exhausted" {
+			t.Fatalf("account %s status = %s, want exhausted", e.Email, e.Status)
+		}
+	}
+
+	metrics := pool.MetricsSnapshot()
+	if metrics.ModelCapacityGlobalCooldown == 0 {
+		t.Fatal("expected model capacity global cooldown metric to increment")
+	}
+}
+
+func TestProviderPoolFallbackModelSucceeds(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModel("gemini-2.0-flash")
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	pool.AddOrReplace(&switchableErrProvider{
+		errProvider: errProvider{err: capErr},
+		fallbackID:  "fallback-ok",
+	}, "a@example.com")
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected fallback success, got error: %v", err)
+	}
+	if resp == nil || resp.Content != "fallback-ok" {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+}
+
+func TestProviderPoolFallbackModelDisabledReturnsError(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	// No fallback model set.
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	pool.AddOrReplace(&errProvider{err: capErr}, "a@example.com")
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error when fallback is not configured")
+	}
+	if !strings.Contains(err.Error(), "No capacity available") {
+		t.Fatalf("expected model capacity error, got: %v", err)
+	}
+}
+
+func TestRequestQueueEnqueueAndDrain(t *testing.T) {
+	q := newRequestQueue(2, 2*time.Second)
+
+	// Enqueue a request, then signal it.
+	done := make(chan error, 1)
+	go func() {
+		_, err := q.enqueue(context.Background())
+		done <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond) // Let goroutine settle.
+	if q.depth() != 1 {
+		t.Fatalf("queue depth = %d, want 1", q.depth())
+	}
+
+	q.notifyAll()
+	if err := <-done; err != nil {
+		t.Fatalf("expected nil after notify, got: %v", err)
+	}
+}
+
+func TestRequestQueueFull(t *testing.T) {
+	q := newRequestQueue(1, 2*time.Second)
+
+	// Fill the queue.
+	go func() {
+		q.enqueue(context.Background()) //nolint:errcheck
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	// Second enqueue should fail immediately.
+	_, err := q.enqueue(context.Background())
+	if !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("expected ErrQueueFull, got: %v", err)
+	}
+}
+
+func TestRequestQueueTimeout(t *testing.T) {
+	q := newRequestQueue(5, 50*time.Millisecond)
+
+	_, err := q.enqueue(context.Background())
+	if !errors.Is(err, ErrQueueTimeout) {
+		t.Fatalf("expected ErrQueueTimeout, got: %v", err)
+	}
+}
+
+func TestRequestQueueContextCancellation(t *testing.T) {
+	q := newRequestQueue(5, 5*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := q.enqueue(ctx)
+		done <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestCircuitBreakerStateMachine(t *testing.T) {
+	cb := newCircuitBreaker(3, 50*time.Millisecond)
+
+	// Closed: allows requests.
+	if !cb.allowRequest() {
+		t.Fatal("closed circuit should allow requests")
+	}
+
+	// Record failures below threshold.
+	cb.recordFailure()
+	cb.recordFailure()
+	if !cb.allowRequest() {
+		t.Fatal("should still allow with 2 failures (threshold=3)")
+	}
+
+	// Third failure trips the circuit open.
+	cb.recordFailure()
+	if cb.allowRequest() {
+		t.Fatal("open circuit should reject requests")
+	}
+
+	// Wait for open duration to expire → half-open allows one probe.
+	time.Sleep(60 * time.Millisecond)
+	if !cb.allowRequest() {
+		t.Fatal("half-open should allow one probe after open duration")
+	}
+
+	// While half-open, concurrent requests are rejected.
+	if cb.allowRequest() {
+		t.Fatal("half-open should reject second concurrent request")
+	}
+
+	// Probe success → closes circuit.
+	cb.recordSuccess()
+	if !cb.allowRequest() {
+		t.Fatal("circuit should be closed after success")
+	}
+}
+
+func TestCircuitBreakerReOpensOnProbeFailure(t *testing.T) {
+	cb := newCircuitBreaker(1, 50*time.Millisecond)
+
+	cb.recordFailure() // Opens immediately (threshold=1).
+	if cb.allowRequest() {
+		t.Fatal("should be open")
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	if !cb.allowRequest() {
+		t.Fatal("half-open should allow probe")
+	}
+
+	// Probe fails → back to open.
+	cb.recordFailure()
+	if cb.allowRequest() {
+		t.Fatal("should be open again after probe failure")
+	}
+}
+
+func TestProviderPoolCircuitBreakerRejectsWhenOpen(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetCircuitBreaker(1, 5*time.Second)
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	pool.AddOrReplace(&errProvider{err: capErr}, "a@example.com")
+
+	// First call: triggers model capacity → circuit records failure → opens.
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// Second call: circuit breaker should reject immediately.
+	_, err = pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected ErrCircuitOpen, got: %v", err)
 	}
 }
 

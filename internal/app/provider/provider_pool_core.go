@@ -216,6 +216,11 @@ func (pp *ProviderPool) RegisterTools(tools []domain.Tool) {
 func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
 	var zero T
 
+	// Circuit breaker: immediately reject if open.
+	if pp.circuitBreaker != nil && !pp.circuitBreaker.allowRequest() {
+		return zero, ErrCircuitOpen
+	}
+
 	pp.mu.RLock()
 	total := len(pp.entries)
 	pp.mu.RUnlock()
@@ -224,6 +229,8 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 	}
 
 	waitRetryUsed := false
+	modelCapacityHit := false
+	var lastErr error
 
 	for tried := 0; tried < total; tried++ {
 		if ctx != nil {
@@ -244,6 +251,9 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 
 		result, err, errType := executeWithRetry(pp, selection.provider, selection.email, fn)
 		if err == nil {
+			if pp.circuitBreaker != nil {
+				pp.circuitBreaker.recordSuccess()
+			}
 			if waitRetryUsed {
 				atomic.AddUint64(&pp.metricTransientWaitRetrySucceeded, 1)
 				logPool.Logf("metric pool.transient_wait_retry_succeeded=1")
@@ -262,6 +272,13 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		case errorQuota:
 			pp.handleQuotaError(selection.email, err)
 			continue
+		case errorModelCapacity:
+			pp.handleModelCapacityError(selection.email, err)
+			if pp.circuitBreaker != nil {
+				pp.circuitBreaker.recordFailure()
+			}
+			modelCapacityHit = true
+			lastErr = err
 		case errorTransient:
 			pp.handleTransientError(selection.email, err)
 			continue
@@ -279,7 +296,112 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			}
 			return result, err
 		}
+
+		// Model capacity: all accounts share the same issue, stop trying.
+		if modelCapacityHit {
+			break
+		}
+	}
+
+	if modelCapacityHit {
+		// Attempt fallback model before giving up.
+		if result, err := tryFallbackModel(ctx, pp, fn); err == nil {
+			if pp.circuitBreaker != nil {
+				pp.circuitBreaker.recordSuccess()
+			}
+			return result, nil
+		}
+
+		// Queue the request if enabled; wait for cooldown to expire.
+		if result, err := enqueueAndRetry(ctx, pp, fn); err == nil {
+			if pp.circuitBreaker != nil {
+				pp.circuitBreaker.recordSuccess()
+			}
+			return result, nil
+		}
+
+		if lastErr != nil {
+			return zero, lastErr
+		}
 	}
 
 	return zero, pp.exhaustedError(waitRetryUsed)
+}
+
+// enqueueAndRetry queues the request if the request queue is enabled,
+// waits for the cooldown to expire, then retries once.
+func enqueueAndRetry[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
+	var zero T
+
+	pp.mu.RLock()
+	enabled := pp.queueEnabled
+	queue := pp.queue
+	pp.mu.RUnlock()
+
+	if !enabled || queue == nil {
+		return zero, fmt.Errorf("request queue not enabled")
+	}
+
+	pos, err := queue.enqueue(ctx)
+	if err != nil {
+		return zero, err
+	}
+
+	logPool.Logf("request dequeued (was position %d), retrying", pos)
+
+	// After being dequeued, attempt the call normally (one attempt).
+	provider, email, ok := pp.SelectNextProvider()
+	if !ok {
+		return zero, fmt.Errorf("no provider available after queue wait")
+	}
+
+	result, callErr := fn(provider)
+	pp.recordAttempt(email, time.Now(), callErr == nil)
+	if callErr == nil {
+		pp.markSuccess(email, time.Now())
+		return result, nil
+	}
+	return zero, callErr
+}
+
+// tryFallbackModel attempts the request on a fallback model using the first
+// available provider that supports ModelSwitcher.
+func tryFallbackModel[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
+	var zero T
+
+	pp.mu.RLock()
+	fallbackModel := pp.fallbackModel
+	pp.mu.RUnlock()
+
+	if fallbackModel == "" {
+		return zero, fmt.Errorf("no fallback model configured")
+	}
+
+	// Pick any provider regardless of exhaustion status (all are exhausted
+	// due to global cooldown, but we need one to clone with a different model).
+	pp.mu.RLock()
+	if len(pp.entries) == 0 {
+		pp.mu.RUnlock()
+		return zero, fmt.Errorf("no providers available for fallback")
+	}
+	provider := pp.entries[0].provider
+	email := pp.entries[0].email
+	pp.mu.RUnlock()
+
+	switcher, ok := provider.(llm.ModelSwitcher)
+	if !ok {
+		return zero, fmt.Errorf("provider %s does not support model switching", email)
+	}
+
+	fallbackProvider := switcher.WithModel(fallbackModel)
+	logPool.Logf("attempting fallback model %s via account %s", fallbackModel, email)
+
+	result, err := fn(fallbackProvider)
+	if err != nil {
+		logPool.Warnf("fallback model %s failed: %s", fallbackModel, truncateError(err, 200))
+		return zero, fmt.Errorf("fallback model %s: %w", fallbackModel, err)
+	}
+
+	logPool.Logf("fallback model %s succeeded", fallbackModel)
+	return result, nil
 }

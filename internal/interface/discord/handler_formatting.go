@@ -146,6 +146,12 @@ func extractToolFilename(toolInput map[string]interface{}) string {
 func formatDiscordError(err error) string {
 	parsed := interfacecommon.ParseLLMError(err)
 	switch parsed.Kind {
+	case interfacecommon.ErrorKindModelCapacity:
+		return "🔄 **AI 模型目前繁忙**\n伺服器暫時無法處理請求，請稍後再試\n\n💡 此為模型端的容量限制，通常幾分鐘內會恢復"
+	case interfacecommon.ErrorKindCircuitOpen:
+		return "⏸️ **AI 服務暫時停止**\n為避免重複失敗，已暫停請求\n系統會自動偵測恢復狀態，請稍後再試"
+	case interfacecommon.ErrorKindQueueFull:
+		return "📋 **目前請求量過大**\n等候佇列已滿，請稍後再試"
 	case interfacecommon.ErrorKindQuota:
 		if parsed.ResetAfter != "" {
 			return fmt.Sprintf("⏳ **API 配額已用完**\n請等待 **%s** 後重試\n\n💡 提示：可至 Web UI Settings 切換到 API Key 模式", parsed.ResetAfter)

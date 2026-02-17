@@ -12,6 +12,11 @@ func (pp *ProviderPool) selectNextProviderLocked(now time.Time) (int, bool) {
 		return -1, false
 	}
 
+	// Global cooldown: all accounts blocked when model server has no capacity.
+	if !pp.globalCooldownUntil.IsZero() && pp.globalCooldownUntil.After(now) {
+		return -1, false
+	}
+
 	available := make([]int, 0, len(pp.entries))
 	for i := range pp.entries {
 		e := &pp.entries[i]

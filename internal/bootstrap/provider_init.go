@@ -81,6 +81,31 @@ func initOAuthProvider(
 		settings.TransientRecoveryWaitEnabled,
 		time.Duration(settings.TransientRecoveryWaitMaxSeconds)*time.Second,
 	)
+	if settings.FallbackModel != "" {
+		pool.SetFallbackModel(settings.FallbackModel)
+	}
+	if settings.RequestQueueEnabled {
+		capacity := settings.RequestQueueCapacity
+		if capacity <= 0 {
+			capacity = 10
+		}
+		timeout := time.Duration(settings.RequestQueueTimeoutS) * time.Second
+		if timeout <= 0 {
+			timeout = 120 * time.Second
+		}
+		pool.SetQueueConfig(true, capacity, timeout)
+	}
+	if settings.CircuitBreakerEnabled {
+		threshold := settings.CircuitBreakerFailureThreshold
+		if threshold <= 0 {
+			threshold = 5
+		}
+		openDuration := time.Duration(settings.CircuitBreakerOpenDurationS) * time.Second
+		if openDuration <= 0 {
+			openDuration = 60 * time.Second
+		}
+		pool.SetCircuitBreaker(threshold, openDuration)
+	}
 
 	for _, tokenData := range tokens {
 		if err := llm.RefreshIfNeeded(ctx, tokenData, ""); err != nil {

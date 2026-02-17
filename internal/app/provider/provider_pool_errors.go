@@ -17,6 +17,7 @@ type errorType int
 const (
 	errorNone errorType = iota
 	errorQuota
+	errorModelCapacity // Model server has no capacity (distinct from account quota)
 	errorValidation
 	errorTransient
 	errorOther
@@ -29,6 +30,13 @@ func classifyError(err error) errorType {
 	}
 	s := err.Error()
 	lower := strings.ToLower(s)
+
+	// Model capacity must be checked before generic quota because both
+	// contain "429" / "RESOURCE_EXHAUSTED", but model capacity requires
+	// different handling (global cooldown instead of account rotation).
+	if isModelCapacityError(lower) {
+		return errorModelCapacity
+	}
 
 	if strings.Contains(s, "429") || strings.Contains(s, "RESOURCE_EXHAUSTED") {
 		return errorQuota
@@ -69,6 +77,19 @@ func isContextTerminated(err error) bool {
 	return strings.Contains(lower, "context deadline exceeded") || strings.Contains(lower, "context canceled")
 }
 
+// isModelCapacityError checks for model-level capacity exhaustion keywords.
+func isModelCapacityError(lower string) bool {
+	return strings.Contains(lower, "no capacity available") ||
+		strings.Contains(lower, "model_capacity") ||
+		strings.Contains(lower, "model capacity")
+}
+
+// modelCapacityCooldown returns the global cooldown applied when the model
+// server itself has no capacity (longer than per-account quota cooldowns).
+func modelCapacityCooldown() time.Duration {
+	return 90 * time.Second
+}
+
 // isQuotaError checks if an error indicates a 429/RESOURCE_EXHAUSTED response.
 func isQuotaError(err error) bool {
 	return classifyError(err) == errorQuota
@@ -94,9 +115,8 @@ func parseResetDelay(errMsg string) time.Duration {
 		}
 	}
 
-	if strings.Contains(errMsg, "No capacity available") {
-		return 30 * time.Second
-	}
+	// "No capacity available" is now classified as errorModelCapacity and
+	// handled via modelCapacityCooldown(); no special case needed here.
 	return 2 * time.Minute
 }
 

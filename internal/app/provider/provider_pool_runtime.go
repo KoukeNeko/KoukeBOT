@@ -129,6 +129,23 @@ func (pp *ProviderPool) handleQuotaError(email string, err error) {
 	logPool.Logf("quota error detail: %s", truncateError(err, 300))
 }
 
+func (pp *ProviderPool) handleModelCapacityError(email string, err error) {
+	cooldown := modelCapacityCooldown()
+	pp.mu.Lock()
+	now := time.Now()
+	pp.globalCooldownUntil = now.Add(cooldown)
+	for i := range pp.entries {
+		next := now.Add(cooldown)
+		if pp.entries[i].exhaustedUntil.Before(next) {
+			pp.entries[i].exhaustedUntil = next
+		}
+	}
+	pp.mu.Unlock()
+	atomic.AddUint64(&pp.metricModelCapacityGlobalCooldown, 1)
+	logPool.Warnf("MODEL_CAPACITY: global cooldown %s applied to all %d account(s) (triggered by %s): %s",
+		formatDuration(cooldown), pp.Size(), email, truncateError(err, 200))
+}
+
 func (pp *ProviderPool) handleTransientError(email string, err error) {
 	cooldown := transientCooldown(2*time.Second, pp.failureCount(email))
 	pp.MarkTransientFailure(email, err, cooldown)

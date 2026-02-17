@@ -53,6 +53,12 @@ type StreamChunk struct {
 	FinishReason string                 // LLM finish reason (e.g. "STOP", "MAX_TOKENS") — final chunk only
 }
 
+// ModelSwitcher is an optional interface for providers that support
+// creating a clone configured for a different model on the fly.
+type ModelSwitcher interface {
+	WithModel(model string) Provider
+}
+
 // Provider is the strategy interface for LLM backends.
 // Each adapter (Gemini API, Vertex AI, Gemini Web, OpenAI-compat)
 // implements this interface independently.

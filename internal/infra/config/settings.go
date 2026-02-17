@@ -78,6 +78,19 @@ type Settings struct {
 	// Provider pool settings
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
 
+	// Fallback model when primary has no capacity (e.g. "gemini-2.0-flash")
+	FallbackModel string `json:"fallback_model"`
+
+	// Request queue settings
+	RequestQueueEnabled  bool `json:"request_queue_enabled"`
+	RequestQueueCapacity int  `json:"request_queue_capacity"`        // max queued requests (default: 10)
+	RequestQueueTimeoutS int  `json:"request_queue_timeout_seconds"` // max wait in seconds (default: 120)
+
+	// Circuit breaker settings
+	CircuitBreakerEnabled          bool `json:"circuit_breaker_enabled"`
+	CircuitBreakerFailureThreshold int  `json:"circuit_breaker_failure_threshold"` // default: 5
+	CircuitBreakerOpenDurationS    int  `json:"circuit_breaker_open_duration_seconds"` // default: 60
+
 	// Tool loop guard / resilience settings
 	ToolGuardEnabled                bool `json:"tool_guard_enabled"`
 	MaxToolRounds                   int  `json:"max_tool_rounds"`

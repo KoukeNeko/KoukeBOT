@@ -44,6 +44,17 @@ func NewGeminiOAuthProvider(ctx context.Context, tokenData *OAuthTokenData, mode
 	}, nil
 }
 
+// WithModel returns a shallow clone of this provider configured for a different model.
+// The HTTP client (and thus OAuth credentials) is shared.
+func (g *GeminiOAuthProvider) WithModel(model string) Provider {
+	return &GeminiOAuthProvider{
+		httpClient: g.httpClient,
+		model:      model,
+		projectID:  g.projectID,
+		tools:      append([]domain.Tool(nil), g.tools...),
+	}
+}
+
 func (g *GeminiOAuthProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	body, err := json.Marshal(g.buildRequest(req))
 	if err != nil {
