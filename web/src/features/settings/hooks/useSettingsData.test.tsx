@@ -69,6 +69,8 @@ const settingsFixture: SettingsData = {
   negative_constraint_enabled: true,
   negative_constraint_default:
     'You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude.',
+  fallback_model_enabled: false,
+  fallback_model: '',
 }
 
 const providerStatusFixture: ProviderStatus = {

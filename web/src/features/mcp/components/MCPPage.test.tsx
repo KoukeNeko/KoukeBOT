@@ -63,6 +63,8 @@ function buildForm(mode: SettingsData['web_tool_mode'], serverID: string): Setti
     analysis_visibility: 'visible',
     negative_constraint_enabled: true,
     negative_constraint_default: 'x',
+    fallback_model_enabled: false,
+    fallback_model: '',
   }
 }
 
