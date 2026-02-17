@@ -68,6 +68,8 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		TransientRecoveryWaitMaxSeconds: settings.TransientRecoveryWaitMaxSeconds,
 		DiscordShowInternalToolErrors:   settings.DiscordShowInternalToolErrors,
 		ScheduledMonitorMaxPerUser:      settings.ScheduledMonitorMaxPerUser,
+		FallbackModelEnabled:            settings.FallbackModelEnabled,
+		FallbackModel:                   settings.FallbackModel,
 		MCP:                             toMCPSettingsResponse(settings.MCP),
 	})
 }
@@ -132,6 +134,9 @@ func (h *Handlers) activateProvider(s config.Settings) error {
 			s.TransientRecoveryWaitEnabled,
 			time.Duration(s.TransientRecoveryWaitMaxSeconds)*time.Second,
 		)
+		if s.FallbackModelEnabled && s.FallbackModel != "" {
+			pool.SetFallbackModel(s.FallbackModel)
+		}
 		for _, tokenData := range tokens {
 			if err := llm.RefreshIfNeeded(h.ctx, tokenData, ""); err != nil {
 				logAPI.Warnf("activate-provider: token refresh failed for %s: %v", tokenData.Email, err)

@@ -81,7 +81,7 @@ func initOAuthProvider(
 		settings.TransientRecoveryWaitEnabled,
 		time.Duration(settings.TransientRecoveryWaitMaxSeconds)*time.Second,
 	)
-	if settings.FallbackModel != "" {
+	if settings.FallbackModelEnabled && settings.FallbackModel != "" {
 		pool.SetFallbackModel(settings.FallbackModel)
 	}
 	if settings.RequestQueueEnabled {

@@ -96,6 +96,32 @@ export default function ToolResilienceSection({ form, setForm, saving, onSave }:
         <span className="hint">建議 5 秒內。只會等待一次，不會無限重試。</span>
       </label>
 
+      <div className="form-field-checkbox-row">
+        <Checkbox
+          checked={form.fallback_model_enabled}
+          onChange={(checked) =>
+            setForm({ ...form, fallback_model_enabled: checked })
+          }
+          label="啟用模型降級（主模型無容量時自動切換備用模型）"
+        />
+      </div>
+
+      <label className="form-field">
+        <span>備用模型名稱</span>
+        <input
+          type="text"
+          value={form.fallback_model ?? ""}
+          onChange={(e) =>
+            setForm({ ...form, fallback_model: e.target.value })
+          }
+          disabled={!form.fallback_model_enabled}
+          placeholder="例如 gemini-2.0-flash"
+        />
+        <span className="hint">
+          主模型因容量不足（MODEL_CAPACITY）失敗時，會嘗試此備用模型。預設關閉。
+        </span>
+      </label>
+
       <label className="form-field">
         <span>每位使用者背景監控上限（同一頻道）</span>
         <input

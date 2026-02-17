@@ -75,6 +75,11 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 			existing.TransientRecoveryWaitEnabled,
 			time.Duration(existing.TransientRecoveryWaitMaxSeconds)*time.Second,
 		)
+		if existing.FallbackModelEnabled && existing.FallbackModel != "" {
+			pool.SetFallbackModel(existing.FallbackModel)
+		} else {
+			pool.SetFallbackModel("")
+		}
 	}
 
 	fileToolPersonaID := tooling.SelectFileToolPersonaID(personaConfigsBaseDir, existing.DiscordPersonaID)

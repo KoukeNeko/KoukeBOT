@@ -44,6 +44,8 @@ type SettingsResponse struct {
 	TransientRecoveryWaitMaxSeconds int                 `json:"transient_recovery_wait_max_seconds"`
 	DiscordShowInternalToolErrors   bool                `json:"discord_show_internal_tool_errors"`
 	ScheduledMonitorMaxPerUser      int                 `json:"scheduled_monitor_max_per_user"`
+	FallbackModelEnabled            bool                `json:"fallback_model_enabled"`
+	FallbackModel                   string              `json:"fallback_model"`
 	MCP                             MCPSettingsResponse `json:"mcp"`
 }
 
@@ -89,6 +91,8 @@ type SettingsUpdateRequest struct {
 	TransientRecoveryWaitMaxSeconds *int                      `json:"transient_recovery_wait_max_seconds"`
 	DiscordShowInternalToolErrors   *bool                     `json:"discord_show_internal_tool_errors"`
 	ScheduledMonitorMaxPerUser      *int                      `json:"scheduled_monitor_max_per_user"`
+	FallbackModelEnabled            *bool                     `json:"fallback_model_enabled"`
+	FallbackModel                   string                    `json:"fallback_model"`
 	MCP                             *MCPSettingsUpdateRequest `json:"mcp"`
 }
 

@@ -79,7 +79,8 @@ type Settings struct {
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
 
 	// Fallback model when primary has no capacity (e.g. "gemini-2.0-flash")
-	FallbackModel string `json:"fallback_model"`
+	FallbackModelEnabled bool   `json:"fallback_model_enabled"` // default: false
+	FallbackModel        string `json:"fallback_model"`
 
 	// Request queue settings
 	RequestQueueEnabled  bool `json:"request_queue_enabled"`

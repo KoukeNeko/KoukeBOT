@@ -31,6 +31,8 @@ export interface SettingsData {
   transient_recovery_wait_max_seconds: number
   discord_show_internal_tool_errors: boolean
   scheduled_monitor_max_per_user: number
+  fallback_model_enabled: boolean
+  fallback_model: string
   mcp: MCPSettingsData
   persona_lock_every_turns: number
   triplet_output_enabled: boolean

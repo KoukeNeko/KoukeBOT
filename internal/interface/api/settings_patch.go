@@ -121,6 +121,10 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.ScheduledMonitorMaxPerUser != nil {
 		existing.ScheduledMonitorMaxPerUser = *req.ScheduledMonitorMaxPerUser
 	}
+	if req.FallbackModelEnabled != nil {
+		existing.FallbackModelEnabled = *req.FallbackModelEnabled
+	}
+	existing.FallbackModel = req.FallbackModel
 	if req.MCP != nil {
 		prevMCP := existing.MCP
 		existing.MCP = convertMCPSettingsUpdate(*req.MCP)
