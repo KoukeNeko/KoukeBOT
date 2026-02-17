@@ -84,8 +84,8 @@ func loadCodeAssist(ctx context.Context, endpoint string, headers map[string]str
 	}
 
 	var result struct {
-		CloudAICompanionProject any    `json:"cloudaicompanionProject"`
-		CurrentTier             string `json:"currentTier"`
+		CloudAICompanionProject any `json:"cloudaicompanionProject"`
+		CurrentTier             any `json:"currentTier"`
 		AllowedTiers            []struct {
 			ID string `json:"id"`
 		} `json:"allowedTiers"`
@@ -94,7 +94,7 @@ func loadCodeAssist(ctx context.Context, endpoint string, headers map[string]str
 		return "", "", fmt.Errorf("parse loadCodeAssist response: %w", err)
 	}
 
-	tierID := strings.TrimSpace(result.CurrentTier)
+	tierID := extractStringOrID(result.CurrentTier)
 	if tierID == "" && len(result.AllowedTiers) > 0 {
 		tierID = strings.TrimSpace(result.AllowedTiers[0].ID)
 	}
@@ -223,12 +223,18 @@ func firstEndpointOrDefault(endpoints []string) string {
 
 // extractProjectID handles both string and object forms of cloudaicompanionProject.
 func extractProjectID(v any) string {
+	return extractStringOrID(v)
+}
+
+// extractStringOrID handles API fields that may be either a plain string or
+// an object with an "id" field (e.g., currentTier, cloudaicompanionProject).
+func extractStringOrID(v any) string {
 	switch p := v.(type) {
 	case string:
-		return p
+		return strings.TrimSpace(p)
 	case map[string]any:
 		if id, ok := p["id"].(string); ok {
-			return id
+			return strings.TrimSpace(id)
 		}
 	}
 	return ""
