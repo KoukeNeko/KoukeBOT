@@ -28,14 +28,22 @@ func ListGeminiModels(ctx context.Context, apiKey string, oauthToken *OAuthToken
 }
 
 // ListGeminiModelsForProvider fetches available models while respecting the
-// selected provider type. When providerType is OAuth, API-key listing is skipped.
+// selected provider type. For OAuth-based providers (Antigravity, Gemini CLI),
+// it attempts dynamic discovery via fetchAvailableModels first, then falls back
+// to static catalogs.
 func ListGeminiModelsForProvider(ctx context.Context, apiKey string, oauthToken *OAuthTokenData, providerType string) ([]ModelEntry, error) {
 	providerID := NormalizeGoogleProviderID(providerType)
-	switch providerID {
-	case ProviderGoogleGeminiCLI:
-		return providerCatalogForGeminiCLI(), nil
-	case ProviderGoogleAntigravity:
-		return providerCatalogForAntigravity(), nil
+
+	// For OAuth-based providers, try dynamic model discovery first.
+	if providerID == ProviderGoogleAntigravity || providerID == ProviderGoogleGeminiCLI {
+		if oauthToken != nil && oauthToken.AccessToken != "" {
+			dynamicModels, err := FetchAvailableModels(ctx, oauthToken, providerID)
+			if err == nil && len(dynamicModels) > 0 {
+				return mergeWithStaticCatalog(dynamicModels, providerID), nil
+			}
+			logOAuth.Warnf("fetchAvailableModels failed for %s, using static catalog: %v", providerID, err)
+		}
+		return staticCatalogForProvider(providerID), nil
 	}
 
 	client, err := createListingClient(ctx, apiKey, oauthToken, providerType)
@@ -240,6 +248,38 @@ func normalizeReturnedModelID(providerID, modelID string) string {
 	return NormalizeModelID(mid)
 }
 
+// staticCatalogForProvider returns the hardcoded model list for a provider.
+func staticCatalogForProvider(providerID string) []ModelEntry {
+	switch providerID {
+	case ProviderGoogleAntigravity:
+		return providerCatalogForAntigravity()
+	case ProviderGoogleGeminiCLI:
+		return providerCatalogForGeminiCLI()
+	default:
+		return defaultModelsWithCapabilities()
+	}
+}
+
+// mergeWithStaticCatalog combines dynamically discovered models with static
+// catalog entries. Dynamic entries take priority; static entries not present
+// in the dynamic set are appended.
+func mergeWithStaticCatalog(dynamicModels []ModelEntry, providerID string) []ModelEntry {
+	seen := make(map[string]bool, len(dynamicModels))
+	for _, m := range dynamicModels {
+		_, modelName := SplitProviderModelID(m.ID)
+		seen[modelName] = true
+	}
+
+	staticModels := staticCatalogForProvider(providerID)
+	for _, m := range staticModels {
+		_, modelName := SplitProviderModelID(m.ID)
+		if !seen[modelName] {
+			dynamicModels = append(dynamicModels, m)
+		}
+	}
+	return normalizeModelEntries(dynamicModels)
+}
+
 func providerCatalogForGeminiCLI() []ModelEntry {
 	return normalizeModelEntries([]ModelEntry{
 		{
@@ -292,6 +332,7 @@ func providerCatalogForGeminiCLI() []ModelEntry {
 
 func providerCatalogForAntigravity() []ModelEntry {
 	return normalizeModelEntries([]ModelEntry{
+		// Claude models via Cloud Code Assist
 		{
 			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "claude-opus-4-6-thinking"),
 			DisplayName:        "Google Antigravity / Claude Opus 4.6 Thinking",
@@ -302,11 +343,57 @@ func providerCatalogForAntigravity() []ModelEntry {
 			Reasoning:          true,
 		},
 		{
+			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "claude-opus-4-6"),
+			DisplayName:        "Google Antigravity / Claude Opus 4.6",
+			ProviderID:         ProviderGoogleAntigravity,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      true,
+			Reasoning:          false,
+		},
+		{
 			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "claude-sonnet-4-thinking"),
 			DisplayName:        "Google Antigravity / Claude Sonnet 4 Thinking",
 			ProviderID:         ProviderGoogleAntigravity,
 			SupportsText:       true,
 			SupportsMultimodal: false,
+			SupportsTools:      true,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "claude-sonnet-4-5"),
+			DisplayName:        "Google Antigravity / Claude Sonnet 4.5",
+			ProviderID:         ProviderGoogleAntigravity,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      true,
+			Reasoning:          false,
+		},
+		{
+			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "claude-sonnet-4-20250514"),
+			DisplayName:        "Google Antigravity / Claude Sonnet 4 (20250514)",
+			ProviderID:         ProviderGoogleAntigravity,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      true,
+			Reasoning:          false,
+		},
+		// Gemini models also accessible via Cloud Code Assist
+		{
+			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "gemini-2.5-pro"),
+			DisplayName:        "Google Antigravity / Gemini 2.5 Pro",
+			ProviderID:         ProviderGoogleAntigravity,
+			SupportsText:       true,
+			SupportsMultimodal: true,
+			SupportsTools:      true,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "gemini-2.5-flash"),
+			DisplayName:        "Google Antigravity / Gemini 2.5 Flash",
+			ProviderID:         ProviderGoogleAntigravity,
+			SupportsText:       true,
+			SupportsMultimodal: true,
 			SupportsTools:      true,
 			Reasoning:          true,
 		},

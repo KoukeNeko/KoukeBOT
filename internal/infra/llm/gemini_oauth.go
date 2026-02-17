@@ -335,7 +335,8 @@ func (g *GeminiOAuthProvider) StreamChatMultimodal(ctx context.Context, systemPr
 
 func (g *GeminiOAuthProvider) ModelInfo() ModelCapabilities {
 	supportsThinking := strings.Contains(g.model, "2.5") ||
-		strings.Contains(g.model, "3")
+		strings.Contains(g.model, "3") ||
+		strings.Contains(g.model, "thinking")
 
 	return ModelCapabilities{
 		SupportsThinking:  supportsThinking,

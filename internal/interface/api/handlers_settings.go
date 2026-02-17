@@ -146,9 +146,11 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 	)
 
 	// OpenClaw-aligned behavior:
-	// - google-gemini-cli/* runs via local Gemini CLI.
-	// - google-antigravity/* runs via Cloud Code Assist OAuth bridge.
-	if normalizedProviderID == llm.ProviderGoogleGeminiCLI {
+	// - google-gemini-cli/* with explicit OAuth → Cloud Code Assist OAuth bridge.
+	// - google-gemini-cli/* without OAuth → local Gemini CLI binary.
+	// - google-antigravity/* → Cloud Code Assist OAuth bridge.
+	if normalizedProviderID == llm.ProviderGoogleGeminiCLI &&
+		normalizeProviderTypeForSelection(s.ProviderType) != config.ProviderOAuth {
 		return h.buildGeminiCLIProvider(model)
 	}
 
@@ -239,8 +241,16 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var oauthToken *llm.OAuthTokenData
-	if data, err := h.oauthFlow.GetStatus(); err == nil {
-		oauthToken = data
+	// Prefer pool token (has ProjectID) for dynamic model discovery.
+	if poolPath := h.oauthFlow.PoolPath(); poolPath != "" {
+		if tokens, err := llm.LoadOAuthPool(poolPath); err == nil && len(tokens) > 0 {
+			oauthToken = tokens[0]
+		}
+	}
+	if oauthToken == nil {
+		if data, err := h.oauthFlow.GetStatus(); err == nil {
+			oauthToken = data
+		}
 	}
 
 	providerID := strings.TrimSpace(r.URL.Query().Get("provider_id"))
@@ -260,9 +270,6 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model string, strictOAuthProbe bool) (llm.Provider, error) {
-	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderGoogleGeminiCLI {
-		return nil, fmt.Errorf("google-gemini-cli uses local CLI runtime, not OAuth pool")
-	}
 	logAPI.Logf("build-provider: switching to OAuth provider=%s", providerID)
 	poolPath := h.oauthFlow.PoolPath()
 	tokens, err := llm.LoadOAuthPool(poolPath)

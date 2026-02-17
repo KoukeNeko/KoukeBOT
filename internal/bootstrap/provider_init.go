@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
@@ -20,11 +21,15 @@ func initProvider(
 	logs Loggers,
 ) {
 	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderGoogleGeminiCLI {
-		if initGeminiCLIProvider(pm, model, logs) {
+		// When provider_type is explicitly "oauth", route to OAuth pool
+		// instead of local CLI binary.
+		if !strings.EqualFold(strings.TrimSpace(settings.ProviderType), config.ProviderOAuth) {
+			if initGeminiCLIProvider(pm, model, logs) {
+				return
+			}
+			logs.LLM.Warnf("Google Gemini CLI selected but local gemini binary unavailable — configure at http://localhost:%s/settings", port)
 			return
 		}
-		logs.LLM.Warnf("Google Gemini CLI selected but local gemini binary unavailable — configure at http://localhost:%s/settings", port)
-		return
 	}
 
 	switch resolveBootstrapProviderType(settings, providerID) {

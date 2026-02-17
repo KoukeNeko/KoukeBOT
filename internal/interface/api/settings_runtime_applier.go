@@ -199,7 +199,8 @@ func shouldRunStrictOAuthProbe(settings config.Settings) bool {
 		case llm.ProviderGoogleAntigravity:
 			return true
 		case llm.ProviderGoogleGeminiCLI:
-			return false
+			// Probe when using OAuth pool; skip when using local CLI binary.
+			return normalizeProviderTypeForSelection(settings.ProviderType) == config.ProviderOAuth
 		case llm.ProviderGeminiAPIKey:
 			return false
 		}
