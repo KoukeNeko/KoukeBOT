@@ -39,7 +39,7 @@ func ListGeminiModelsForProvider(ctx context.Context, apiKey string, oauthToken 
 		if oauthToken != nil && oauthToken.AccessToken != "" {
 			dynamicModels, err := FetchAvailableModels(ctx, oauthToken, providerID)
 			if err == nil && len(dynamicModels) > 0 {
-				return mergeWithStaticCatalog(dynamicModels, providerID), nil
+				return normalizeModelEntries(dynamicModels), nil
 			}
 			logOAuth.Warnf("fetchAvailableModels failed for %s, using static catalog: %v", providerID, err)
 		}
@@ -341,15 +341,6 @@ func providerCatalogForAntigravity() []ModelEntry {
 			SupportsMultimodal: false,
 			SupportsTools:      true,
 			Reasoning:          true,
-		},
-		{
-			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "claude-opus-4-6"),
-			DisplayName:        "Google Antigravity / Claude Opus 4.6",
-			ProviderID:         ProviderGoogleAntigravity,
-			SupportsText:       true,
-			SupportsMultimodal: false,
-			SupportsTools:      true,
-			Reasoning:          false,
 		},
 		{
 			ID:                 BuildProviderModelID(ProviderGoogleAntigravity, "claude-sonnet-4-thinking"),

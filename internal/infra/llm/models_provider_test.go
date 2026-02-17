@@ -30,3 +30,15 @@ func TestListGeminiModelsForProviderNormalizesModelIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderCatalogForAntigravityExcludesDeprecatedClaudeOpus46(t *testing.T) {
+	models := staticCatalogForProvider(ProviderGoogleAntigravity)
+	if len(models) == 0 {
+		t.Fatalf("expected non-empty antigravity catalog")
+	}
+	for _, model := range models {
+		if strings.HasSuffix(model.ID, "/claude-opus-4-6") {
+			t.Fatalf("deprecated model should not be listed: %q", model.ID)
+		}
+	}
+}

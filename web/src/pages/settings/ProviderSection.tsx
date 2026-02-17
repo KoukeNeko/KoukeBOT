@@ -329,12 +329,12 @@ export default function ProviderSection({
                         });
                       }}
                       options={[
-                        { value: "google-antigravity", label: "Google Antigravity (Claude + Gemini / Recommended)" },
-                        { value: "google-gemini-cli", label: "Google Gemini CLI (Gemini via OAuth Pool)" },
+                        { value: "google-antigravity", label: "Google Antigravity (OAuth Pool / Recommended)" },
+                        { value: "google-gemini-cli", label: "Google Gemini CLI (Local CLI Runtime)" },
                       ]}
                     />
                     <span className="hint">
-                      兩個 Provider 都透過 OAuth 帳號池使用 Cloud Code Assist API。Google Antigravity 支援 Claude 與 Gemini 模型；Google Gemini CLI 專注於 Gemini 模型。
+                      Google Antigravity 走 OAuth 帳號池（Cloud Code Assist）；Google Gemini CLI 走伺服器本機 `gemini` CLI。
                     </span>
                   </label>
 
