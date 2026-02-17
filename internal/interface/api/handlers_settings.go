@@ -143,11 +143,11 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 
 	case config.ProviderAPIKey:
 		if s.GeminiAPIKey == "" {
-			return fmt.Errorf("no API key configured")
+			return nil, fmt.Errorf("no API key configured")
 		}
 		provider, err := llm.NewGeminiAPIProvider(h.ctx, s.GeminiAPIKey, model)
 		if err != nil {
-			return fmt.Errorf("invalid API key: %w", err)
+			return nil, fmt.Errorf("invalid API key: %w", err)
 		}
 		return provider, nil
 
@@ -155,7 +155,7 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 		if s.GeminiAPIKey != "" {
 			provider, err := llm.NewGeminiAPIProvider(h.ctx, s.GeminiAPIKey, model)
 			if err != nil {
-				return fmt.Errorf("invalid API key: %w", err)
+				return nil, fmt.Errorf("invalid API key: %w", err)
 			}
 			return provider, nil
 		}
