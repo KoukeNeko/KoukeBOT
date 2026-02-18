@@ -8,6 +8,17 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
+// popLastMessage removes the last element from a message slice.
+// Used to discard the temporary LLM-context message added before assembly,
+// leaving the slice in its pre-assembly state for clean storage.
+// Returns the slice unchanged if it is empty.
+func popLastMessage(msgs []domain.Message) []domain.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	return msgs[:len(msgs)-1]
+}
+
 // HandleMessage processes a user message and returns the assistant response.
 func (s *ChatService) HandleMessage(ctx context.Context, channelID, personaID, userMessage string) (string, error) {
 	return s.handleMessageInternal(ctx, channelID, personaID, "", userMessage)
@@ -58,9 +69,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	logChat.Logf("LLM response received: chars=%d", len(resp.Content))
 
 	view := s.prepareAssistantOutputForStorage(resp.Content)
-	if len(conv.Messages) > 0 {
-		conv.Messages = conv.Messages[:len(conv.Messages)-1]
-	}
+	conv.Messages = popLastMessage(conv.Messages)
 	userContent := s.encodeUserMessageForStorage(ctx, conv.ChannelID, resolvedPersonaID, userMessage, contextForLLM)
 	assistantContent := s.encodeAssistantMessageForStorage(ctx, conv.ChannelID, persona, resolvedPersonaID, view.Content)
 	conv.AppendUserMessageWithDisplay(userContent, userMessage)
@@ -129,8 +138,8 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 	initialRawInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
 	initialRawInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
 
-	// Remove the temporary message - we'll store the clean version later
-	conv.Messages = conv.Messages[:len(conv.Messages)-1]
+	// Remove the temporary LLM-context message — we'll store the clean version later.
+	conv.Messages = popLastMessage(conv.Messages)
 
 	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
 		SystemPrompt: assembled.SystemPrompt,
@@ -198,19 +207,8 @@ func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx contex
 		}
 	}
 
-	// Save only direct attachment images to disk (not history entry images)
-	var imageRefs []domain.ImageRef
-	if s.imageStore != nil && len(images) > 0 {
-		for _, img := range images {
-			ref, err := s.imageStore.Save(img)
-			if err != nil {
-				logChat.Warnf("save image %s: %v (skipping)", img.Filename, err)
-				continue
-			}
-			imageRefs = append(imageRefs, ref)
-			logChat.Logf("image saved: %s → %s", img.Filename, ref.StorageKey)
-		}
-	}
+	// Save only direct attachment images to disk (history-entry images are ephemeral).
+	imageRefs := s.saveDirectAttachmentImages(images)
 
 	return s.multimodalRunner.StreamWithHistory(ctx, MultimodalRunRequest{
 		Conversation:     conv,
@@ -327,24 +325,34 @@ func (s *ChatService) HandleMessageStreamWithNativeHistoryAndImages(
 		}
 	}
 
-	// Save only direct attachment images to disk (history entry images are ephemeral).
-	var imageRefs []domain.ImageRef
-	if s.imageStore != nil && len(images) > 0 {
-		for _, img := range images {
-			ref, err := s.imageStore.Save(img)
-			if err != nil {
-				logChat.Warnf("save image %s: %v (skipping)", img.Filename, err)
-				continue
-			}
-			imageRefs = append(imageRefs, ref)
-			logChat.Logf("image saved: %s → %s", img.Filename, ref.StorageKey)
-		}
-	}
+	// Save only direct attachment images to disk (history-entry images are ephemeral).
+	imageRefs := s.saveDirectAttachmentImages(images)
 
 	return s.streamWithNativeMultimodalHistory(
 		ctx, conv, persona, resolvedPersonaID,
 		ephemeralHistory, currentMessage, messageToStore,
 		images, historyEntries, imageRefs...)
+}
+
+// saveDirectAttachmentImages persists the provided images to disk and returns their storage references.
+// Images that fail to save are skipped with a warning rather than aborting the request,
+// because losing an image reference is less harmful than dropping the entire message.
+// History-entry images must NOT be passed here — only direct attachments should be persisted.
+func (s *ChatService) saveDirectAttachmentImages(images []domain.ImageInput) []domain.ImageRef {
+	if s.imageStore == nil || len(images) == 0 {
+		return nil
+	}
+	refs := make([]domain.ImageRef, 0, len(images))
+	for _, img := range images {
+		ref, err := s.imageStore.Save(img)
+		if err != nil {
+			logChat.Warnf("save image %s: %v (skipping)", img.Filename, err)
+			continue
+		}
+		refs = append(refs, ref)
+		logChat.Logf("image saved: %s → %s", img.Filename, ref.StorageKey)
+	}
+	return refs
 }
 
 func (s *ChatService) preflightConversationRetention(

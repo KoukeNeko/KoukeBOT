@@ -38,7 +38,11 @@ func (s *ChatService) resolveConversationAndPersona(ctx context.Context, channel
 func (s *ChatService) resolvePersona(personaID string) (*domain.PersonaModule, error) {
 	persona, exists := s.personas[personaID]
 	if !exists {
-		return nil, fmt.Errorf("persona %q not found", personaID)
+		available := make([]string, 0, len(s.personas))
+		for id := range s.personas {
+			available = append(available, id)
+		}
+		return nil, fmt.Errorf("persona %q not found (available: %v)", personaID, available)
 	}
 	return persona, nil
 }

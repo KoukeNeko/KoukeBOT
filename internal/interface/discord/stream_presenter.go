@@ -273,6 +273,16 @@ func sanitizeLiteralEscapes(s string) string {
 	return s
 }
 
+// sendContinuationSegments sends all segments after the first one as separate messages.
+// Called after the first segment has been sent (either via edit or initial send).
+func (p *discordStreamPresenter) sendContinuationSegments(segments []string) {
+	for i := 1; i < len(segments); i++ {
+		if err := p.sender.SendMessage(p.channelID, segments[i]); err != nil {
+			logHandler.Errorf("send final segment failed [%s]: idx=%d err=%v", p.channelID, i, err)
+		}
+	}
+}
+
 func (p *discordStreamPresenter) sendFinal() {
 	finalContent := sanitizeLiteralEscapes(p.fullResponse.String())
 	if finalContent == "" {
@@ -308,11 +318,7 @@ func (p *discordStreamPresenter) sendFinal() {
 				err,
 			)
 		}
-		for i := 1; i < len(segments); i++ {
-			if err := p.sender.SendMessage(p.channelID, segments[i]); err != nil {
-				logHandler.Errorf("send final segment failed [%s]: idx=%d err=%v", p.channelID, i, err)
-			}
-		}
+		p.sendContinuationSegments(segments)
 		return
 	}
 
@@ -320,11 +326,7 @@ func (p *discordStreamPresenter) sendFinal() {
 		logHandler.Errorf("send final initial failed [%s]: %v", p.channelID, err)
 		return
 	}
-	for i := 1; i < len(segments); i++ {
-		if err := p.sender.SendMessage(p.channelID, segments[i]); err != nil {
-			logHandler.Errorf("send final segment failed [%s]: idx=%d err=%v", p.channelID, i, err)
-		}
-	}
+	p.sendContinuationSegments(segments)
 }
 
 func (p *discordStreamPresenter) usesReply() bool {

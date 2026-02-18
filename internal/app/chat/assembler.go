@@ -17,6 +17,9 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/util"
 )
 
+// estimatedCharsPerToken is a fast heuristic for token estimation without calling a tokenizer.
+// ~4 chars ≈ 1 token holds across most LLMs (GPT-4, Claude, Gemini) for typical English/CJK text.
+// Used only for budget calculations — intentional approximation, not exact token counting.
 const estimatedCharsPerToken = 4
 
 const (
@@ -460,7 +463,7 @@ func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budge
 	selected := make([]domain.Message, 0, len(candidate))
 	used := 0
 	userTurnsSeen := 0
-	for i, msg := range candidate {
+	for _, msg := range candidate {
 		if isInternalToolHistoryMessage(msg.Content) {
 			continue
 		}
@@ -472,7 +475,6 @@ func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budge
 		}
 		// Truncate long messages beyond the 4th user turn from the end.
 		turnsFromEnd := userTurnsSeen // approximate
-		_ = i
 		if turnsFromEnd > 4 && len(compact.Content) > historyMessageTruncateChars {
 			compact.Content = compact.Content[:historyMessageTruncateChars] + "\n...[history truncated for token budget]"
 		}

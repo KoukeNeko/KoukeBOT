@@ -84,6 +84,9 @@ func (cm *ContextManager) KeepRecentUserTurns() int {
 // CompactHistory removes old messages, keeping only the most recent ones.
 // Should be called AFTER memory flush so important information is already persisted.
 func (cm *ContextManager) CompactHistory(conv *domain.Conversation, persona *domain.PersonaModule) {
+	if cm == nil {
+		return
+	}
 	cm.CompactHistoryWithDigest(conv, persona, nil)
 }
 
