@@ -28,10 +28,6 @@ const (
 	// Images older than this threshold are excluded to prevent the model from
 	// responding to stale images that lack surrounding conversation context.
 	historyImageMaxAge = 30 * time.Minute
-	// historyTextMaxAge limits how far back text messages are included when no
-	// explicit conversation cutoff is set. Prevents the model from responding
-	// to messages from days ago when the channel has been quiet.
-	historyTextMaxAge = 4 * time.Hour
 )
 
 // seenMessageTTL is how long a processed message ID is remembered to deduplicate

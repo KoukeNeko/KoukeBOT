@@ -97,12 +97,6 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 		if !shouldIncludeDiscordTimestamp(msg.Timestamp, cutoff) {
 			continue
 		}
-		// When no explicit cutoff is set, apply a default age limit to avoid
-		// the model responding to messages from days ago in a quiet channel.
-		if cutoff == nil && time.Since(msg.Timestamp.UTC()) >= historyTextMaxAge {
-			continue
-		}
-
 		content := msg.Content
 
 		if strings.TrimSpace(content) == "" && len(msg.Attachments) > 0 {
