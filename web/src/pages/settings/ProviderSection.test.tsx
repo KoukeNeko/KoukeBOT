@@ -103,12 +103,15 @@ function buildProps(overrides: Partial<ComponentProps<typeof ProviderSection>> =
     onImportCLIToken: vi.fn(),
     aistudioStatus: { configured: false },
     aistudioFileName: '',
+    aistudioPastedInput: '',
     aistudioImport: null,
     aistudioMessage: null,
     aistudioUploading: false,
     aistudioVerifyingCurrent: false,
     aistudioDeleting: false,
+    setAIStudioPastedInput: vi.fn(),
     onAIStudioFileSelected: vi.fn(noopAsyncVoid),
+    onAIStudioParsePastedInput: vi.fn(() => true),
     onAIStudioUploadVerifyApply: vi.fn(noopAsyncBool),
     onAIStudioVerifyCurrent: vi.fn(noopAsyncBool),
     onAIStudioDelete: vi.fn(noopAsyncBool),
@@ -122,6 +125,7 @@ describe('ProviderSection', () => {
 
     expect(screen.getByText('AI Studio Fallback')).toBeTruthy()
     expect(screen.getByText('Upload & Verify & Apply')).toBeTruthy()
+    expect(screen.getByText('Parse Pasted Text')).toBeTruthy()
     expect(screen.getByText('Verify Current Session')).toBeTruthy()
     expect(screen.getByText('Delete Session')).toBeTruthy()
   })

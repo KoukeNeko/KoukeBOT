@@ -56,12 +56,15 @@ type Props = {
   onImportCLIToken: (providerID: string) => void;
   aistudioStatus: AIStudioSessionStatus | null;
   aistudioFileName: string;
+  aistudioPastedInput: string;
   aistudioImport: AIStudioImportResult | null;
   aistudioMessage: AIStudioStatusMessage;
   aistudioUploading: boolean;
   aistudioVerifyingCurrent: boolean;
   aistudioDeleting: boolean;
+  setAIStudioPastedInput: (value: string) => void;
   onAIStudioFileSelected: (file: File | null) => Promise<void>;
+  onAIStudioParsePastedInput: () => boolean;
   onAIStudioUploadVerifyApply: () => Promise<boolean>;
   onAIStudioVerifyCurrent: () => Promise<boolean>;
   onAIStudioDelete: () => Promise<boolean>;
@@ -102,12 +105,15 @@ export default function ProviderSection({
   onImportCLIToken,
   aistudioStatus,
   aistudioFileName,
+  aistudioPastedInput,
   aistudioImport,
   aistudioMessage,
   aistudioUploading,
   aistudioVerifyingCurrent,
   aistudioDeleting,
+  setAIStudioPastedInput,
   onAIStudioFileSelected,
+  onAIStudioParsePastedInput,
   onAIStudioUploadVerifyApply,
   onAIStudioVerifyCurrent,
   onAIStudioDelete,
@@ -475,6 +481,21 @@ export default function ProviderSection({
           )}
         </label>
 
+        <label className="form-field">
+          <span>Paste HAR / Session JSON / cURL</span>
+          <textarea
+            value={aistudioPastedInput}
+            onChange={(e) => setAIStudioPastedInput(e.target.value)}
+            placeholder="貼上完整 cURL、HAR JSON 或 aistudio_session.json 內容"
+            rows={7}
+            style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem" }}
+            disabled={aistudioUploading}
+          />
+          <span className="hint">
+            貼上後先點 Parse，確認摘要與 warning，再執行 verify/apply。
+          </span>
+        </label>
+
         {aistudioImport && (
           <div className="aistudio-import-summary">
             <div className="meta">來源：<code>{aistudioImport.sourceType}</code></div>
@@ -529,6 +550,14 @@ export default function ProviderSection({
         )}
 
         <div className="aistudio-actions-row">
+          <button
+            type="button"
+            className="btn-secondary aistudio-btn"
+            onClick={() => { onAIStudioParsePastedInput(); }}
+            disabled={aistudioUploading || !aistudioPastedInput.trim()}
+          >
+            Parse Pasted Text
+          </button>
           <button
             type="button"
             className="btn-primary aistudio-btn"

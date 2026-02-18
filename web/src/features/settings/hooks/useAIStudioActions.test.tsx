@@ -81,4 +81,30 @@ describe('useAIStudioActions', () => {
     expect(api.verifyAIStudioSession).toHaveBeenCalledTimes(1)
     expect(api.putAIStudioSession).not.toHaveBeenCalled()
   })
+
+  it('supports pasted content without file upload', async () => {
+    vi.mocked(api.verifyAIStudioSession).mockResolvedValue({ verified: true, model: 'gemini-2.5-pro' })
+
+    const { result } = renderHook(() => useAIStudioActions())
+
+    await act(async () => {
+      result.current.setPastedInput(
+        JSON.stringify({
+          endpoint: 'https://alkalimakersuite-pa.clients6.google.com',
+          api_key: 'api-key',
+          x_browser_validation: 'validation',
+          x_client_data: 'client',
+          x_goog_authuser: '0',
+          cookie: 'SID=abc',
+        }),
+      )
+    })
+
+    await act(async () => {
+      await result.current.uploadVerifyApply()
+    })
+
+    expect(api.verifyAIStudioSession).toHaveBeenCalledTimes(1)
+    expect(api.putAIStudioSession).toHaveBeenCalledTimes(1)
+  })
 })

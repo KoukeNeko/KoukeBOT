@@ -134,12 +134,15 @@ export default function SettingsPage({ vm }: Props) {
             onImportCLIToken={vm.oauth.handleImportCLIToken}
             aistudioStatus={vm.aistudio.sessionStatus}
             aistudioFileName={vm.aistudio.selectedFileName}
+            aistudioPastedInput={vm.aistudio.pastedInput}
             aistudioImport={vm.aistudio.parsedImport}
             aistudioMessage={vm.aistudio.statusMessage}
             aistudioUploading={vm.aistudio.uploading}
             aistudioVerifyingCurrent={vm.aistudio.verifyingCurrent}
             aistudioDeleting={vm.aistudio.deleting}
+            setAIStudioPastedInput={vm.aistudio.setPastedInput}
             onAIStudioFileSelected={vm.aistudio.parseUploadFile}
+            onAIStudioParsePastedInput={vm.aistudio.parsePastedInput}
             onAIStudioUploadVerifyApply={vm.aistudio.uploadVerifyApply}
             onAIStudioVerifyCurrent={vm.aistudio.verifyCurrentSession}
             onAIStudioDelete={vm.aistudio.deleteSession}
