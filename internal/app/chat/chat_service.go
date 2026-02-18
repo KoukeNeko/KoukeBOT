@@ -177,8 +177,8 @@ func (s *ChatService) memoryRetentionPolicySnapshot() MemoryRetentionPolicy {
 	return normalizeMemoryRetentionPolicy(policy)
 }
 
-func (s *ChatService) keepRecentMessagesSnapshot() int {
-	return roundsToRecentMessages(s.memoryRetentionPolicySnapshot().RecentRounds)
+func (s *ChatService) keepRecentUserTurnsSnapshot() int {
+	return normalizeMaxUserTurns(s.memoryRetentionPolicySnapshot().RecentRounds)
 }
 
 // UpdateToolRegistry hot-swaps tool declarations and runtime handlers.
@@ -196,12 +196,12 @@ func (s *ChatService) UpdateToolRegistry(tools []domain.Tool) {
 }
 
 func (s *ChatService) applyMemoryRetentionPolicy(policy MemoryRetentionPolicy) {
-	recentMessages := roundsToRecentMessages(policy.RecentRounds)
+	userTurns := normalizeMaxUserTurns(policy.RecentRounds)
 	if s.assembler != nil {
-		s.assembler.UpdateMemoryRecentMessages(recentMessages)
+		s.assembler.UpdateMaxUserTurns(userTurns)
 	}
 	if s.contextManager != nil {
-		s.contextManager.UpdateKeepRecentMessages(recentMessages)
+		s.contextManager.UpdateKeepRecentUserTurns(userTurns)
 	}
 }
 
@@ -224,17 +224,13 @@ func normalizeToolExecutionPolicy(policy ToolExecutionPolicy) ToolExecutionPolic
 
 func normalizeMemoryRetentionPolicy(policy MemoryRetentionPolicy) MemoryRetentionPolicy {
 	defaults := DefaultMemoryRetentionPolicy()
-	if policy.RecentRounds < minMemoryRecentMessages/2 {
+	if policy.RecentRounds < minMaxUserTurns {
 		policy.RecentRounds = defaults.RecentRounds
 	}
-	if policy.RecentRounds > maxMemoryRecentMessages/2 {
-		policy.RecentRounds = maxMemoryRecentMessages / 2
+	if policy.RecentRounds > maxMaxUserTurns {
+		policy.RecentRounds = maxMaxUserTurns
 	}
 	return policy
-}
-
-func roundsToRecentMessages(rounds int) int {
-	return normalizeMemoryRetentionPolicy(MemoryRetentionPolicy{RecentRounds: rounds}).RecentRounds * 2
 }
 
 func (s *ChatService) incrementToolGuardDuplicateBlocked() {

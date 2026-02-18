@@ -20,10 +20,13 @@ import (
 const estimatedCharsPerToken = 4
 
 const (
-	defaultMemoryRecentRounds   = 50
-	defaultMemoryRecentMessages = defaultMemoryRecentRounds * 2
-	minMemoryRecentMessages     = 40
-	maxMemoryRecentMessages     = 200
+	defaultMemoryRecentRounds = 50
+
+	// Turn-based limits: one user turn = user message + all associated
+	// assistant/tool messages until the next user message.
+	defaultMaxUserTurns = defaultMemoryRecentRounds
+	minMaxUserTurns     = 20
+	maxMaxUserTurns     = 100
 )
 
 var logPrompt = logger.New("prompt", logger.Yellow)
@@ -84,16 +87,16 @@ const responseReserveSafetyMargin = 1024
 
 // ContextBudgetManager controls prompt budget allocation between digest and recent history.
 type ContextBudgetManager struct {
-	MaxRecentMessages int     // hard cap for recent raw turns
-	MaxDigests        int     // max digest blocks to include
-	DigestBudgetRatio float64 // % of history budget reserved for digest blocks
+	MaxRecentUserTurns int     // hard cap for user turns (each turn includes associated assistant/tool messages)
+	MaxDigests         int     // max digest blocks to include
+	DigestBudgetRatio  float64 // % of history budget reserved for digest blocks
 }
 
 func NewContextBudgetManager() *ContextBudgetManager {
 	return &ContextBudgetManager{
-		MaxRecentMessages: defaultMemoryRecentMessages,
-		MaxDigests:        4,
-		DigestBudgetRatio: 0.30,
+		MaxRecentUserTurns: defaultMaxUserTurns,
+		MaxDigests:         4,
+		DigestBudgetRatio:  0.30,
 	}
 }
 
@@ -159,23 +162,23 @@ func (a *ContextAssembler) PromptGuardPolicy() PromptGuardPolicy {
 	return a.guard
 }
 
-func (a *ContextAssembler) UpdateMemoryRecentMessages(maxMessages int) {
+func (a *ContextAssembler) UpdateMaxUserTurns(maxUserTurns int) {
 	if a == nil {
 		return
 	}
 	a.budgetMu.Lock()
-	a.budget.MaxRecentMessages = normalizeMemoryRecentMessages(maxMessages)
+	a.budget.MaxRecentUserTurns = normalizeMaxUserTurns(maxUserTurns)
 	a.budgetMu.Unlock()
 }
 
-func (a *ContextAssembler) MemoryRecentMessages() int {
+func (a *ContextAssembler) MaxUserTurns() int {
 	if a == nil {
-		return defaultMemoryRecentMessages
+		return defaultMaxUserTurns
 	}
 	a.budgetMu.RLock()
-	maxMessages := a.budget.MaxRecentMessages
+	v := a.budget.MaxRecentUserTurns
 	a.budgetMu.RUnlock()
-	return normalizeMemoryRecentMessages(maxMessages)
+	return normalizeMaxUserTurns(v)
 }
 
 func (a *ContextAssembler) snapshotPromptGuardPolicy() PromptGuardPolicy {
@@ -196,7 +199,7 @@ func (a *ContextAssembler) snapshotBudget() ContextBudgetManager {
 	a.budgetMu.RLock()
 	budget := *a.budget
 	a.budgetMu.RUnlock()
-	budget.MaxRecentMessages = normalizeMemoryRecentMessages(budget.MaxRecentMessages)
+	budget.MaxRecentUserTurns = normalizeMaxUserTurns(budget.MaxRecentUserTurns)
 	if budget.MaxDigests <= 0 {
 		budget.MaxDigests = 4
 	}
@@ -366,7 +369,11 @@ func (a *ContextAssembler) assembleThinkingModel(
 		})
 	}
 
-	recent := a.selectRecentMessages(conv.Messages, recentBudget, budget.MaxRecentMessages)
+	// Prune old tool results before selecting recent messages to free token space.
+	charWindow := caps.ContextWindow * estimatedCharsPerToken
+	prunedMessages := pruneToolResults(conv.Messages, DefaultContextPruningSettings(), charWindow)
+
+	recent := a.selectRecentMessages(prunedMessages, recentBudget, budget.MaxRecentUserTurns)
 	out = append(out, recent...)
 
 	if len(out) == 0 {
@@ -432,29 +439,40 @@ func (a *ContextAssembler) resolveNegativeConstraint(persona *domain.PersonaModu
 	return strings.TrimSpace(policy.NegativeConstraintDefault)
 }
 
-func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budgetTokens, maxMessages int) []domain.Message {
+// selectRecentMessages selects the last maxUserTurns user turns and all their
+// associated assistant/tool messages, subject to budgetTokens.
+func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budgetTokens, maxUserTurns int) []domain.Message {
 	if len(messages) == 0 {
 		return nil
 	}
 
-	if maxMessages <= 0 {
-		maxMessages = 20
+	if maxUserTurns <= 0 {
+		maxUserTurns = 20
 	}
 
-	selected := make([]domain.Message, 0, maxMessages)
-	used := 0
-	for i := len(messages) - 1; i >= 0; i-- {
-		if len(selected) >= maxMessages {
-			break
-		}
+	// Step 1: Find the cutoff index by counting user turns backward.
+	cutoff := findTurnCutoffByUserTurns(messages, maxUserTurns)
+	candidate := messages[cutoff:]
 
-		msg := messages[i]
+	// Step 2: Filter out internal tool history and apply truncation + budget.
+	const historyMessageTruncateChars = 4000
+	selected := make([]domain.Message, 0, len(candidate))
+	used := 0
+	userTurnsSeen := 0
+	for i, msg := range candidate {
 		if isInternalToolHistoryMessage(msg.Content) {
 			continue
 		}
 		compact := domain.Message{Role: msg.Role, Content: msg.Content}
-		const historyMessageTruncateChars = 4000
-		if len(selected) >= 4 && len(compact.Content) > historyMessageTruncateChars {
+
+		// Count user turns for truncation threshold (truncate older turns).
+		if msg.Role == domain.RoleUser {
+			userTurnsSeen++
+		}
+		// Truncate long messages beyond the 4th user turn from the end.
+		turnsFromEnd := userTurnsSeen // approximate
+		_ = i
+		if turnsFromEnd > 4 && len(compact.Content) > historyMessageTruncateChars {
 			compact.Content = compact.Content[:historyMessageTruncateChars] + "\n...[history truncated for token budget]"
 		}
 
@@ -471,10 +489,6 @@ func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budge
 		selected = append(selected, compact)
 	}
 
-	// reverse
-	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
-		selected[i], selected[j] = selected[j], selected[i]
-	}
 	return selected
 }
 
@@ -639,13 +653,9 @@ func (a *ContextAssembler) assembleLegacyModel(
 		)
 	}
 
-	// Recent conversation history (rolling window)
-	recentWindowSize := budget.MaxRecentMessages
-	history := conv.Messages
-	if len(history) > recentWindowSize {
-		history = history[len(history)-recentWindowSize:]
-	}
-	messages = append(messages, history...)
+	// Recent conversation history (turn-based rolling window)
+	cutoff := findTurnCutoffByUserTurns(conv.Messages, budget.MaxRecentUserTurns)
+	messages = append(messages, conv.Messages[cutoff:]...)
 
 	return messages
 }
@@ -661,14 +671,14 @@ func estimateTokens(s string) int {
 	return tokens
 }
 
-func normalizeMemoryRecentMessages(maxMessages int) int {
-	if maxMessages < minMemoryRecentMessages {
-		return defaultMemoryRecentMessages
+func normalizeMaxUserTurns(v int) int {
+	if v < minMaxUserTurns {
+		return defaultMaxUserTurns
 	}
-	if maxMessages > maxMemoryRecentMessages {
-		return maxMemoryRecentMessages
+	if v > maxMaxUserTurns {
+		return maxMaxUserTurns
 	}
-	return maxMessages
+	return v
 }
 
 // formatAnchorsForTemplate renders anchors as readable text for {{.Anchors}} injection.

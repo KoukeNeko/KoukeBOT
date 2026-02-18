@@ -27,10 +27,10 @@ var digestStyleQuoteCount uint64
 // Implements OpenClaw's approach: when approaching context window limit,
 // inject a silent turn asking the agent to save memories before compacting history.
 type ContextManager struct {
-	mu                 sync.RWMutex
-	flushThreshold     int // Tokens before limit to trigger flush (default: 4000)
-	windowSize         int // Total context window size (default: 800000)
-	keepRecentMessages int // Number of most recent raw messages to retain during compaction
+	mu                   sync.RWMutex
+	flushThreshold       int // Tokens before limit to trigger flush (default: 4000)
+	windowSize           int // Total context window size (default: 800000)
+	keepRecentUserTurns  int // Number of most recent user turns to retain during compaction
 }
 
 func NewContextManager(flushThreshold, windowSize int) *ContextManager {
@@ -41,9 +41,9 @@ func NewContextManager(flushThreshold, windowSize int) *ContextManager {
 		windowSize = 800_000 // Conservative for Gemini 2.5 Pro (actual: 1M)
 	}
 	return &ContextManager{
-		flushThreshold:     flushThreshold,
-		windowSize:         windowSize,
-		keepRecentMessages: defaultMemoryRecentMessages,
+		flushThreshold:      flushThreshold,
+		windowSize:          windowSize,
+		keepRecentUserTurns: defaultMaxUserTurns,
 	}
 }
 
@@ -62,29 +62,29 @@ func (cm *ContextManager) ShouldFlush(conv *domain.Conversation) bool {
 	return false
 }
 
-func (cm *ContextManager) UpdateKeepRecentMessages(maxMessages int) {
+func (cm *ContextManager) UpdateKeepRecentUserTurns(v int) {
 	if cm == nil {
 		return
 	}
 	cm.mu.Lock()
-	cm.keepRecentMessages = normalizeMemoryRecentMessages(maxMessages)
+	cm.keepRecentUserTurns = normalizeMaxUserTurns(v)
 	cm.mu.Unlock()
 }
 
-func (cm *ContextManager) KeepRecentMessages() int {
+func (cm *ContextManager) KeepRecentUserTurns() int {
 	if cm == nil {
-		return defaultMemoryRecentMessages
+		return defaultMaxUserTurns
 	}
 	cm.mu.RLock()
-	maxMessages := cm.keepRecentMessages
+	v := cm.keepRecentUserTurns
 	cm.mu.RUnlock()
-	return normalizeMemoryRecentMessages(maxMessages)
+	return normalizeMaxUserTurns(v)
 }
 
 // CompactHistory removes old messages, keeping only the most recent ones.
 // Should be called AFTER memory flush so important information is already persisted.
 func (cm *ContextManager) CompactHistory(conv *domain.Conversation, persona *domain.PersonaModule) {
-	keepRecent := cm.KeepRecentMessages()
+	keepRecent := cm.KeepRecentUserTurns()
 	removedCount, addedDigests := compactHistoryWithKeepRecent(conv, persona, keepRecent)
 	if removedCount == 0 {
 		return
@@ -101,15 +101,17 @@ func (cm *ContextManager) CompactHistory(conv *domain.Conversation, persona *dom
 // EstimateConversationContextTokens estimates current context footprint from
 // recent conversation messages + retained digests. This is used for flush tracking.
 func EstimateConversationContextTokens(conv *domain.Conversation) int {
-	return EstimateConversationContextTokensWithRecentCap(conv, defaultMemoryRecentMessages)
+	return EstimateConversationContextTokensWithRecentCap(conv, defaultMaxUserTurns)
 }
 
-func EstimateConversationContextTokensWithRecentCap(conv *domain.Conversation, maxRecentMessages int) int {
+// EstimateConversationContextTokensWithRecentCap estimates tokens for the last
+// N user turns (turn-based: each user turn includes associated assistant/tool messages).
+func EstimateConversationContextTokensWithRecentCap(conv *domain.Conversation, maxUserTurns int) int {
 	if conv == nil {
 		return 0
 	}
 
-	maxRecentMessages = normalizeMemoryRecentMessages(maxRecentMessages)
+	maxUserTurns = normalizeMaxUserTurns(maxUserTurns)
 	const maxDigests = 4
 	const perMessageOverhead = 12
 	const perDigestOverhead = 24
@@ -117,10 +119,7 @@ func EstimateConversationContextTokensWithRecentCap(conv *domain.Conversation, m
 
 	total := 0
 
-	start := 0
-	if len(conv.Messages) > maxRecentMessages {
-		start = len(conv.Messages) - maxRecentMessages
-	}
+	start := findTurnCutoffByUserTurns(conv.Messages, maxUserTurns)
 	for _, msg := range conv.Messages[start:] {
 		if msg.Content != "" {
 			total += estimateTokens(msg.Content)
@@ -151,17 +150,48 @@ func EstimateConversationContextTokensWithRecentCap(conv *domain.Conversation, m
 	return total
 }
 
-func compactHistoryWithKeepRecent(conv *domain.Conversation, persona *domain.PersonaModule, keepRecentMessages int) (removedCount int, addedDigests int) {
+// findTurnCutoffByUserTurns scans messages backward, counting genuine user turns.
+// Internal tool result messages (stored with user role) are not counted as turns.
+// Returns the index where the last N user turns begin (includes all associated
+// assistant/tool messages for those turns).
+func findTurnCutoffByUserTurns(messages []domain.Message, maxUserTurns int) int {
+	if maxUserTurns <= 0 || len(messages) == 0 {
+		return len(messages)
+	}
+	userTurnCount := 0
+	lastUserIdx := len(messages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != domain.RoleUser {
+			continue
+		}
+		// Skip internal tool results stored as user-role messages.
+		if isInternalToolHistoryMessage(msg.Content) {
+			continue
+		}
+		userTurnCount++
+		if userTurnCount > maxUserTurns {
+			return lastUserIdx
+		}
+		lastUserIdx = i
+	}
+	return 0
+}
+
+// compactHistoryWithKeepRecent removes old messages keeping the last N user turns
+// and their associated responses. Returns how many messages were removed.
+func compactHistoryWithKeepRecent(conv *domain.Conversation, persona *domain.PersonaModule, keepRecentUserTurns int) (removedCount int, addedDigests int) {
 	if conv == nil {
 		return 0, 0
 	}
-	keepRecentMessages = normalizeMemoryRecentMessages(keepRecentMessages)
-	if len(conv.Messages) <= keepRecentMessages {
-		conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+	keepRecentUserTurns = normalizeMaxUserTurns(keepRecentUserTurns)
+	cutoff := findTurnCutoffByUserTurns(conv.Messages, keepRecentUserTurns)
+	if cutoff == 0 {
+		conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 		return 0, 0
 	}
 
-	removedCount = len(conv.Messages) - keepRecentMessages
+	removedCount = cutoff
 	removed := conv.Messages[:removedCount]
 	if digest, ok := (&ContextManager{}).buildDigest(removed, persona); ok {
 		conv.AddDigest(digest)
@@ -169,7 +199,7 @@ func compactHistoryWithKeepRecent(conv *domain.Conversation, persona *domain.Per
 	}
 
 	conv.Messages = conv.Messages[removedCount:]
-	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 	return removedCount, addedDigests
 }
 

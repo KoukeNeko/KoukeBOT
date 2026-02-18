@@ -257,7 +257,8 @@ func TestSelectRecentMessagesSkipsTOONToolHistory(t *testing.T) {
 
 func TestAssembleLegacyModelUsesConfiguredRecentWindow(t *testing.T) {
 	assembler := NewContextAssembler()
-	assembler.UpdateMemoryRecentMessages(40)
+	// 20 user turns → keeps last 20 user+assistant pairs = 40 messages
+	assembler.UpdateMaxUserTurns(20)
 
 	persona := &domain.PersonaModule{
 		Config: domain.PersonaConfig{
@@ -295,7 +296,8 @@ func TestAssembleLegacyModelUsesConfiguredRecentWindow(t *testing.T) {
 
 func TestAssembleThinkingModelUsesConfiguredRecentWindow(t *testing.T) {
 	assembler := NewContextAssembler()
-	assembler.UpdateMemoryRecentMessages(40)
+	// 20 user turns → keeps last 20 user+assistant pairs = 40 messages
+	assembler.UpdateMaxUserTurns(20)
 	policy := DefaultPromptGuardPolicy()
 	policy.PersonaLockEveryTurns = 999
 	assembler.UpdatePromptGuardPolicy(policy)
@@ -336,5 +338,63 @@ func TestAssembleThinkingModelUsesConfiguredRecentWindow(t *testing.T) {
 	}
 	if assembled.Messages[39].Content != "turn-79" {
 		t.Fatalf("thinking last recent message = %q, want turn-79", assembled.Messages[39].Content)
+	}
+}
+
+func TestSelectRecentMessages_CountsUserTurnsNotRawMessages(t *testing.T) {
+	assembler := NewContextAssembler()
+	// Simulate tool-heavy conversation: each user turn has 3 tool result messages.
+	toolr, _ := tooncodec.EncodeToolResultsEvent([]tooncodec.ToolResultInput{
+		{ID: "1", Name: "web_search", OK: true, Out: "result"},
+	})
+	messages := []domain.Message{
+		{Role: domain.RoleUser, Content: "turn 1"},
+		{Role: domain.RoleUser, Content: toolr},
+		{Role: domain.RoleAssistant, Content: "reply 1"},
+		{Role: domain.RoleUser, Content: "turn 2"},
+		{Role: domain.RoleUser, Content: toolr},
+		{Role: domain.RoleAssistant, Content: "reply 2"},
+		{Role: domain.RoleUser, Content: "turn 3"},
+		{Role: domain.RoleUser, Content: toolr},
+		{Role: domain.RoleAssistant, Content: "reply 3"},
+	}
+
+	// maxUserTurns=2: should keep turns 2 and 3 (plus their tool results and replies)
+	got := assembler.selectRecentMessages(messages, 100_000, 2)
+
+	// After filtering internal tool messages, expect: turn 2, reply 2, turn 3, reply 3
+	if len(got) != 4 {
+		var contents []string
+		for _, m := range got {
+			contents = append(contents, fmt.Sprintf("%s:%s", m.Role, m.Content[:min(30, len(m.Content))]))
+		}
+		t.Fatalf("expected 4 messages (2 turns), got %d: %v", len(got), contents)
+	}
+	if got[0].Content != "turn 2" {
+		t.Fatalf("first message should be 'turn 2', got %q", got[0].Content)
+	}
+	if got[3].Content != "reply 3" {
+		t.Fatalf("last message should be 'reply 3', got %q", got[3].Content)
+	}
+}
+
+func TestSelectRecentMessages_PreservesAssociatedToolMessages(t *testing.T) {
+	assembler := NewContextAssembler()
+	// Non-TOON tool results (not filtered by isInternalToolHistoryMessage) should be preserved.
+	messages := []domain.Message{
+		{Role: domain.RoleUser, Content: "user 1"},
+		{Role: domain.RoleAssistant, Content: "I'll search for that"},
+		{Role: domain.RoleAssistant, Content: "here are the search results"},
+		{Role: domain.RoleUser, Content: "user 2"},
+		{Role: domain.RoleAssistant, Content: "final reply"},
+	}
+
+	got := assembler.selectRecentMessages(messages, 100_000, 1)
+	// maxUserTurns=1: keep only last user turn (user 2 + final reply)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages for 1 user turn, got %d", len(got))
+	}
+	if got[0].Content != "user 2" {
+		t.Fatalf("first should be 'user 2', got %q", got[0].Content)
 	}
 }

@@ -23,11 +23,11 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	if err != nil {
 		return "", err
 	}
-	keepRecentMessages := s.keepRecentMessagesSnapshot()
-	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentMessages); err != nil {
+	keepRecentUserTurns := s.keepRecentUserTurnsSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentUserTurns); err != nil {
 		return "", err
 	}
-	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
 	contextForLLM := s.encodeUserMessageForLLM(ctx, conv.ChannelID, resolvedPersonaID, userMessage)
 	conv.AppendUserMessage(contextForLLM)
@@ -99,11 +99,11 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	keepRecentMessages := s.keepRecentMessagesSnapshot()
-	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentMessages); err != nil {
+	keepRecentUserTurns := s.keepRecentUserTurnsSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentUserTurns); err != nil {
 		return nil, err
 	}
-	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
 	// Pre-flight: flush memory and compact history if approaching context limit
 	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
@@ -179,11 +179,11 @@ func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx contex
 	if err != nil {
 		return nil, err
 	}
-	keepRecentMessages := s.keepRecentMessagesSnapshot()
-	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentMessages); err != nil {
+	keepRecentUserTurns := s.keepRecentUserTurnsSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentUserTurns); err != nil {
 		return nil, err
 	}
-	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentMessages)
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
 	contextForLLM = s.ensureTOONContextForLLM(ctx, conv.ChannelID, resolvedPersonaID, contextForLLM, messageToStore)
 
@@ -228,13 +228,13 @@ func (s *ChatService) preflightConversationRetention(
 	ctx context.Context,
 	conv *domain.Conversation,
 	persona *domain.PersonaModule,
-	keepRecentMessages int,
+	keepRecentUserTurns int,
 ) error {
 	if conv == nil {
 		return nil
 	}
 
-	removedCount, addedDigests := compactHistoryWithKeepRecent(conv, persona, keepRecentMessages)
+	removedCount, addedDigests := compactHistoryWithKeepRecent(conv, persona, keepRecentUserTurns)
 	if removedCount == 0 {
 		return nil
 	}
@@ -246,7 +246,7 @@ func (s *ChatService) preflightConversationRetention(
 		"preflight retention: conversation_id=%s removed=%d kept=%d added_digests=%d digests_total=%d",
 		conv.ID,
 		removedCount,
-		keepRecentMessages,
+		keepRecentUserTurns,
 		addedDigests,
 		len(conv.ContextDigests),
 	)

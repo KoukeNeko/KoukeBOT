@@ -7,10 +7,11 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 )
 
-func TestCompactHistoryAddsDigestAndKeepsRecentMessages(t *testing.T) {
+func TestCompactHistoryAddsDigestAndKeepsRecentUserTurns(t *testing.T) {
 	conv := &domain.Conversation{
 		Messages: make([]domain.Message, 0, 96),
 	}
+	// 90 alternating messages = 45 user turns
 	for i := 0; i < 90; i++ {
 		role := domain.RoleUser
 		content := "message content for digest testing"
@@ -26,7 +27,8 @@ func TestCompactHistoryAddsDigestAndKeepsRecentMessages(t *testing.T) {
 	}
 
 	cm := NewContextManager(4000, 800000)
-	cm.UpdateKeepRecentMessages(40)
+	// Keep 20 user turns = last 40 messages (alternating user/assistant pairs)
+	cm.UpdateKeepRecentUserTurns(20)
 	persona := &domain.PersonaModule{
 		Config: domain.PersonaConfig{
 			Variables: map[string]any{
