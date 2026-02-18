@@ -192,8 +192,16 @@ func trimTripletSectionPrefix(s string) string {
 	}
 }
 
+// sanitizeLiteralEscapes replaces literal escape sequences (the two-character
+// string `\n` or `\t`) that LLMs sometimes emit instead of real whitespace.
+func sanitizeLiteralEscapes(s string) string {
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.ReplaceAll(s, `\t`, "\t")
+	return s
+}
+
 func prepareAssistantOutput(raw string, policy PromptGuardPolicy) assistantOutputView {
-	raw = strings.TrimSpace(raw)
+	raw = sanitizeLiteralEscapes(strings.TrimSpace(raw))
 	if raw == "" || !policy.TripletOutputEnabled {
 		return assistantOutputView{
 			Content:   raw,

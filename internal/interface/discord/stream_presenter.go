@@ -67,7 +67,7 @@ func (p *discordStreamPresenter) processChunk(chunk llm.StreamChunk) (done bool,
 	if !p.shouldFlushIncremental() {
 		return false, false
 	}
-	if err := p.sendOrUpdate(p.fullResponse.String()); err != nil {
+	if err := p.sendOrUpdate(sanitizeLiteralEscapes(p.fullResponse.String())); err != nil {
 		logHandler.Errorf("stream update failed [%s]: %v", p.channelID, err)
 		return false, true
 	}
@@ -278,8 +278,16 @@ func (p *discordStreamPresenter) sendInitial(content string) (*discordgo.Message
 	return msg, err
 }
 
+// sanitizeLiteralEscapes replaces literal `\n` / `\t` sequences that LLMs
+// sometimes emit instead of real whitespace characters.
+func sanitizeLiteralEscapes(s string) string {
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.ReplaceAll(s, `\t`, "\t")
+	return s
+}
+
 func (p *discordStreamPresenter) sendFinal() {
-	finalContent := p.fullResponse.String()
+	finalContent := sanitizeLiteralEscapes(p.fullResponse.String())
 	if finalContent == "" {
 		if p.messageID == "" {
 			if p.sender == nil {
