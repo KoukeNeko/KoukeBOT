@@ -541,7 +541,7 @@ func formatFallbackNotice(fallbackModel, reason string) string {
 	if why == "" {
 		why = "primary model failed"
 	}
-	return fmt.Sprintf("```[Model fallback]\n\n switched to %s due to %s```", model, why)
+	return fmt.Sprintf("```\n[Model fallback] switched to %s\n%s\n```", model, why)
 }
 
 func normalizeFallbackReason(reason string) string {
