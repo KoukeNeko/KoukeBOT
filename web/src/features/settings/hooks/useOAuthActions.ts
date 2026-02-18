@@ -220,9 +220,12 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
 
       if (result.failed_count > 0) {
         const firstError = result.results.find((entry) => !entry.verified)?.error
+        const hint = firstError?.includes('project discovery')
+          ? '（該帳號尚未開通 Code Assist，請先用該帳號執行 npx @google/gemini-cli 完成 onboarding）'
+          : ''
         setMessage({
           type: 'err',
-          text: `驗證完成：成功 ${result.verified_count}，失敗 ${result.failed_count}${firstError ? `。首個錯誤：${firstError}` : ''}`,
+          text: `驗證完成：成功 ${result.verified_count}，失敗 ${result.failed_count}${firstError ? `。首個錯誤：${firstError}${hint}` : ''}`,
         })
         return
       }
