@@ -47,7 +47,7 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 	}
 
 	senderLabel := resolveSenderLabel(refMsg.Author)
-	ts := formatHistoryTimestamp(refMsg.Timestamp.UTC())
+	ts := formatHistoryTimestamp(h.inTimezone(refMsg.Timestamp))
 
 	isBot := isBotAuthor(s, refMsg.Author)
 	var formatted string
@@ -146,7 +146,7 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 
 		isBot := isBotAuthor(s, msg.Author)
 		senderLabel := resolveSenderLabel(msg.Author)
-		ts := formatHistoryTimestamp(msg.Timestamp.UTC())
+		ts := formatHistoryTimestamp(h.inTimezone(msg.Timestamp))
 
 		var formattedMsg string
 		if isBot {
@@ -204,6 +204,21 @@ func historyRecentOffset(totalMessages, messageIndex int) int {
 // history labels, ensuring consistent temporal context regardless of day boundary.
 func formatHistoryTimestamp(t time.Time) string {
 	return t.Format("01/02 15:04")
+}
+
+// inTimezone converts a time to the configured global timezone so that history
+// timestamps are consistent with what the LLM believes the current time is.
+// Falls back to UTC when no valid timezone is configured.
+func (h *Handler) inTimezone(t time.Time) time.Time {
+	tz := h.chatService.GetTimezone()
+	if tz == "" || tz == "auto" {
+		return t.Local()
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return t.UTC()
+	}
+	return t.In(loc)
 }
 
 // isBotAuthor returns true if the message author is the bot itself.

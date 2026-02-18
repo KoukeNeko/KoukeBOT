@@ -195,6 +195,11 @@ func (a *ContextAssembler) snapshotGlobalTimezone() string {
 	return normalizeTimezoneValue(timezone)
 }
 
+// GetGlobalTimezone returns the currently configured global timezone for external use.
+func (a *ContextAssembler) GetGlobalTimezone() string {
+	return a.snapshotGlobalTimezone()
+}
+
 func (a *ContextAssembler) snapshotBudget() ContextBudgetManager {
 	a.budgetMu.RLock()
 	budget := *a.budget

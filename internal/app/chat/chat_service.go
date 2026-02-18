@@ -135,6 +135,14 @@ func (s *ChatService) UpdateGlobalTimezone(timezone string) {
 	s.assembler.UpdateGlobalTimezone(timezone)
 }
 
+// GetTimezone returns the currently configured global timezone.
+func (s *ChatService) GetTimezone() string {
+	if s == nil || s.assembler == nil {
+		return ""
+	}
+	return s.assembler.GetGlobalTimezone()
+}
+
 // UpdateToolExecutionPolicy hot-swaps tool loop policy without restart.
 func (s *ChatService) UpdateToolExecutionPolicy(policy ToolExecutionPolicy) {
 	if s == nil {
