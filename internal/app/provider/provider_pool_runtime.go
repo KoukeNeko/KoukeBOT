@@ -175,6 +175,13 @@ func (pp *ProviderPool) handleBillingError(email string, err error) {
 	logPool.Warnf("BILLING: account %s disabled for %s: %s", email, formatDuration(duration), truncateError(err, 200))
 }
 
+func (pp *ProviderPool) handlePermissionDeniedError(email string, err error) {
+	failures := pp.failureCount(email)
+	duration := billingDisableDuration(failures + 1)
+	pp.markDisabled(email, duration, "permission_denied", err)
+	logPool.Warnf("PERMISSION_DENIED: account %s disabled for %s — IAM role missing: %s", email, formatDuration(duration), truncateError(err, 200))
+}
+
 func (pp *ProviderPool) handleOverloadedError(email string, err error) {
 	cooldown := overloadedCooldown()
 	pp.markCooldown(email, cooldown, err)

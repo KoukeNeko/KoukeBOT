@@ -19,6 +19,7 @@ const (
 	errorNone errorType = iota
 	errorQuota                // 429 / RESOURCE_EXHAUSTED / quota exceeded
 	errorBilling              // 402 / payment required / insufficient credits
+	errorPermissionDenied     // 403 / IAM permission denied — account lacks access, disable and try next
 	errorOverloaded           // Server overloaded (retryable, short cooldown)
 	errorModelCapacity        // Model server has no capacity (distinct from account quota)
 	errorModelUnavailable     // Model not found / not supported
@@ -51,6 +52,9 @@ func classifyError(err error) errorType {
 	}
 	if isBillingError(lower) {
 		return errorBilling
+	}
+	if isPermissionDeniedError(lower) {
+		return errorPermissionDenied
 	}
 	if isOverloadedError(lower) {
 		return errorOverloaded
@@ -130,6 +134,16 @@ func isBillingError(lower string) bool {
 		strings.Contains(lower, "insufficient credits") ||
 		strings.Contains(lower, "insufficient balance") ||
 		strings.Contains(lower, "credit balance")
+}
+
+// isPermissionDeniedError detects IAM/OAuth permission failures (HTTP 403).
+// These indicate the account lacks the necessary IAM role for this endpoint
+// (e.g. cloudaicompanion.companions.generateChat), so the account should be
+// disabled and the next available account tried instead.
+func isPermissionDeniedError(lower string) bool {
+	return strings.Contains(lower, "iam_permission_denied") ||
+		strings.Contains(lower, "permission_denied") ||
+		(strings.Contains(lower, "http 403") && strings.Contains(lower, "permission"))
 }
 
 // isOverloadedError detects server overload conditions (retryable with short cooldown).

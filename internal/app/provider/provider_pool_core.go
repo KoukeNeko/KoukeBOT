@@ -325,6 +325,9 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		case errorBilling:
 			pp.handleBillingError(selection.email, err)
 			continue
+		case errorPermissionDenied:
+			pp.handlePermissionDeniedError(selection.email, err)
+			continue
 		case errorOverloaded:
 			pp.handleOverloadedError(selection.email, err)
 			continue
