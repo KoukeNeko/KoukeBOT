@@ -62,25 +62,10 @@ func classifyError(err error) errorType {
 	if isQuotaLikeError(s, lower) {
 		return errorQuota
 	}
-
-	if strings.Contains(lower, "tool_use_id") ||
-		strings.Contains(lower, "invalid_request_error") ||
-		strings.Contains(lower, "validation") {
+	if isValidationError(lower) {
 		return errorValidation
 	}
-
-	if strings.Contains(lower, "http 5") ||
-		strings.Contains(lower, "internal server error") ||
-		strings.Contains(lower, "bad gateway") ||
-		strings.Contains(lower, "service unavailable") ||
-		strings.Contains(lower, "gateway timeout") ||
-		strings.Contains(lower, "connection reset") ||
-		strings.Contains(lower, "connection refused") ||
-		strings.Contains(lower, "dial tcp") ||
-		strings.Contains(lower, "timeout") ||
-		strings.Contains(lower, "temporary") ||
-		strings.Contains(lower, "context deadline exceeded") ||
-		strings.Contains(s, "EOF") {
+	if isTransientError(s, lower) {
 		return errorTransient
 	}
 
@@ -108,6 +93,9 @@ func isModelCapacityError(lower string) bool {
 		strings.Contains(lower, "model capacity")
 }
 
+// isModelUnavailableError detects model-not-found or unsupported-modality errors.
+// Covers both HTTP 404 responses and provider-specific "not supported" messages
+// for multimodal inputs when the selected model does not support vision.
 func isModelUnavailableError(lower string) bool {
 	if strings.Contains(lower, "http 404") ||
 		strings.Contains(lower, "\"status\": \"not_found\"") ||
@@ -163,6 +151,32 @@ func isQuotaLikeError(s, lower string) bool {
 		strings.Contains(lower, "usage limit") ||
 		strings.Contains(lower, "rate limit") ||
 		strings.Contains(lower, "exceeded your current quota")
+}
+
+// isValidationError detects malformed request errors (invalid tool call IDs, schema violations, etc.).
+// These are non-retryable and indicate a bug in the request construction.
+func isValidationError(lower string) bool {
+	return strings.Contains(lower, "tool_use_id") ||
+		strings.Contains(lower, "invalid_request_error") ||
+		strings.Contains(lower, "validation")
+}
+
+// isTransientError detects temporary infrastructure failures (5xx, timeouts, network resets).
+// These are retryable and should trigger a short cooldown before the next attempt.
+// Takes both original (s) and lowercased (lower) forms because "EOF" is uppercase.
+func isTransientError(s, lower string) bool {
+	return strings.Contains(lower, "http 5") ||
+		strings.Contains(lower, "internal server error") ||
+		strings.Contains(lower, "bad gateway") ||
+		strings.Contains(lower, "service unavailable") ||
+		strings.Contains(lower, "gateway timeout") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "dial tcp") ||
+		strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "temporary") ||
+		strings.Contains(lower, "context deadline exceeded") ||
+		strings.Contains(s, "EOF")
 }
 
 // isQuotaError checks if an error indicates a 429/RESOURCE_EXHAUSTED response.
@@ -261,6 +275,9 @@ func overloadedCooldown() time.Duration {
 	return addJitter(10*time.Second, 5*time.Second)
 }
 
+// transientCooldown returns an escalating cooldown for transient infrastructure errors.
+// Formula: base * 2^(failureCount-1), capped at 30 seconds, with ±250ms jitter.
+// Sequence (base=2s): 2s → 4s → 8s → 16s → 30s → 30s ...
 func transientCooldown(base time.Duration, failureCount int) time.Duration {
 	if base <= 0 {
 		base = 2 * time.Second
@@ -275,6 +292,8 @@ func transientCooldown(base time.Duration, failureCount int) time.Duration {
 	return addJitter(cooldown, 250*time.Millisecond)
 }
 
+// exponentialBackoff returns a delay for retry loops (e.g., empty-stream retries).
+// Formula: base * 2^retry, capped at 30 seconds, with ±500ms jitter.
 func exponentialBackoff(base time.Duration, retry int) time.Duration {
 	if base <= 0 {
 		base = 1 * time.Second

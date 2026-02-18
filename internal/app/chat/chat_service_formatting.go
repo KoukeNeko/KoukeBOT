@@ -32,22 +32,32 @@ func hasPersonaLockMessage(messages []domain.Message) bool {
 	return false
 }
 
-// formatToolResults formats tool results for LLM consumption.
-func formatToolResults(toolCalls []domain.ToolCall, results []domain.ToolResult) string {
-	// Create a map for quick lookup of tool calls by ID
-	callMap := make(map[string]domain.ToolCall)
+// buildToolCallMap indexes a slice of ToolCall by ID for O(1) lookup.
+// Used by formatToolResults and formatToolResultsLegacy to correlate results with their calls.
+func buildToolCallMap(toolCalls []domain.ToolCall) map[string]domain.ToolCall {
+	m := make(map[string]domain.ToolCall, len(toolCalls))
 	for _, call := range toolCalls {
-		callMap[call.ID] = call
+		m[call.ID] = call
 	}
+	return m
+}
+
+// resolveToolName returns the tool name for a given call ID, or "unknown" if not found.
+func resolveToolName(callMap map[string]domain.ToolCall, callID string) string {
+	if call, ok := callMap[callID]; ok {
+		return call.Name
+	}
+	return "unknown"
+}
+
+// formatToolResults formats tool results for LLM consumption using the TOON encoding.
+// Falls back to plain text if TOON encoding fails.
+func formatToolResults(toolCalls []domain.ToolCall, results []domain.ToolResult) string {
+	callMap := buildToolCallMap(toolCalls)
 
 	items := make([]tooncodec.ToolResultInput, 0, len(results))
 	for _, result := range results {
-		call, exists := callMap[result.ToolCallID]
-		toolName := "unknown"
-		if exists {
-			toolName = call.Name
-		}
-
+		toolName := resolveToolName(callMap, result.ToolCallID)
 		compressed := compressToolResult(toolName, result.Content)
 		items = append(items, tooncodec.ToolResultInput{
 			ID:   result.ToolCallID,
@@ -65,21 +75,15 @@ func formatToolResults(toolCalls []domain.ToolCall, results []domain.ToolResult)
 	return encoded
 }
 
+// formatToolResultsLegacy formats tool results as plain human-readable text.
+// This is the fallback path when TOON encoding fails.
 func formatToolResultsLegacy(toolCalls []domain.ToolCall, results []domain.ToolResult) string {
+	callMap := buildToolCallMap(toolCalls)
+
 	var formatted string
 	formatted += "Tool execution results:\n\n"
-
-	callMap := make(map[string]domain.ToolCall)
-	for _, call := range toolCalls {
-		callMap[call.ID] = call
-	}
-
 	for _, result := range results {
-		call, exists := callMap[result.ToolCallID]
-		toolName := "unknown"
-		if exists {
-			toolName = call.Name
-		}
+		toolName := resolveToolName(callMap, result.ToolCallID)
 		compressed := compressToolResult(toolName, result.Content)
 		formatted += fmt.Sprintf("Tool: %s (ID: %s)\n", toolName, result.ToolCallID)
 		if result.IsError {
@@ -91,13 +95,22 @@ func formatToolResultsLegacy(toolCalls []domain.ToolCall, results []domain.ToolR
 	return formatted
 }
 
+// Tool result truncation limits prevent individual tool outputs from consuming
+// too much of the LLM context window.  Limits are intentionally conservative
+// (~4 chars ≈ 1 token) to leave room for the conversation history and system prompt.
+//
+// web_fetch uses a split limit: the header (URL, status, etc.) is kept intact
+// and only the body portion is capped separately via toolResultWebFetchBodyMaxChars.
 const (
-	toolResultDefaultMaxChars       = 6000
-	toolResultWebFetchMaxChars      = 3500
-	toolResultWebFetchBodyMaxChars  = 2200
-	toolResultWebSearchMaxChars     = 3000
-	toolResultDiscordObserveMaxChar = 3000
-	toolResultFileReadMaxChars      = 2500
+	toolResultDefaultMaxChars = 6000 // ~1500 tokens — safe default for most tools
+
+	// web_fetch pages can be very long; keep the header for metadata and cap the body tightly.
+	toolResultWebFetchMaxChars     = 3500 // total cap before header/body split
+	toolResultWebFetchBodyMaxChars = 2200 // body-only cap after "--- CONTENT START ---" marker
+
+	toolResultWebSearchMaxChars     = 3000 // search results rarely need more than ~750 tokens
+	toolResultDiscordObserveMaxChar = 3000 // channel observation output; same budget as search
+	toolResultFileReadMaxChars      = 2500 // file content; tighter than default to avoid context flood
 )
 
 func compressToolResult(toolName, content string) string {

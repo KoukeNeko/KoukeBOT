@@ -16,8 +16,16 @@ var tripletParseFailedCount uint64
 const personaConfigsBaseDir = "configs/personas"
 
 const (
-	DefaultMaxToolRounds            = 5
+	// DefaultMaxToolRounds is the default maximum number of tool-use / response cycles per turn.
+	DefaultMaxToolRounds = 5
+	// DefaultMaxWebSearchCallsPerTurn limits web_search invocations to prevent runaway token usage.
 	DefaultMaxWebSearchCallsPerTurn = 2
+
+	// maxToolRoundsLimit is the hard upper bound accepted by normalizeToolExecutionPolicy.
+	// Beyond 6 rounds, latency and token costs grow too high to be useful in practice.
+	maxToolRoundsLimit = 6
+	// maxWebSearchCallsLimit caps web_search calls per turn to avoid excessive external requests.
+	maxWebSearchCallsLimit = 4
 )
 
 // ToolExecutionPolicy controls per-request tool-loop behavior and resilience.
@@ -218,14 +226,14 @@ func normalizeToolExecutionPolicy(policy ToolExecutionPolicy) ToolExecutionPolic
 	if policy.MaxToolRounds < 1 {
 		policy.MaxToolRounds = defaults.MaxToolRounds
 	}
-	if policy.MaxToolRounds > 6 {
-		policy.MaxToolRounds = 6
+	if policy.MaxToolRounds > maxToolRoundsLimit {
+		policy.MaxToolRounds = maxToolRoundsLimit
 	}
 	if policy.MaxWebSearchCallsPerTurn < 1 {
 		policy.MaxWebSearchCallsPerTurn = defaults.MaxWebSearchCallsPerTurn
 	}
-	if policy.MaxWebSearchCallsPerTurn > 4 {
-		policy.MaxWebSearchCallsPerTurn = 4
+	if policy.MaxWebSearchCallsPerTurn > maxWebSearchCallsLimit {
+		policy.MaxWebSearchCallsPerTurn = maxWebSearchCallsLimit
 	}
 	return policy
 }

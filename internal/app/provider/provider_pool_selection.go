@@ -40,6 +40,12 @@ func (pp *ProviderPool) selectNextProviderLocked(now time.Time) (int, bool) {
 	return best, true
 }
 
+// betterCandidate reports whether provider a should be preferred over b.
+// Selection priority (in order):
+//  1. Fewer consecutive failures — prefer healthier accounts first.
+//  2. Least recently used — spread load across accounts in the pool.
+//  3. Circular distance from the current pointer — ensures round-robin fairness
+//     when all accounts have identical usage history (e.g., on first request).
 func betterCandidate(a, b poolEntry, idxA, idxB, current, size int) bool {
 	if a.consecutiveFailures != b.consecutiveFailures {
 		return a.consecutiveFailures < b.consecutiveFailures
@@ -58,6 +64,8 @@ func betterCandidate(a, b poolEntry, idxA, idxB, current, size int) bool {
 	return circularDistance(idxA, current, size) < circularDistance(idxB, current, size)
 }
 
+// circularDistance returns the forward distance from current to idx in a ring of the given size.
+// This provides a stable, bias-free tiebreaker for round-robin account rotation.
 func circularDistance(idx, current, size int) int {
 	if idx >= current {
 		return idx - current
