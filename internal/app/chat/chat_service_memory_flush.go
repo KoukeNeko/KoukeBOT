@@ -128,8 +128,26 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 		logChat.Logf("flush complete: agent responded (%d chars)", len(trimmed))
 	}
 
-	// Compact history
-	s.contextManager.CompactHistory(conv, persona)
+	// Attempt LLM-driven summarization of messages that will be removed.
+	keepRecent := s.keepRecentUserTurnsSnapshot()
+	cutoff := findTurnCutoffByUserTurns(conv.Messages, keepRecent)
+
+	var preBuiltDigest *domain.ConversationDigest
+	if cutoff > 0 {
+		removed := conv.Messages[:cutoff]
+		llmDigest, err := SummarizeConversationBlock(ctx, s.provider, SummarizeRequest{
+			Messages: removed,
+			Persona:  persona,
+		})
+		if err != nil {
+			logChat.Warnf("llm summarization failed, falling back to rule-based: %v", err)
+		} else {
+			preBuiltDigest = &llmDigest
+		}
+	}
+
+	// Compact history (uses LLM digest if available, otherwise rule-based fallback)
+	s.contextManager.CompactHistoryWithDigest(conv, persona, preBuiltDigest)
 	conv.AddUsageTokens(flushTokens)
 	if flushTokens > 0 {
 		logChat.Logf("flush tokens: +%d (usage_total: %d, context_estimate: %d)", flushTokens, conv.UsageTokensTotal, conv.CumulativeTokens)

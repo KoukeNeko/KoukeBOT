@@ -84,17 +84,28 @@ func (cm *ContextManager) KeepRecentUserTurns() int {
 // CompactHistory removes old messages, keeping only the most recent ones.
 // Should be called AFTER memory flush so important information is already persisted.
 func (cm *ContextManager) CompactHistory(conv *domain.Conversation, persona *domain.PersonaModule) {
+	cm.CompactHistoryWithDigest(conv, persona, nil)
+}
+
+// CompactHistoryWithDigest removes old messages and uses a pre-built digest if provided.
+// If preBuiltDigest is nil, falls back to rule-based digest generation.
+func (cm *ContextManager) CompactHistoryWithDigest(conv *domain.Conversation, persona *domain.PersonaModule, preBuiltDigest *domain.ConversationDigest) {
 	keepRecent := cm.KeepRecentUserTurns()
-	removedCount, addedDigests := compactHistoryWithKeepRecent(conv, persona, keepRecent)
+	removedCount, addedDigests := compactHistoryWithDigest(conv, persona, keepRecent, preBuiltDigest)
 	if removedCount == 0 {
 		return
 	}
+	source := "rule-based"
+	if preBuiltDigest != nil {
+		source = "llm"
+	}
 	logCtx.Logf(
-		"compacted: removed %d old messages, kept %d recent, added_digests=%d, digests_total=%d",
+		"compacted: removed=%d kept=%d added_digests=%d digests_total=%d source=%s",
 		removedCount,
 		keepRecent,
 		addedDigests,
 		len(conv.ContextDigests),
+		source,
 	)
 }
 
@@ -181,6 +192,12 @@ func findTurnCutoffByUserTurns(messages []domain.Message, maxUserTurns int) int 
 // compactHistoryWithKeepRecent removes old messages keeping the last N user turns
 // and their associated responses. Returns how many messages were removed.
 func compactHistoryWithKeepRecent(conv *domain.Conversation, persona *domain.PersonaModule, keepRecentUserTurns int) (removedCount int, addedDigests int) {
+	return compactHistoryWithDigest(conv, persona, keepRecentUserTurns, nil)
+}
+
+// compactHistoryWithDigest removes old messages and uses a pre-built digest if provided.
+// If preBuiltDigest is nil, falls back to rule-based digest generation.
+func compactHistoryWithDigest(conv *domain.Conversation, persona *domain.PersonaModule, keepRecentUserTurns int, preBuiltDigest *domain.ConversationDigest) (removedCount int, addedDigests int) {
 	if conv == nil {
 		return 0, 0
 	}
@@ -193,7 +210,11 @@ func compactHistoryWithKeepRecent(conv *domain.Conversation, persona *domain.Per
 
 	removedCount = cutoff
 	removed := conv.Messages[:removedCount]
-	if digest, ok := (&ContextManager{}).buildDigest(removed, persona); ok {
+
+	if preBuiltDigest != nil {
+		conv.AddDigest(*preBuiltDigest)
+		addedDigests = 1
+	} else if digest, ok := (&ContextManager{}).buildDigest(removed, persona); ok {
 		conv.AddDigest(digest)
 		addedDigests = 1
 	}
