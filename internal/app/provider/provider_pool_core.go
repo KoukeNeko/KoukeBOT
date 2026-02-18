@@ -295,7 +295,7 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		waitRetryUsed = selection.waitRetryUsed
 		if selection.err != nil {
 			if allowOAuthExhaustionFallback {
-				if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, selection.err); attempted {
+				if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, selection.err, true); attempted {
 					if fallbackErr == nil {
 						return result, nil
 					}
@@ -386,6 +386,20 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		if lastErr != nil {
 			fallbackReason = lastErr.Error()
 		}
+		var providerFallbackErr error
+
+		// Prefer AI Studio provider fallback before model fallback.
+		if allowOAuthExhaustionFallback {
+			if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, lastErr, false); attempted {
+				if fallbackErr == nil {
+					if pp.circuitBreaker != nil {
+						pp.circuitBreaker.recordSuccess()
+					}
+					return result, nil
+				}
+				providerFallbackErr = fallbackErr
+			}
+		}
 
 		// Attempt fallback model before giving up.
 		if result, err := tryFallbackModel(ctx, pp, fn, fallbackReason); err == nil {
@@ -406,13 +420,16 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		}
 
 		if lastErr != nil {
+			if providerFallbackErr != nil {
+				return zero, fmt.Errorf("%w (AI Studio fallback failed: %s)", lastErr, truncateError(providerFallbackErr, 220))
+			}
 			return zero, lastErr
 		}
 	}
 
 	exhaustedErr := pp.exhaustedError(waitRetryUsed)
 	if allowOAuthExhaustionFallback {
-		if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, exhaustedErr); attempted {
+		if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, exhaustedErr, true); attempted {
 			if fallbackErr == nil {
 				return result, nil
 			}
@@ -516,18 +533,24 @@ func tryOAuthExhaustionFallback[T any](
 	pp *ProviderPool,
 	fn func(llm.Provider) (T, error),
 	triggerErr error,
+	requireQuotaExhaustion bool,
 ) (T, bool, error) {
 	var zero T
 
-	fallbackProvider, reason, eligible := pp.oauthExhaustionFallbackProvider(triggerErr)
+	fallbackProvider, reason, eligible := pp.oauthExhaustionFallbackProvider(triggerErr, requireQuotaExhaustion)
 	if !eligible {
 		return zero, false, nil
 	}
 
 	atomic.AddUint64(&pp.metricOAuthExhaustionFallbackTry, 1)
 	logPool.Logf("metric pool.oauth_exhaustion_fallback_try=1")
-	logPool.Warnf("all OAuth accounts quota-exhausted — trying provider fallback via %s",
-		fallbackProvider.ModelInfo().ProviderName)
+	if requireQuotaExhaustion {
+		logPool.Warnf("all OAuth accounts quota-exhausted — trying provider fallback via %s",
+			fallbackProvider.ModelInfo().ProviderName)
+	} else {
+		logPool.Warnf("trying provider fallback via %s before model fallback",
+			fallbackProvider.ModelInfo().ProviderName)
+	}
 
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
@@ -552,12 +575,22 @@ func tryOAuthExhaustionFallback[T any](
 	return result, true, nil
 }
 
-func (pp *ProviderPool) oauthExhaustionFallbackProvider(triggerErr error) (llm.Provider, string, bool) {
+func (pp *ProviderPool) oauthExhaustionFallbackProvider(triggerErr error, requireQuotaExhaustion bool) (llm.Provider, string, bool) {
 	pp.mu.RLock()
 	defer pp.mu.RUnlock()
 
 	if pp == nil || pp.oauthExhaustionFallback == nil || len(pp.entries) == 0 {
 		return nil, "", false
+	}
+
+	reason := "provider fallback triggered"
+	if triggerErr != nil {
+		if text := strings.TrimSpace(triggerErr.Error()); text != "" {
+			reason = text
+		}
+	}
+	if !requireQuotaExhaustion {
+		return pp.oauthExhaustionFallback, reason, true
 	}
 
 	now := time.Now()
@@ -580,11 +613,8 @@ func (pp *ProviderPool) oauthExhaustionFallbackProvider(triggerErr error) (llm.P
 		return nil, "", false
 	}
 
-	reason := "all OAuth accounts exhausted by quota"
-	if triggerErr != nil {
-		if text := strings.TrimSpace(triggerErr.Error()); text != "" {
-			reason = text
-		}
+	if reason == "provider fallback triggered" {
+		reason = "all OAuth accounts exhausted by quota"
 	}
 	return pp.oauthExhaustionFallback, reason, true
 }

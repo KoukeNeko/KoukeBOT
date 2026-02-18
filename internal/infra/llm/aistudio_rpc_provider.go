@@ -18,7 +18,10 @@ import (
 const (
 	aiStudioRPCGenerateContentPath = "/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent"
 	aiStudioRPCCountTokensPath     = "/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/CountTokens"
+	aiStudioRPCGenerateAccessToken = "/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateAccessToken"
 	aiStudioRPCXUserAgent          = "grpc-web-javascript/0.1"
+	aiStudioAccessTokenTTL         = 55 * time.Minute
+	aiStudioAccessTokenRefreshSkew = 10 * time.Minute
 )
 
 // AIStudioRPCProvider is a best-effort, non-official adapter that calls the
@@ -30,6 +33,10 @@ type AIStudioRPCProvider struct {
 
 	mu    sync.RWMutex
 	tools []domain.Tool
+
+	authMu            sync.Mutex
+	accessToken       string
+	accessTokenExpiry time.Time
 }
 
 // NewAIStudioRPCProvider creates an AI Studio RPC provider from a persisted session.
@@ -65,6 +72,10 @@ func (g *AIStudioRPCProvider) WithModel(model string) Provider {
 	g.mu.RLock()
 	tools := append([]domain.Tool(nil), g.tools...)
 	g.mu.RUnlock()
+	g.authMu.Lock()
+	accessToken := g.accessToken
+	accessTokenExpiry := g.accessTokenExpiry
+	g.authMu.Unlock()
 
 	normalizedModel := NormalizeGoogleModelAlias(model)
 	if normalizedModel == "" {
@@ -72,10 +83,12 @@ func (g *AIStudioRPCProvider) WithModel(model string) Provider {
 	}
 
 	return &AIStudioRPCProvider{
-		httpClient: g.httpClient,
-		session:    g.session,
-		model:      normalizedModel,
-		tools:      tools,
+		httpClient:        g.httpClient,
+		session:           g.session,
+		model:             normalizedModel,
+		tools:             tools,
+		accessToken:       accessToken,
+		accessTokenExpiry: accessTokenExpiry,
 	}
 }
 
@@ -247,10 +260,114 @@ func (g *AIStudioRPCProvider) callRPC(ctx context.Context, path string, payload 
 		return nil, fmt.Errorf("marshal AI Studio payload: %w", err)
 	}
 
+	authHeader, authErr := g.resolveRPCAuthHeader(ctx, path, false)
+	statusCode, respBody, err := g.doRPCRequest(ctx, path, body, authHeader)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode == http.StatusUnauthorized && path != aiStudioRPCGenerateAccessToken {
+		refreshedAuth, refreshErr := g.resolveRPCAuthHeader(ctx, path, true)
+		if refreshErr == nil && strings.TrimSpace(refreshedAuth) != "" && refreshedAuth != authHeader {
+			statusCode, respBody, err = g.doRPCRequest(ctx, path, body, refreshedAuth)
+			if err != nil {
+				return nil, err
+			}
+			authHeader = refreshedAuth
+		} else if authErr == nil {
+			authErr = refreshErr
+		}
+	}
+
+	if statusCode != http.StatusOK {
+		msg := summarizeAIStudioBody(respBody, 500)
+		if authErr != nil {
+			msg += " (auth refresh unavailable)"
+		}
+		return nil, fmt.Errorf(
+			"AI Studio RPC %s HTTP %d: %s",
+			path,
+			statusCode,
+			msg,
+		)
+	}
+	return respBody, nil
+}
+
+func (g *AIStudioRPCProvider) resolveRPCAuthHeader(ctx context.Context, path string, forceRefresh bool) (string, error) {
+	staticAuth := strings.TrimSpace(g.session.Authorization)
+	if path == aiStudioRPCGenerateAccessToken {
+		return staticAuth, nil
+	}
+
+	token, err := g.ensureAccessToken(ctx, forceRefresh)
+	if token != "" {
+		return "Bearer " + token, nil
+	}
+	if staticAuth != "" {
+		return staticAuth, err
+	}
+	return "", err
+}
+
+func (g *AIStudioRPCProvider) ensureAccessToken(ctx context.Context, forceRefresh bool) (string, error) {
+	if strings.TrimSpace(g.session.Cookie) == "" {
+		return "", fmt.Errorf("AI Studio session missing cookie for automatic token refresh")
+	}
+
+	g.authMu.Lock()
+	defer g.authMu.Unlock()
+
+	if !forceRefresh {
+		token := strings.TrimSpace(g.accessToken)
+		if token != "" {
+			refreshAt := g.accessTokenExpiry.Add(-aiStudioAccessTokenRefreshSkew)
+			if g.accessTokenExpiry.IsZero() || time.Now().Before(refreshAt) {
+				return token, nil
+			}
+		}
+	}
+
+	token, err := g.generateAccessTokenLocked(ctx)
+	if err != nil {
+		return "", err
+	}
+	g.accessToken = token
+	g.accessTokenExpiry = time.Now().Add(aiStudioAccessTokenTTL)
+	return g.accessToken, nil
+}
+
+func (g *AIStudioRPCProvider) generateAccessTokenLocked(ctx context.Context) (string, error) {
+	body, err := json.Marshal([]any{"users/me"})
+	if err != nil {
+		return "", fmt.Errorf("marshal AI Studio access token payload: %w", err)
+	}
+
+	statusCode, respBody, err := g.doRPCRequest(ctx, aiStudioRPCGenerateAccessToken, body, strings.TrimSpace(g.session.Authorization))
+	if err != nil {
+		return "", err
+	}
+	if statusCode != http.StatusOK {
+		return "", fmt.Errorf(
+			"AI Studio RPC %s HTTP %d: %s",
+			aiStudioRPCGenerateAccessToken,
+			statusCode,
+			summarizeAIStudioBody(respBody, 300),
+		)
+	}
+
+	token, err := parseAIStudioAccessToken(respBody)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (g *AIStudioRPCProvider) doRPCRequest(ctx context.Context, path string, body []byte, authHeader string) (int, []byte, error) {
 	url := strings.TrimRight(g.session.Endpoint, "/") + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("create AI Studio request: %w", err)
+		return 0, nil, fmt.Errorf("create AI Studio request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json+protobuf")
@@ -272,26 +389,18 @@ func (g *AIStudioRPCProvider) callRPC(ctx context.Context, path string, payload 
 	if g.session.Cookie != "" {
 		req.Header.Set("Cookie", g.session.Cookie)
 	}
-	if g.session.Authorization != "" {
-		req.Header.Set("Authorization", g.session.Authorization)
+	if strings.TrimSpace(authHeader) != "" {
+		req.Header.Set("Authorization", authHeader)
 	}
 
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("AI Studio RPC request failed: %w", err)
+		return 0, nil, fmt.Errorf("AI Studio RPC request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"AI Studio RPC %s HTTP %d: %s",
-			path,
-			resp.StatusCode,
-			summarizeAIStudioBody(respBody, 500),
-		)
-	}
-	return respBody, nil
+	return resp.StatusCode, respBody, nil
 }
 
 func parseAIStudioFinalAnswer(raw []byte) (string, error) {
@@ -309,6 +418,46 @@ func parseAIStudioFinalAnswer(raw []byte) (string, error) {
 		return clean, nil
 	}
 	return "", fmt.Errorf("AI Studio RPC response did not contain model text")
+}
+
+func parseAIStudioAccessToken(raw []byte) (string, error) {
+	var payload any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", fmt.Errorf("parse AI Studio access token response: %w", err)
+	}
+
+	token := findAIStudioAccessToken(payload)
+	if token == "" {
+		return "", fmt.Errorf("AI Studio access token response did not contain bearer token")
+	}
+	return token, nil
+}
+
+func findAIStudioAccessToken(node any) string {
+	switch typed := node.(type) {
+	case string:
+		token := strings.TrimSpace(typed)
+		if strings.HasPrefix(token, "ya29.") {
+			return token
+		}
+		return ""
+	case []any:
+		// GenerateAccessToken response is usually ["ya29...."].
+		if len(typed) > 0 {
+			if token, ok := typed[0].(string); ok {
+				token = strings.TrimSpace(token)
+				if strings.HasPrefix(token, "ya29.") {
+					return token
+				}
+			}
+		}
+		for _, child := range typed {
+			if token := findAIStudioAccessToken(child); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
 }
 
 func collectAIStudioModelTexts(node any) []string {

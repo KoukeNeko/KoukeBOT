@@ -511,6 +511,42 @@ func TestProviderPoolFallbackModelSucceeds(t *testing.T) {
 	}
 }
 
+func TestProviderPoolPrefersAIStudioBeforeFallbackModel(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModel("gemini-2.0-flash")
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	primary := &switchableErrProvider{
+		errProvider: errProvider{err: capErr},
+		fallbackID:  "fallback-model",
+	}
+	pool.AddOrReplace(primary, "a@example.com")
+
+	aistudio := &countingProvider{id: "aistudio-rpc"}
+	pool.SetOAuthExhaustionFallback(aistudio)
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected AI Studio fallback success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "aistudio-rpc") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if strings.Contains(resp.Content, "[Model fallback]") {
+		t.Fatalf("expected provider fallback before model fallback, got: %q", resp.Content)
+	}
+	if !strings.Contains(resp.Content, "[Provider fallback]") {
+		t.Fatalf("expected provider fallback annotation, got: %q", resp.Content)
+	}
+	if aistudio.chatCalls != 1 {
+		t.Fatalf("AI Studio fallback calls = %d, want 1", aistudio.chatCalls)
+	}
+}
+
 func TestProviderPoolFallbackModelDisabledReturnsError(t *testing.T) {
 	pool := NewProviderPool()
 	pool.SetAutoRetryCount(0)
