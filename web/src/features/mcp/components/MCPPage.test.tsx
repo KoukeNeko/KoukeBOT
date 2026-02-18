@@ -70,6 +70,9 @@ function buildForm(mode: SettingsData['web_tool_mode'], serverID: string): Setti
     negative_constraint_default: 'x',
     fallback_model_enabled: false,
     fallback_model: '',
+    request_queue_enabled: true,
+    request_queue_capacity: 10,
+    request_queue_timeout_seconds: 120,
   }
 }
 

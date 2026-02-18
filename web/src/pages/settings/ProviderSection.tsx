@@ -446,6 +446,64 @@ export default function ProviderSection({
         </button>
       </section>
 
+      <section className="settings-section">
+        <h3 className="settings-section-title">請求佇列（Request Queue）</h3>
+
+        <div className="form-field-checkbox-row">
+          <Checkbox
+            checked={form.request_queue_enabled}
+            onChange={(checked) =>
+              setForm({ ...form, request_queue_enabled: checked })
+            }
+            label="啟用請求佇列（所有帳號冷卻時自動排隊等待）"
+          />
+        </div>
+
+        <label className="form-field">
+          <span>佇列容量上限</span>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={form.request_queue_capacity}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                request_queue_capacity: Number.parseInt(e.target.value || "0", 10),
+              })
+            }
+            disabled={!form.request_queue_enabled}
+          />
+          <span className="hint">
+            同時排隊等待的請求數量上限（1-50）。超過上限的請求會直接回傳錯誤。
+          </span>
+        </label>
+
+        <label className="form-field">
+          <span>等待逾時（秒）</span>
+          <input
+            type="number"
+            min={10}
+            max={300}
+            value={form.request_queue_timeout_seconds}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                request_queue_timeout_seconds: Number.parseInt(e.target.value || "0", 10),
+              })
+            }
+            disabled={!form.request_queue_enabled}
+          />
+          <span className="hint">
+            請求在佇列中最長等待時間（10-300 秒）。逾時後回傳錯誤。
+          </span>
+        </label>
+
+        <button onClick={() => onSave()} disabled={saving} className="btn-save-bottom">
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </section>
+
       {addAccountOpen && (
         <div className="modal-overlay" onClick={() => !isModalBusy && onCloseAddAccount()}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>

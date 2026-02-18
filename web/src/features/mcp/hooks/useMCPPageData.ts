@@ -58,6 +58,9 @@ const defaultSettings: SettingsData = {
     'You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude.',
   fallback_model_enabled: false,
   fallback_model: '',
+  request_queue_enabled: true,
+  request_queue_capacity: 10,
+  request_queue_timeout_seconds: 120,
 }
 
 const managedPlaywrightServer: MCPServerData = {

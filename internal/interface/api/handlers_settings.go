@@ -84,6 +84,9 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		ScheduledMonitorMaxPerUser:      settings.ScheduledMonitorMaxPerUser,
 		FallbackModelEnabled:            settings.FallbackEnabled || settings.FallbackModelEnabled,
 		FallbackModel:                   fallbackModel,
+		RequestQueueEnabled:             settings.RequestQueueEnabled,
+		RequestQueueCapacity:            settings.RequestQueueCapacity,
+		RequestQueueTimeoutS:            settings.RequestQueueTimeoutS,
 		MCP:                             toMCPSettingsResponse(settings.MCP),
 	})
 }

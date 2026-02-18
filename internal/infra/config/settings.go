@@ -37,6 +37,12 @@ const (
 	MaxMemoryRecentRounds             = 100
 	DefaultScheduledMonitorMaxPerUser = 3
 	MaxScheduledMonitorMaxPerUser     = 20
+	DefaultRequestQueueCapacity       = 10
+	DefaultRequestQueueTimeoutS       = 120
+	MinRequestQueueCapacity           = 1
+	MaxRequestQueueCapacity           = 50
+	MinRequestQueueTimeoutS           = 10
+	MaxRequestQueueTimeoutS           = 300
 	DefaultMCPDiscoveryTimeoutSeconds = 10
 	DefaultMCPToolCallTimeoutSeconds  = 20
 	MinMCPDiscoveryTimeoutSeconds     = 1
@@ -305,6 +311,12 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 		if settings.ScheduledMonitorMaxPerUser <= 0 {
 			settings.ScheduledMonitorMaxPerUser = DefaultScheduledMonitorMaxPerUser
 		}
+		if settings.RequestQueueCapacity <= 0 {
+			settings.RequestQueueCapacity = DefaultRequestQueueCapacity
+		}
+		if settings.RequestQueueTimeoutS <= 0 {
+			settings.RequestQueueTimeoutS = DefaultRequestQueueTimeoutS
+		}
 		return normalizeVisibilityAndBooleans(settings)
 	}
 
@@ -356,6 +368,15 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	}
 	if _, ok := raw["memory_recent_rounds"]; !ok {
 		settings.MemoryRecentRounds = DefaultMemoryRecentRounds
+	}
+	if _, ok := raw["request_queue_enabled"]; !ok {
+		settings.RequestQueueEnabled = true
+	}
+	if _, ok := raw["request_queue_capacity"]; !ok {
+		settings.RequestQueueCapacity = DefaultRequestQueueCapacity
+	}
+	if _, ok := raw["request_queue_timeout_seconds"]; !ok {
+		settings.RequestQueueTimeoutS = DefaultRequestQueueTimeoutS
 	}
 	if _, ok := raw["scheduled_monitor_max_per_user"]; !ok {
 		settings.ScheduledMonitorMaxPerUser = DefaultScheduledMonitorMaxPerUser
@@ -422,6 +443,18 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 	}
 	if settings.ScheduledMonitorMaxPerUser > MaxScheduledMonitorMaxPerUser {
 		settings.ScheduledMonitorMaxPerUser = MaxScheduledMonitorMaxPerUser
+	}
+	if settings.RequestQueueCapacity < MinRequestQueueCapacity {
+		settings.RequestQueueCapacity = DefaultRequestQueueCapacity
+	}
+	if settings.RequestQueueCapacity > MaxRequestQueueCapacity {
+		settings.RequestQueueCapacity = MaxRequestQueueCapacity
+	}
+	if settings.RequestQueueTimeoutS < MinRequestQueueTimeoutS {
+		settings.RequestQueueTimeoutS = DefaultRequestQueueTimeoutS
+	}
+	if settings.RequestQueueTimeoutS > MaxRequestQueueTimeoutS {
+		settings.RequestQueueTimeoutS = MaxRequestQueueTimeoutS
 	}
 	settings.MCP = normalizeMCPSettings(settings.MCP)
 	return settings

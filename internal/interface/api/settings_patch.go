@@ -142,6 +142,15 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.ScheduledMonitorMaxPerUser != nil {
 		existing.ScheduledMonitorMaxPerUser = *req.ScheduledMonitorMaxPerUser
 	}
+	if req.RequestQueueEnabled != nil {
+		existing.RequestQueueEnabled = *req.RequestQueueEnabled
+	}
+	if req.RequestQueueCapacity != nil {
+		existing.RequestQueueCapacity = *req.RequestQueueCapacity
+	}
+	if req.RequestQueueTimeoutS != nil {
+		existing.RequestQueueTimeoutS = *req.RequestQueueTimeoutS
+	}
 	if req.FallbackEnabled != nil {
 		existing.FallbackEnabled = *req.FallbackEnabled
 		existing.FallbackModelEnabled = *req.FallbackEnabled

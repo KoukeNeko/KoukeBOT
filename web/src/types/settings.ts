@@ -39,6 +39,9 @@ export interface SettingsData {
   scheduled_monitor_max_per_user: number
   fallback_model_enabled: boolean
   fallback_model: string
+  request_queue_enabled: boolean
+  request_queue_capacity: number
+  request_queue_timeout_seconds: number
   mcp: MCPSettingsData
   persona_lock_every_turns: number
   triplet_output_enabled: boolean
