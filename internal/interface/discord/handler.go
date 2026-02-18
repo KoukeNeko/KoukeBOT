@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -29,6 +30,10 @@ const (
 	historyImageMaxAge = 30 * time.Minute
 )
 
+// seenMessageTTL is how long a processed message ID is remembered to deduplicate
+// duplicate MESSAGE_CREATE events from Discord gateway reconnects.
+const seenMessageTTL = 5 * time.Minute
+
 // Handler bridges Discord events to the ChatService.
 type Handler struct {
 	bot                          *discordbot.Bot
@@ -37,6 +42,9 @@ type Handler struct {
 	convStore                    store.ConversationRepository
 	useReply                     bool
 	stripLeadingBotMentionPrefix bool
+
+	seenMu  sync.Mutex
+	seenIDs map[string]time.Time
 }
 
 func NewHandler(
@@ -54,7 +62,26 @@ func NewHandler(
 		convStore:                    convStore,
 		useReply:                     useReply,
 		stripLeadingBotMentionPrefix: stripLeadingBotMentionPrefix,
+		seenIDs:                      make(map[string]time.Time),
 	}
+}
+
+// checkAndMarkSeen returns true if this message ID was already processed recently.
+// Uses lazy expiry: expired entries are cleaned up on each check.
+func (h *Handler) checkAndMarkSeen(messageID string) bool {
+	h.seenMu.Lock()
+	defer h.seenMu.Unlock()
+	now := time.Now()
+	for id, t := range h.seenIDs {
+		if now.Sub(t) > seenMessageTTL {
+			delete(h.seenIDs, id)
+		}
+	}
+	if _, ok := h.seenIDs[messageID]; ok {
+		return true
+	}
+	h.seenIDs[messageID] = now
+	return false
 }
 
 // Register attaches the message handler to the Discord session.
@@ -91,6 +118,10 @@ func (h *Handler) keepTyping(ctx context.Context, channelID string) func() {
 func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	content, ok := h.filterIncomingMessage(s, m)
 	if !ok {
+		return
+	}
+	if h.checkAndMarkSeen(m.ID) {
+		logHandler.Warnf("duplicate MESSAGE_CREATE [%s], skipping", m.ID)
 		return
 	}
 

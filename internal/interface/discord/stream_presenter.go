@@ -246,16 +246,14 @@ func (p *discordStreamPresenter) sendOrUpdate(content string) error {
 		return fmt.Errorf("discord sender unavailable")
 	}
 	if err := p.sender.EditMessage(p.channelID, p.messageID, segments[0]); err != nil {
+		// Do not fall back to sending a new message during streaming — a new send
+		// would produce a duplicate once the existing message is later finalized.
 		logHandler.Warnf(
-			"stream edit failed [%s]: message=%s err=%v; trying send fallback",
+			"stream edit failed [%s]: message=%s err=%v (skipping incremental update)",
 			p.channelID,
 			p.messageID,
 			err,
 		)
-		if _, sendErr := p.sendInitial(segments[0]); sendErr != nil {
-			return fmt.Errorf("edit failed (%w), fallback send failed (%v)", err, sendErr)
-		}
-		logHandler.Warnf("stream edit fallback send succeeded [%s]: new_message=%s", p.channelID, p.messageID)
 	}
 	return nil
 }
@@ -312,17 +310,14 @@ func (p *discordStreamPresenter) sendFinal() {
 			return
 		}
 		if err := p.sender.EditMessage(p.channelID, p.messageID, segments[0]); err != nil {
+			// Do not fall back to sending a new message — the existing message already
+			// contains the streamed content, and a new send would produce a duplicate.
 			logHandler.Warnf(
-				"send final edit failed [%s]: message=%s err=%v; trying send fallback",
+				"send final edit failed [%s]: message=%s err=%v (leaving existing message as-is)",
 				p.channelID,
 				p.messageID,
 				err,
 			)
-			if _, sendErr := p.sendInitial(segments[0]); sendErr != nil {
-				logHandler.Errorf("send final fallback failed [%s]: %v", p.channelID, sendErr)
-				return
-			}
-			logHandler.Warnf("send final fallback succeeded [%s]: new_message=%s", p.channelID, p.messageID)
 		}
 		for i := 1; i < len(segments); i++ {
 			if err := p.sender.SendMessage(p.channelID, segments[i]); err != nil {
