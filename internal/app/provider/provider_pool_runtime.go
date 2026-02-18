@@ -151,10 +151,21 @@ func (pp *ProviderPool) handleModelCapacityError(email string, err error) {
 			pp.entries[i].cooldownUntil = next
 		}
 	}
+	queue := pp.queue
+	queueEnabled := pp.queueEnabled
 	pp.mu.Unlock()
 	atomic.AddUint64(&pp.metricModelCapacityGlobalCooldown, 1)
 	logPool.Warnf("MODEL_CAPACITY: global cooldown %s applied to all %d account(s) (triggered by %s): %s",
 		formatDuration(cooldown), pp.Size(), email, truncateError(err, 200))
+
+	// Wake up queued requests once the cooldown expires so they can retry.
+	if queueEnabled && queue != nil {
+		go func() {
+			time.Sleep(cooldown)
+			queue.notifyAll()
+			logPool.Logf("queue: notified %d waiter(s) after model capacity cooldown expired", queue.depth())
+		}()
+	}
 }
 
 func (pp *ProviderPool) handleBillingError(email string, err error) {

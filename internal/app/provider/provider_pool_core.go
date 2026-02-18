@@ -413,12 +413,15 @@ func enqueueAndRetry[T any](ctx context.Context, pp *ProviderPool, fn func(llm.P
 		return zero, fmt.Errorf("request queue not enabled")
 	}
 
+	logPool.Logf("queue: enqueuing request (current depth: %d/%d)", queue.depth(), queue.capacity)
+
 	pos, err := queue.enqueue(ctx)
 	if err != nil {
+		logPool.Warnf("queue: enqueue failed (position %d): %v", pos, err)
 		return zero, err
 	}
 
-	logPool.Logf("request dequeued (was position %d), retrying", pos)
+	logPool.Logf("queue: request dequeued (was position %d), retrying", pos)
 
 	// After being dequeued, attempt the call normally (one attempt).
 	provider, email, ok := pp.SelectNextProvider()
@@ -431,8 +434,10 @@ func enqueueAndRetry[T any](ctx context.Context, pp *ProviderPool, fn func(llm.P
 	if callErr == nil {
 		pp.markSuccess(email, time.Now())
 		pp.recordEffectiveState(provider, provider.ModelInfo().Model, "", false)
+		logPool.Logf("queue: retry succeeded via %s", email)
 		return result, nil
 	}
+	logPool.Warnf("queue: retry failed via %s: %s", email, truncateError(callErr, 200))
 	return zero, callErr
 }
 
