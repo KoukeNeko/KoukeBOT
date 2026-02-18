@@ -64,7 +64,11 @@ func (s *ChatService) consumeRoundStream(
 			outputCh <- chunk
 			return nil, "", false
 		}
-		state.fullResponse += chunk.Content
+		// Annotation chunks (e.g. model-fallback notices) are shown to users
+		// but must not be stored in conversation history.
+		if !chunk.IsAnnotation {
+			state.fullResponse += chunk.Content
+		}
 		if !state.hideAnalysis && chunk.Content != "" {
 			visibleRoundContent.WriteString(chunk.Content)
 		}

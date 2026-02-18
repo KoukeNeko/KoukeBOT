@@ -52,6 +52,10 @@ type StreamChunk struct {
 	ToolError    string                 // Tool error/guard details when ToolStatus == "tool_error" or "tool_guard"
 	TokensUsed   int                    // Total tokens for this turn (sent in final chunk)
 	FinishReason string                 // LLM finish reason (e.g. "STOP", "MAX_TOKENS") — final chunk only
+	// IsAnnotation marks a chunk as display-only metadata (e.g. model-fallback notices).
+	// Annotation chunks are shown to the user but must NOT be stored in conversation history
+	// to avoid polluting the LLM context with system-level housekeeping text.
+	IsAnnotation bool
 }
 
 // ModelSwitcher is an optional interface for providers that support

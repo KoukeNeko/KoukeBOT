@@ -524,7 +524,8 @@ func appendFallbackNoteToStream(input <-chan llm.StreamChunk, note string) <-cha
 		for chunk := range input {
 			if chunk.Done && chunk.Error == nil && len(chunk.ToolCalls) == 0 {
 				// Prepend \n\n so the notice starts on its own line after the LLM response.
-				output <- llm.StreamChunk{Content: "\n\n" + note}
+				// IsAnnotation=true prevents this metadata from being stored in conversation history.
+				output <- llm.StreamChunk{Content: "\n\n" + note, IsAnnotation: true}
 			}
 			output <- chunk
 		}
