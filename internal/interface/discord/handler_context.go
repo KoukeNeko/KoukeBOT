@@ -121,7 +121,8 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 
 		recentOffset := historyRecentOffset(len(messages), i)
 		var entryImages []domain.ImageInput
-		if recentOffset < maxHistoryImageScan && imageCount < maxHistoryImages {
+		imageAgeOK := time.Since(msg.Timestamp.UTC()) < historyImageMaxAge
+		if recentOffset < maxHistoryImageScan && imageCount < maxHistoryImages && imageAgeOK {
 			for _, att := range msg.Attachments {
 				if imageCount >= maxHistoryImages {
 					break

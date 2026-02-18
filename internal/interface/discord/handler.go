@@ -23,6 +23,10 @@ const (
 	maxHistoryImageScan      = 10
 	maxHistoryImages         = 5
 	historyCharBudget        = 4500
+	// historyImageMaxAge limits which channel history images are sent to the LLM.
+	// Images older than this threshold are excluded to prevent the model from
+	// responding to stale images that lack surrounding conversation context.
+	historyImageMaxAge = 30 * time.Minute
 )
 
 // Handler bridges Discord events to the ChatService.
