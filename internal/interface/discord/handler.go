@@ -10,6 +10,7 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	schedulerpkg "github.com/KoukeNeko/KoukeBOT/internal/app/scheduler"
 	discordbot "github.com/KoukeNeko/KoukeBOT/internal/infra/discord"
+	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/store"
 )
@@ -113,6 +114,21 @@ func (h *Handler) keepTyping(ctx context.Context, channelID string) func() {
 	return func() {
 		close(done)
 	}
+}
+
+// streamToDiscord collects streaming chunks and updates the Discord message in real-time.
+func (h *Handler) streamToDiscord(channelID, replyToMessageID string, streamCh <-chan llm.StreamChunk) {
+	presenter := newDiscordStreamPresenter(h, channelID, replyToMessageID)
+	for chunk := range streamCh {
+		done, stop := presenter.processChunk(chunk)
+		if stop {
+			return
+		}
+		if done {
+			break
+		}
+	}
+	presenter.sendFinal()
 }
 
 func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {

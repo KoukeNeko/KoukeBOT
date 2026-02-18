@@ -384,3 +384,30 @@ func normalizeDiscordToolLog(text string) string {
 	text = strings.ReplaceAll(text, "\r", "")
 	return text
 }
+
+// splitMessage breaks a long message into chunks that fit Discord's character limit.
+// Splits preferentially at newline boundaries to avoid cutting mid-sentence.
+func splitMessage(text string, maxLen int) []string {
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+
+	var segments []string
+	for len(text) > 0 {
+		if len(text) <= maxLen {
+			segments = append(segments, text)
+			break
+		}
+
+		cutPoint := strings.LastIndex(text[:maxLen], "\n")
+		if cutPoint <= 0 {
+			cutPoint = maxLen
+		}
+
+		segments = append(segments, text[:cutPoint])
+		text = text[cutPoint:]
+		text = strings.TrimPrefix(text, "\n")
+	}
+
+	return segments
+}
