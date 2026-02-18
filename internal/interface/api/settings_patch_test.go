@@ -400,6 +400,8 @@ func TestHasProviderRelatedSettingsChange(t *testing.T) {
 			want: true,
 		},
 		{
+			// Fallback switch and model changes do not require provider re-validation;
+			// they are applied directly to the runtime pool.
 			name: "fallback switch changed",
 			next: config.Settings{
 				ProviderType:         config.ProviderAPIKey,
@@ -408,7 +410,7 @@ func TestHasProviderRelatedSettingsChange(t *testing.T) {
 				FallbackModelEnabled: false,
 				FallbackModel:        "gemini-2.0-flash",
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name: "fallback model changed",
@@ -419,7 +421,7 @@ func TestHasProviderRelatedSettingsChange(t *testing.T) {
 				FallbackModelEnabled: true,
 				FallbackModel:        "gemini-1.5-pro",
 			},
-			want: true,
+			want: false,
 		},
 	}
 

@@ -170,17 +170,10 @@ func hasProviderRelatedSettingsChange(previous, next config.Settings) bool {
 	if previous.GeminiAPIKey != next.GeminiAPIKey {
 		return true
 	}
-	prevFallbackID, prevFallbackModel := resolveFallbackModelForResponse(previous, prevProviderID)
-	nextFallbackID, nextFallbackModel := resolveFallbackModelForResponse(next, nextProviderID)
-	if prevFallbackID != nextFallbackID {
-		return true
-	}
-	if llm.NormalizeGoogleModelAlias(prevFallbackModel) != llm.NormalizeGoogleModelAlias(nextFallbackModel) {
-		return true
-	}
-	if (previous.FallbackEnabled || previous.FallbackModelEnabled) != (next.FallbackEnabled || next.FallbackModelEnabled) {
-		return true
-	}
+	// Fallback model and endpoint policy changes do NOT require provider re-validation:
+	// they are applied directly to the runtime pool via configureOAuthPoolFromSettings.
+	// Including them here would trigger an unnecessary OAuth probe (and block the save
+	// during MODEL_CAPACITY cooldown periods when all accounts are rate-limited).
 	return llm.ResolveEndpointPolicy(previous.EndpointPolicy) != llm.ResolveEndpointPolicy(next.EndpointPolicy)
 }
 
