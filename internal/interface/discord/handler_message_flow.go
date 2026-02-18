@@ -84,7 +84,13 @@ func (h *Handler) buildInboundContext(
 	historyCutoff *time.Time,
 ) (messageToStore string, ephemeralHistory []domain.Message, currentMessage string, historyEntries []domain.ChannelHistoryEntry, hasHistoryImages bool) {
 	messageToStore = content
-	currentMessage = content
+
+	// Label the current message with sender identity so the LLM can distinguish
+	// who is speaking. Channel history messages carry "[Name · HH:mm]" labels;
+	// the current message must use the same format so the LLM is not left guessing.
+	senderLabel := resolveSenderLabel(m.Author)
+	ts := formatHistoryTimestamp(h.inTimezone(m.Timestamp))
+	currentMessage = "[" + senderLabel + " · " + ts + "] " + content
 
 	if !isDM(m) {
 		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, personaID, m.ID, historyCutoff)
