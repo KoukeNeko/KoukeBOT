@@ -6,7 +6,6 @@ import PromptGuardSection from "../../../pages/settings/PromptGuardSection";
 import ProviderSection from "../../../pages/settings/ProviderSection";
 import RuntimeMetricsCard from "../../../pages/settings/RuntimeMetricsCard";
 import TimeLocationSection from "../../../pages/settings/TimeLocationSection";
-import ToolResilienceSection from "../../../pages/settings/ToolResilienceSection";
 import ToolsSection from "../../../pages/settings/ToolsSection";
 import type { useSettingsData } from "../hooks/useSettingsData";
 
@@ -21,7 +20,6 @@ type SettingsSectionID =
   | "provider"
   | "discord"
   | "tools"
-  | "tool_resilience"
   | "prompt_guard"
   | "memory"
   | "time_location";
@@ -49,7 +47,6 @@ const settingsNav: SettingsNavGroup[] = [
     items: [
       { id: "discord", label: "Discord Bot" },
       { id: "tools", label: "Tools" },
-      { id: "tool_resilience", label: "Tool Guard / Resilience" },
     ],
   },
   {
@@ -156,16 +153,6 @@ export default function SettingsPage({ vm }: Props) {
             onSave={saveSettings}
           />
         );
-      case "tool_resilience":
-        return (
-          <ToolResilienceSection
-            form={vm.form}
-            setForm={vm.setForm}
-            modelOptions={vm.modelOptions}
-            saving={vm.saving}
-            onSave={saveSettings}
-          />
-        );
       case "prompt_guard":
         return (
           <PromptGuardSection
@@ -180,7 +167,6 @@ export default function SettingsPage({ vm }: Props) {
           <MemorySection
             form={vm.form}
             setForm={vm.setForm}
-            modelOptions={vm.modelOptions}
             saving={vm.saving}
             onSave={saveSettings}
           />

@@ -28,7 +28,7 @@ const (
 	DiscordObserveScopeCurrentChannel = "current_channel"
 	DiscordObserveScopeCurrentGuild   = "current_guild"
 	DefaultDiscordObserveMessageScope = DiscordObserveScopeCurrentGuild
-	DefaultToolGuardEnabled           = false
+	DefaultToolGuardEnabled           = true
 	DefaultMaxToolRounds              = 5
 	DefaultMaxWebSearchCallsPerTurn   = 2
 	DefaultTransientRecoveryWaitMax   = 5

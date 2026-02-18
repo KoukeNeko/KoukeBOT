@@ -1,5 +1,6 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import Select from "../../components/ui/Select";
+import Checkbox from "../../components/ui/Checkbox";
 import type { SettingsData, OAuthStatus, PoolEntry, OAuthStartResult } from "../../types";
 
 export type ProviderTab = "api-key" | "oauth" | "pool";
@@ -90,6 +91,25 @@ export default function ProviderSection({
   const currentModelValue = form.model_id || form.gemini_model;
   const toLegacyModel = (modelID: string) =>
     modelID.includes("/") ? modelID.split("/").slice(1).join("/") : modelID;
+
+  const fallbackValueFromSettings = form.fallback_model_id || form.fallback_model || "";
+  const resolvedFallbackValue =
+    modelOptions.find((option) => option.value === fallbackValueFromSettings)?.value ||
+    modelOptions.find((option) => option.value.endsWith(`/${fallbackValueFromSettings}`))?.value ||
+    fallbackValueFromSettings;
+  const fallbackOptions: SelectOption[] = [
+    { value: "", label: "不使用備用模型" },
+    ...modelOptions,
+  ];
+  if (
+    resolvedFallbackValue &&
+    !fallbackOptions.some((option) => option.value === resolvedFallbackValue)
+  ) {
+    fallbackOptions.splice(1, 0, {
+      value: resolvedFallbackValue,
+      label: resolvedFallbackValue,
+    });
+  }
 
   return (
     <>
@@ -387,6 +407,43 @@ export default function ProviderSection({
             </>
           )}
         </div>
+      </section>
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">備用模型（Fallback）</h3>
+
+        <div className="form-field-checkbox-row">
+          <Checkbox
+            checked={form.fallback_model_enabled}
+            onChange={(checked) =>
+              setForm({ ...form, fallback_model_enabled: checked })
+            }
+            label="啟用模型降級（主模型無容量時自動切換備用模型）"
+          />
+        </div>
+
+        <label className="form-field">
+          <span>備用模型</span>
+          <Select
+            value={resolvedFallbackValue}
+            onChange={(val) =>
+              setForm({
+                ...form,
+                fallback_model_id: val,
+                fallback_model: toLegacyModel(val),
+              })
+            }
+            options={fallbackOptions}
+            disabled={!form.fallback_model_enabled}
+          />
+          <span className="hint">
+            主模型因容量不足（MODEL_CAPACITY）失敗時，會嘗試此備用模型。預設關閉。
+          </span>
+        </label>
+
+        <button onClick={() => onSave()} disabled={saving} className="btn-save-bottom">
+          {saving ? "Saving..." : "Save"}
+        </button>
       </section>
 
       {addAccountOpen && (

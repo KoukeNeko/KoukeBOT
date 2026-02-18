@@ -1,22 +1,14 @@
 import type { Dispatch, SetStateAction } from "react";
-import Select from "../../components/ui/Select";
-import Checkbox from "../../components/ui/Checkbox";
 import type { SettingsData } from "../../types";
-
-type SelectOption = {
-  value: string;
-  label: string;
-};
 
 type Props = {
   form: SettingsData;
   setForm: Dispatch<SetStateAction<SettingsData>>;
-  modelOptions: SelectOption[];
   saving: boolean;
   onSave: () => void;
 };
 
-export default function MemorySection({ form, setForm, modelOptions, saving, onSave }: Props) {
+export default function MemorySection({ form, setForm, saving, onSave }: Props) {
   return (
     <section className="settings-section">
       <h3 className="settings-section-title">
@@ -24,56 +16,24 @@ export default function MemorySection({ form, setForm, modelOptions, saving, onS
         記憶系統
       </h3>
 
-      <div className="tool-checkbox-row">
-        <Checkbox
-          checked={form.memory_extraction_enabled}
-          onChange={(checked) => setForm({ ...form, memory_extraction_enabled: checked })}
-          label="啟用自動記憶提取"
+      <label className="form-field">
+        <span>近期原始對話輪數</span>
+        <input
+          type="number"
+          min={20}
+          max={100}
+          value={form.memory_recent_rounds}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              memory_recent_rounds: Number.parseInt(e.target.value || "0", 10),
+            })
+          }
         />
-      </div>
-      <p className="hint-block">
-        每次對話結束後，背景自動分析對話內容，更新使用者檔案 (user.md)、長期記憶 (MEMORY.md) 和每日紀錄。需要重啟生效。
-      </p>
-
-      {form.memory_extraction_enabled && (
-        <div className="tool-settings-indent">
-          <label className="form-field">
-            <span>記憶提取模型</span>
-            <Select
-              value={form.memory_extraction_model || ""}
-              onChange={(val) => setForm({ ...form, memory_extraction_model: val })}
-              options={[
-                { value: "", label: "預設 (gemini-2.0-flash)" },
-                ...modelOptions,
-              ]}
-            />
-            <span className="hint">
-              選擇用於記憶提取的模型。建議使用便宜、快速的模型（如 gemini-2.0-flash）以節省配額。留空使用預設值。
-            </span>
-          </label>
-        </div>
-      )}
-
-      <div className="tool-settings-indent">
-        <label className="form-field">
-          <span>近期原始對話輪數</span>
-          <input
-            type="number"
-            min={20}
-            max={100}
-            value={form.memory_recent_rounds}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                memory_recent_rounds: Number.parseInt(e.target.value || "0", 10),
-              })
-            }
-          />
-          <span className="hint">
-            控制保留多少近期原始對話（1 輪 = 使用者 + 助手）。預設 50 輪約等於 100 則訊息。
-          </span>
-        </label>
-      </div>
+        <span className="hint">
+          控制保留多少近期原始對話（1 輪 = 使用者 + 助手）。預設 50 輪約等於 100 則訊息。
+        </span>
+      </label>
 
       <button onClick={onSave} disabled={saving} className="btn-save-bottom">
         {saving ? "Saving..." : "Save"}

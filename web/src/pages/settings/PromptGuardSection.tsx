@@ -58,27 +58,6 @@ export default function PromptGuardSection({ form, setForm, saving, onSave }: Pr
         />
       </label>
 
-      <div className="form-field-checkbox-row">
-        <Checkbox
-          checked={form.negative_constraint_enabled}
-          onChange={(checked) => setForm({ ...form, negative_constraint_enabled: checked })}
-          label="啟用 Negative Constraint（禁止 generic assistant 漂移）"
-        />
-      </div>
-
-      <label className="form-field">
-        <span>Global Negative Constraint</span>
-        <textarea
-          rows={3}
-          value={form.negative_constraint_default}
-          onChange={(e) => setForm({ ...form, negative_constraint_default: e.target.value })}
-          placeholder="You are FORBIDDEN from switching into a generic assistant tone..."
-          style={{ width: "100%", fontFamily: "monospace", fontSize: "0.88rem" }}
-          disabled={!form.negative_constraint_enabled}
-        />
-        <span className="hint">Persona 若有 style_guard.negative_constraints 會覆蓋此全域值。</span>
-      </label>
-
       <button onClick={onSave} disabled={saving} className="btn-save-bottom">
         {saving ? "Saving..." : "Save"}
       </button>
