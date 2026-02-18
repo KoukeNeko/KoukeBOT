@@ -65,7 +65,7 @@ func TestAssembleThinkingModelIncludesRelevantDigestAndRecentMessage(t *testing.
 	}
 }
 
-func TestRenderSystemPromptIncludesTOONSchemaReference(t *testing.T) {
+func TestRenderSystemPromptIncludesSystemInstructions(t *testing.T) {
 	assembler := NewContextAssembler()
 	persona := &domain.PersonaModule{
 		Config: domain.PersonaConfig{
@@ -80,10 +80,11 @@ func TestRenderSystemPromptIncludesTOONSchemaReference(t *testing.T) {
 	}
 
 	wants := []string{
-		"TOON quick schema reference",
-		"`t=msg`: `uid`, `name`, `cid`, `pid`, `ts` (UTC Unix seconds), `txt`, `pri`.",
-		"`t=ctx`: `hist` (older `msg` events) + `cur` (current `msg` event).",
-		"`t=toolr`: `items[]` where each item has `id`, `name`, `ok`, `out`.",
+		"Tool results are encoded in TOON (`t=toolr`)",
+		"`items[]` where each item has `id`, `name`, `ok`, `out`",
+		"Channel history appears as user/assistant turns",
+		"[Name · HH:mm]",
+		"[↩ Name · HH:mm]",
 	}
 	for _, want := range wants {
 		if !strings.Contains(got, want) {

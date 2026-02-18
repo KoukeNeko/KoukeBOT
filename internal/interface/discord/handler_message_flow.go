@@ -82,14 +82,9 @@ func (h *Handler) buildInboundContext(
 	personaID string,
 	content string,
 	historyCutoff *time.Time,
-) (messageToStore string, historyEntries []domain.ChannelHistoryEntry, contextForLLM string, hasHistoryImages bool) {
-	senderLabel := resolveSenderLabel(m.Author)
-	currentMessage, currentErr := formatInboundEnvelope("Discord", senderLabel, m.Author.ID, m.ChannelID, personaID, m.Timestamp, content, "")
-	if currentErr != nil {
-		logHandler.Warnf("toon current message encode failed, fallback to legacy envelope: %v", currentErr)
-		currentMessage = formatInboundEnvelopeLegacy("Discord", senderLabel, m.Author.ID, m.Timestamp.Format("2006-01-02 15:04 MST"), content)
-	}
+) (messageToStore string, ephemeralHistory []domain.Message, currentMessage string, historyEntries []domain.ChannelHistoryEntry, hasHistoryImages bool) {
 	messageToStore = content
+	currentMessage = content
 
 	if !isDM(m) {
 		historyEntries = h.buildChannelHistoryEntries(s, m.ChannelID, personaID, m.ID, historyCutoff)
@@ -98,26 +93,29 @@ func (h *Handler) buildInboundContext(
 		historyEntries = append(historyEntries, *replyEntry)
 	}
 
-	contextForLLM = buildContextForLLM(historyEntries, currentMessage, m.ChannelID, personaID)
+	ephemeralHistory = buildEphemeralHistory(historyEntries)
+
 	for _, entry := range historyEntries {
 		if len(entry.Images) > 0 {
 			hasHistoryImages = true
 			break
 		}
 	}
-	return messageToStore, historyEntries, contextForLLM, hasHistoryImages
+	return
 }
 
 func (h *Handler) startMessageStream(
 	ctx context.Context,
-	channelID, personaID, contextForLLM, messageToStore string,
+	channelID, personaID, currentMessage, messageToStore string,
 	images []domain.ImageInput,
 	historyEntries []domain.ChannelHistoryEntry,
+	ephemeralHistory []domain.Message,
 	hasHistoryImages bool,
 ) (<-chan llm.StreamChunk, error) {
 	if len(images) > 0 || hasHistoryImages {
-		return h.chatService.HandleMessageStreamWithImagesAndContext(
-			ctx, channelID, personaID, contextForLLM, messageToStore, images, historyEntries)
+		return h.chatService.HandleMessageStreamWithNativeHistoryAndImages(
+			ctx, channelID, personaID, ephemeralHistory, currentMessage, messageToStore, images, historyEntries)
 	}
-	return h.chatService.HandleMessageStreamWithContext(ctx, channelID, personaID, contextForLLM, messageToStore)
+	return h.chatService.HandleMessageStreamWithNativeHistory(
+		ctx, channelID, personaID, ephemeralHistory, currentMessage, messageToStore)
 }

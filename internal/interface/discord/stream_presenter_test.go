@@ -87,7 +87,10 @@ func TestDiscordStreamPresenterToolGuardSendsDetailMessage(t *testing.T) {
 	}
 }
 
-func TestDiscordStreamPresenterSendFinalFallsBackToSendWhenEditFails(t *testing.T) {
+func TestDiscordStreamPresenterSendFinalLogsWarningWhenEditFails(t *testing.T) {
+	// When edit fails on sendFinal, we intentionally do NOT fall back to a new
+	// send — the existing streaming message already contains partial content and
+	// a duplicate send would create a second identical message in the channel.
 	sender := &fakeMessageSender{
 		editErr: errors.New("edit failed"),
 	}
@@ -100,15 +103,18 @@ func TestDiscordStreamPresenterSendFinalFallsBackToSendWhenEditFails(t *testing.
 	if sender.editCalls != 1 {
 		t.Fatalf("edit calls = %d, want 1", sender.editCalls)
 	}
-	if len(sender.sendWithReturnContents) != 1 {
-		t.Fatalf("fallback sendWithReturn calls = %d, want 1", len(sender.sendWithReturnContents))
+	// No fallback send — leaves the existing message in place.
+	if len(sender.sendWithReturnContents) != 0 {
+		t.Fatalf("unexpected fallback sendWithReturn calls = %d, want 0", len(sender.sendWithReturnContents))
 	}
-	if presenter.messageID == "existing-msg" || presenter.messageID == "" {
-		t.Fatalf("expected presenter messageID to update after fallback, got %q", presenter.messageID)
+	if presenter.messageID != "existing-msg" {
+		t.Fatalf("messageID should remain unchanged, got %q", presenter.messageID)
 	}
 }
 
-func TestDiscordStreamPresenterSendOrUpdateFallsBackToSendWhenEditFails(t *testing.T) {
+func TestDiscordStreamPresenterSendOrUpdateSkipsFallbackWhenEditFails(t *testing.T) {
+	// During streaming, edit failure is silently swallowed and NOT followed by a
+	// new send — doing so would create a duplicate message once the stream ends.
 	sender := &fakeMessageSender{
 		editErr: errors.New("edit failed"),
 	}
@@ -121,15 +127,17 @@ func TestDiscordStreamPresenterSendOrUpdateFallsBackToSendWhenEditFails(t *testi
 	if sender.editCalls != 1 {
 		t.Fatalf("edit calls = %d, want 1", sender.editCalls)
 	}
-	if len(sender.sendWithReturnContents) != 1 {
-		t.Fatalf("fallback sendWithReturn calls = %d, want 1", len(sender.sendWithReturnContents))
+	// No new send — incremental update is simply skipped.
+	if len(sender.sendWithReturnContents) != 0 {
+		t.Fatalf("unexpected fallback sendWithReturn calls = %d, want 0", len(sender.sendWithReturnContents))
 	}
 }
 
-func TestDiscordStreamPresenterProcessChunkStopsWhenFallbackSendFails(t *testing.T) {
+func TestDiscordStreamPresenterProcessChunkContinuesWhenEditFails(t *testing.T) {
+	// During streaming, an edit failure does NOT stop the stream — sendOrUpdate
+	// swallows the error and returns nil so the stream can continue uninterrupted.
 	sender := &fakeMessageSender{
-		editErr:           errors.New("edit failed"),
-		sendWithReturnErr: errors.New("send failed"),
+		editErr: errors.New("edit failed"),
 	}
 	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
 	presenter.messageID = "existing-msg"
@@ -139,14 +147,14 @@ func TestDiscordStreamPresenterProcessChunkStopsWhenFallbackSendFails(t *testing
 	if done {
 		t.Fatalf("done = true, want false")
 	}
-	if !stop {
-		t.Fatalf("stop = false, want true")
+	if stop {
+		t.Fatalf("stop = true, want false")
 	}
 	if sender.editCalls != 1 {
 		t.Fatalf("edit calls = %d, want 1", sender.editCalls)
 	}
 	if len(sender.sendWithReturnContents) != 0 {
-		t.Fatalf("expected no successful fallback sends, got %d", len(sender.sendWithReturnContents))
+		t.Fatalf("expected no fallback sends, got %d", len(sender.sendWithReturnContents))
 	}
 }
 

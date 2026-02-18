@@ -224,6 +224,129 @@ func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx contex
 	})
 }
 
+// HandleMessageStreamWithNativeHistory processes a Discord message using native role-based
+// channel history instead of the TOON ctx bundle. ephemeralHistory contains the
+// channel history as real user/assistant turns; currentMessage is the plain current
+// user text; messageToStore is the clean version saved to the conversation store.
+func (s *ChatService) HandleMessageStreamWithNativeHistory(
+	ctx context.Context,
+	channelID, personaID string,
+	ephemeralHistory []domain.Message,
+	currentMessage, messageToStore string,
+) (<-chan llm.StreamChunk, error) {
+	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, "")
+	if err != nil {
+		return nil, err
+	}
+	keepRecentUserTurns := s.keepRecentUserTurnsSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentUserTurns); err != nil {
+		return nil, err
+	}
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
+
+	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
+		if err := s.memoryFlushRunner.Flush(ctx, MemoryFlushRequest{
+			Conversation: conv,
+			Persona:      persona,
+			PersonaID:    resolvedPersonaID,
+		}); err != nil {
+			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
+		}
+	}
+
+	// Temporarily prepend ephemeral channel history + current message for assembly.
+	// These are NOT persisted — they are removed immediately after Assemble.
+	savedLen := len(conv.Messages)
+	for _, msg := range ephemeralHistory {
+		conv.Messages = append(conv.Messages, msg)
+	}
+	conv.AppendUserMessage(currentMessage)
+
+	assembled, err := s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
+	if err != nil {
+		conv.Messages = conv.Messages[:savedLen]
+		return nil, fmt.Errorf("assemble context: %w", err)
+	}
+	s.logPromptSnapshot("stream-native", conv.ChannelID, resolvedPersonaID, conv.ID, assembled)
+	initialRawInput := formatLLMPrompt(assembled.SystemPrompt, assembled.Messages)
+	initialRawInputHuman := formatLLMPromptHuman(assembled.SystemPrompt, assembled.Messages)
+
+	// Restore to stored state before streaming.
+	conv.Messages = conv.Messages[:savedLen]
+
+	streamCh, err := s.provider.StreamChat(ctx, llm.ChatRequest{
+		SystemPrompt: assembled.SystemPrompt,
+		Messages:     assembled.Messages,
+		Generation:   assembled.Generation,
+		ToolMode:     llm.ToolModeNormal,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("llm stream: %w", err)
+	}
+
+	return s.toolLoopRunner.Run(ctx, ToolLoopRunRequest{
+		StreamCh:                streamCh,
+		Conversation:            conv,
+		MessageToStore:          messageToStore,
+		ContextForLLM:           currentMessage,
+		Persona:                 persona,
+		PersonaID:               resolvedPersonaID,
+		InitialRawLLMInput:      initialRawInput,
+		InitialRawLLMInputHuman: initialRawInputHuman,
+	}), nil
+}
+
+// HandleMessageStreamWithNativeHistoryAndImages is the multimodal variant of
+// HandleMessageStreamWithNativeHistory. Each history entry becomes its own
+// role-based MultimodalMessage so images are attributed to the correct turn.
+func (s *ChatService) HandleMessageStreamWithNativeHistoryAndImages(
+	ctx context.Context,
+	channelID, personaID string,
+	ephemeralHistory []domain.Message,
+	currentMessage, messageToStore string,
+	images []domain.ImageInput,
+	historyEntries []domain.ChannelHistoryEntry,
+) (<-chan llm.StreamChunk, error) {
+	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, "")
+	if err != nil {
+		return nil, err
+	}
+	keepRecentUserTurns := s.keepRecentUserTurnsSnapshot()
+	if err := s.preflightConversationRetention(ctx, conv, persona, keepRecentUserTurns); err != nil {
+		return nil, err
+	}
+	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
+
+	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
+		if err := s.memoryFlushRunner.Flush(ctx, MemoryFlushRequest{
+			Conversation: conv,
+			Persona:      persona,
+			PersonaID:    resolvedPersonaID,
+		}); err != nil {
+			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
+		}
+	}
+
+	// Save only direct attachment images to disk (history entry images are ephemeral).
+	var imageRefs []domain.ImageRef
+	if s.imageStore != nil && len(images) > 0 {
+		for _, img := range images {
+			ref, err := s.imageStore.Save(img)
+			if err != nil {
+				logChat.Warnf("save image %s: %v (skipping)", img.Filename, err)
+				continue
+			}
+			imageRefs = append(imageRefs, ref)
+			logChat.Logf("image saved: %s → %s", img.Filename, ref.StorageKey)
+		}
+	}
+
+	return s.streamWithNativeMultimodalHistory(
+		ctx, conv, persona, resolvedPersonaID,
+		ephemeralHistory, currentMessage, messageToStore,
+		images, historyEntries, imageRefs...)
+}
+
 func (s *ChatService) preflightConversationRetention(
 	ctx context.Context,
 	conv *domain.Conversation,

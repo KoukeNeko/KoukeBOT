@@ -28,6 +28,10 @@ const (
 	// Images older than this threshold are excluded to prevent the model from
 	// responding to stale images that lack surrounding conversation context.
 	historyImageMaxAge = 30 * time.Minute
+	// historyTextMaxAge limits how far back text messages are included when no
+	// explicit conversation cutoff is set. Prevents the model from responding
+	// to messages from days ago when the channel has been quiet.
+	historyTextMaxAge = 4 * time.Hour
 )
 
 // seenMessageTTL is how long a processed message ID is remembered to deduplicate
@@ -144,8 +148,8 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	defer stopTyping()
 
 	images := h.prepareInboundImages(m.Attachments, m.ChannelID)
-	messageToStore, historyEntries, contextForLLM, hasHistoryImages := h.buildInboundContext(s, m, personaID, content, historyCutoff)
-	streamCh, err := h.startMessageStream(ctx, m.ChannelID, personaID, contextForLLM, messageToStore, images, historyEntries, hasHistoryImages)
+	messageToStore, ephemeralHistory, currentMessage, historyEntries, hasHistoryImages := h.buildInboundContext(s, m, personaID, content, historyCutoff)
+	streamCh, err := h.startMessageStream(ctx, m.ChannelID, personaID, currentMessage, messageToStore, images, historyEntries, ephemeralHistory, hasHistoryImages)
 	if err != nil {
 		logHandler.Errorf("chat error [%s]: %v", m.ChannelID, err)
 		_ = h.bot.SendMessage(m.ChannelID, formatDiscordError(err))

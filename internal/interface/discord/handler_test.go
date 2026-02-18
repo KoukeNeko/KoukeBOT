@@ -6,9 +6,7 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
-	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 	"github.com/bwmarrin/discordgo"
-	toon "github.com/toon-format/toon-go"
 )
 
 func TestShouldIncludeDiscordTimestamp(t *testing.T) {
@@ -89,69 +87,39 @@ func TestBuildReplyReferenceEntryRespectsCutoff(t *testing.T) {
 	if entry == nil {
 		t.Fatal("expected newer reply to be included")
 	}
-
-	eventType, ok := tooncodec.DecodeEventType(entry.FormattedText)
-	if !ok || eventType != tooncodec.EventTypeMessage {
-		t.Fatalf("expected TOON msg event, got: %s", entry.FormattedText)
+	if !strings.HasPrefix(entry.FormattedText, "[↩ bob · ") {
+		t.Fatalf("reply entry should start with '[↩ bob · HH:mm]', got: %s", entry.FormattedText)
 	}
-	decoded, err := toon.DecodeString(entry.FormattedText)
-	if err != nil {
-		t.Fatalf("decode TOON reply entry: %v", err)
+	if !strings.Contains(entry.FormattedText, "new message") {
+		t.Fatalf("reply entry should contain message content, got: %s", entry.FormattedText)
 	}
-	msg, ok := decoded.(map[string]any)
-	if !ok {
-		t.Fatalf("reply entry decoded type = %T, want map[string]any", decoded)
-	}
-	if got := msg["pri"]; got != tooncodec.PriorityReplyHigh {
-		t.Fatalf("reply priority = %v, want %s", got, tooncodec.PriorityReplyHigh)
-	}
-	if got := msg["txt"]; got != "new message" {
-		t.Fatalf("reply content = %v, want new message", got)
+	if entry.IsBot {
+		t.Fatalf("reply author is not the bot, IsBot should be false")
 	}
 }
 
-func TestBuildContextForLLMEncodesTOONContext(t *testing.T) {
-	history, err := tooncodec.EncodeMessageEvent(tooncodec.MessageEventInput{
-		Source:    "discord",
-		UserID:    "u1",
-		Name:      "alice",
-		ChannelID: "ch-1",
-		PersonaID: "persona-1",
-		Timestamp: time.Unix(100, 0).UTC(),
-		Text:      "history",
-	})
-	if err != nil {
-		t.Fatalf("encode history event: %v", err)
-	}
-	current, err := tooncodec.EncodeMessageEvent(tooncodec.MessageEventInput{
-		Source:    "discord",
-		UserID:    "u2",
-		Name:      "bob",
-		ChannelID: "ch-1",
-		PersonaID: "persona-1",
-		Timestamp: time.Unix(200, 0).UTC(),
-		Text:      "current",
-	})
-	if err != nil {
-		t.Fatalf("encode current event: %v", err)
+func TestBuildEphemeralHistoryCreatesNativeMessages(t *testing.T) {
+	entries := []domain.ChannelHistoryEntry{
+		{FormattedText: "[alice · 10:00] hello", IsBot: false},
+		{FormattedText: "I am the bot response", IsBot: true},
+		{FormattedText: "   ", IsBot: false}, // empty — should be skipped
 	}
 
-	ctxPayload := buildContextForLLM([]domain.ChannelHistoryEntry{{FormattedText: history}}, current, "ch-1", "persona-1")
-	eventType, ok := tooncodec.DecodeEventType(ctxPayload)
-	if !ok || eventType != tooncodec.EventTypeContext {
-		t.Fatalf("event type = %q (ok=%t), want %q", eventType, ok, tooncodec.EventTypeContext)
+	messages := buildEphemeralHistory(entries)
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages (empty entry skipped), got %d", len(messages))
 	}
-	decoded, err := toon.DecodeString(ctxPayload)
-	if err != nil {
-		t.Fatalf("decode ctx payload: %v", err)
+	if messages[0].Role != domain.RoleUser {
+		t.Fatalf("first message role = %s, want user", messages[0].Role)
 	}
-	obj, ok := decoded.(map[string]any)
-	if !ok {
-		t.Fatalf("decoded ctx type = %T, want map[string]any", decoded)
+	if messages[0].Content != "[alice · 10:00] hello" {
+		t.Fatalf("first message content = %q", messages[0].Content)
 	}
-	cur, ok := obj["cur"].(map[string]any)
-	if !ok || cur["txt"] != "current" {
-		t.Fatalf("cur.txt = %v, want current", cur["txt"])
+	if messages[1].Role != domain.RoleAssistant {
+		t.Fatalf("second message role = %s, want assistant", messages[1].Role)
+	}
+	if messages[1].Content != "I am the bot response" {
+		t.Fatalf("second message content = %q", messages[1].Content)
 	}
 }
 

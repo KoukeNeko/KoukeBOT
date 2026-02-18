@@ -172,8 +172,9 @@ type ImageInput struct {
 // ChannelHistoryEntry represents a single message from Discord channel history
 // with its associated images (if any).
 type ChannelHistoryEntry struct {
-	FormattedText string       // Envelope-formatted message text
+	FormattedText string       // Natural-language formatted message text
 	Images        []ImageInput // Images attached to this specific message
+	IsBot         bool         // true = message from bot → Role: assistant
 }
 
 // MessagePart represents a part of a multimodal message.

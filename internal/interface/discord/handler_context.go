@@ -7,8 +7,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/domain"
-	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
-	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
 // buildReplyReferenceEntry extracts the replied-to message as high-priority context.
@@ -49,25 +47,14 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 	}
 
 	senderLabel := resolveSenderLabel(refMsg.Author)
-	userID := ""
-	if refMsg.Author != nil {
-		userID = refMsg.Author.ID
-	}
-	formatted, err := formatInboundEnvelope(
-		"Discord",
-		senderLabel,
-		userID,
-		m.ChannelID,
-		personaID,
-		refMsg.Timestamp,
-		content,
-		tooncodec.PriorityReplyHigh,
-	)
-	if err != nil {
-		logHandler.Warnf("toon reply-target encode failed, fallback to legacy envelope: %v", err)
-		timestamp := refMsg.Timestamp.Format("2006-01-02 15:04 MST")
-		formatted = "[Replied message - high priority]\n" +
-			formatInboundEnvelopeLegacy("Discord", senderLabel, userID, timestamp, content)
+	ts := refMsg.Timestamp.UTC().Format("15:04")
+
+	isBot := isBotAuthor(s, refMsg.Author)
+	var formatted string
+	if isBot {
+		formatted = content
+	} else {
+		formatted = "[↩ " + senderLabel + " · " + ts + "] " + content
 	}
 
 	var images []domain.ImageInput
@@ -86,7 +73,7 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 		images = append(images, img)
 	}
 
-	return &domain.ChannelHistoryEntry{FormattedText: formatted, Images: images}
+	return &domain.ChannelHistoryEntry{FormattedText: formatted, Images: images, IsBot: isBot}
 }
 
 // buildChannelHistoryEntries builds structured channel history entries with image association.
@@ -110,6 +97,12 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 		if !shouldIncludeDiscordTimestamp(msg.Timestamp, cutoff) {
 			continue
 		}
+		// When no explicit cutoff is set, apply a default age limit to avoid
+		// the model responding to messages from days ago in a quiet channel.
+		if cutoff == nil && time.Since(msg.Timestamp.UTC()) >= historyTextMaxAge {
+			continue
+		}
+
 		content := msg.Content
 
 		if strings.TrimSpace(content) == "" && len(msg.Attachments) > 0 {
@@ -157,28 +150,22 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 			content = content[:remaining] + "..."
 		}
 
+		isBot := isBotAuthor(s, msg.Author)
 		senderLabel := resolveSenderLabel(msg.Author)
-		userID := ""
-		if msg.Author != nil {
-			userID = msg.Author.ID
-		}
-		formattedMsg, formatErr := formatInboundEnvelope(
-			"Discord",
-			senderLabel,
-			userID,
-			channelID,
-			personaID,
-			msg.Timestamp,
-			content,
-			"",
-		)
-		if formatErr != nil {
-			logHandler.Warnf("toon history message encode failed, fallback to legacy envelope: %v", formatErr)
-			timestamp := msg.Timestamp.Format("2006-01-02 15:04 MST")
-			formattedMsg = formatInboundEnvelopeLegacy("Discord", senderLabel, userID, timestamp, content)
+		ts := msg.Timestamp.UTC().Format("15:04")
+
+		var formattedMsg string
+		if isBot {
+			formattedMsg = content
+		} else {
+			formattedMsg = "[" + senderLabel + " · " + ts + "] " + content
 		}
 
-		entries = append(entries, domain.ChannelHistoryEntry{FormattedText: formattedMsg, Images: entryImages})
+		entries = append(entries, domain.ChannelHistoryEntry{
+			FormattedText: formattedMsg,
+			Images:        entryImages,
+			IsBot:         isBot,
+		})
 		usedChars += len(formattedMsg)
 
 		if len(entries) >= defaultHistoryTarget && usedChars >= historyCharBudget {
@@ -187,6 +174,25 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 	}
 
 	return entries
+}
+
+// buildEphemeralHistory converts channel history entries into native role-based messages.
+// Each entry with IsBot=true becomes an assistant message; others become user messages.
+// The returned slice is intended to be temporarily prepended to the conversation
+// before LLM assembly and must not be persisted.
+func buildEphemeralHistory(entries []domain.ChannelHistoryEntry) []domain.Message {
+	messages := make([]domain.Message, 0, len(entries))
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.FormattedText) == "" {
+			continue
+		}
+		role := domain.RoleUser
+		if entry.IsBot {
+			role = domain.RoleAssistant
+		}
+		messages = append(messages, domain.Message{Role: role, Content: entry.FormattedText})
+	}
+	return messages
 }
 
 func shouldIncludeDiscordTimestamp(ts time.Time, cutoff *time.Time) bool {
@@ -200,44 +206,10 @@ func historyRecentOffset(totalMessages, messageIndex int) int {
 	return totalMessages - 1 - messageIndex
 }
 
-// buildContextForLLM rebuilds flat context string from structured history entries.
-func buildContextForLLM(entries []domain.ChannelHistoryEntry, currentMessage, channelID, personaID string) string {
-	if len(entries) == 0 {
-		return currentMessage
+// isBotAuthor returns true if the message author is the bot itself.
+func isBotAuthor(s *discordgo.Session, author *discordgo.User) bool {
+	if s == nil || s.State == nil || s.State.User == nil || author == nil {
+		return false
 	}
-
-	historyEvents := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if strings.TrimSpace(entry.FormattedText) == "" {
-			continue
-		}
-		historyEvents = append(historyEvents, entry.FormattedText)
-	}
-	encoded, err := tooncodec.EncodeContextEvent(tooncodec.ContextEventInput{
-		Source:    llm.RequestSourceDiscord,
-		ChannelID: channelID,
-		PersonaID: personaID,
-		History:   historyEvents,
-		Current:   currentMessage,
-	})
-	if err == nil {
-		return encoded
-	}
-
-	logHandler.Warnf("toon context encode failed, fallback to legacy context: %v", err)
-	var result strings.Builder
-	result.WriteString(domain.HistoryContextMarker)
-	result.WriteString("\n")
-	for i, entry := range entries {
-		if i > 0 {
-			result.WriteString("\n")
-		}
-		result.WriteString(entry.FormattedText)
-	}
-	result.WriteString("\n\n")
-	result.WriteString(domain.CurrentMessageMarker)
-	result.WriteString("\n")
-	result.WriteString(currentMessage)
-
-	return result.String()
+	return author.ID == s.State.User.ID
 }
