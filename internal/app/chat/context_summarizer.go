@@ -109,13 +109,23 @@ func SummarizeConversationBlock(
 	return digest, nil
 }
 
+// summarizePerMessageMaxChars caps individual messages to avoid one huge message dominating the summary input.
+const summarizePerMessageMaxChars = 1200
+
 // formatMessagesForSummary formats messages into readable text for the LLM.
+// Skips internal tool result messages (zero summarization value, high token cost).
 func formatMessagesForSummary(messages []domain.Message) string {
 	var sb strings.Builder
 	for _, msg := range messages {
+		if isInternalToolHistoryMessage(msg.Content) {
+			continue
+		}
 		text := humanizeConversationTextForDigest(msg.Content)
 		if text == "" {
 			continue
+		}
+		if len(text) > summarizePerMessageMaxChars {
+			text = text[:summarizePerMessageMaxChars] + "..."
 		}
 		role := "Assistant"
 		if msg.Role == domain.RoleUser {

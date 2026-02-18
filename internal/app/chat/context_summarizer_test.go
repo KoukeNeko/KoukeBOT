@@ -268,6 +268,49 @@ func TestFormatMessagesForSummary(t *testing.T) {
 	}
 }
 
+func TestFormatMessagesForSummary_SkipsToolResults(t *testing.T) {
+	messages := []domain.Message{
+		{Role: domain.RoleUser, Content: "search for docs"},
+		{Role: domain.RoleAssistant, Content: "[Tool calls executed]"},
+		{Role: domain.RoleUser, Content: "Tool execution results:\n\nTool: web_search\nStatus: SUCCESS\nOutput: some results"},
+		{Role: domain.RoleAssistant, Content: "Here are the results"},
+		{Role: domain.RoleUser, Content: "thanks"},
+	}
+
+	got := formatMessagesForSummary(messages)
+	if strings.Contains(got, "Tool calls executed") {
+		t.Fatal("should skip [Tool calls executed] message")
+	}
+	if strings.Contains(got, "Tool execution results") {
+		t.Fatal("should skip Tool execution results message")
+	}
+	if !strings.Contains(got, "[User] search for docs") {
+		t.Fatal("should keep normal user message")
+	}
+	if !strings.Contains(got, "[Assistant] Here are the results") {
+		t.Fatal("should keep normal assistant message")
+	}
+	if !strings.Contains(got, "[User] thanks") {
+		t.Fatal("should keep second user message")
+	}
+}
+
+func TestFormatMessagesForSummary_TruncatesLongMessages(t *testing.T) {
+	longContent := strings.Repeat("x", 2000)
+	messages := []domain.Message{
+		{Role: domain.RoleUser, Content: longContent},
+	}
+
+	got := formatMessagesForSummary(messages)
+	// Should be truncated to summarizePerMessageMaxChars + "..."
+	if len(got) > summarizePerMessageMaxChars+50 {
+		t.Fatalf("message should be truncated, got len=%d", len(got))
+	}
+	if !strings.Contains(got, "...") {
+		t.Fatal("truncated message should end with ...")
+	}
+}
+
 func TestCleanJSONResponse(t *testing.T) {
 	tests := []struct {
 		name  string
