@@ -47,7 +47,7 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 	}
 
 	senderLabel := resolveSenderLabel(refMsg.Author)
-	ts := refMsg.Timestamp.UTC().Format("15:04")
+	ts := formatHistoryTimestamp(refMsg.Timestamp.UTC())
 
 	isBot := isBotAuthor(s, refMsg.Author)
 	var formatted string
@@ -152,7 +152,7 @@ func (h *Handler) buildChannelHistoryEntries(s *discordgo.Session, channelID, pe
 
 		isBot := isBotAuthor(s, msg.Author)
 		senderLabel := resolveSenderLabel(msg.Author)
-		ts := msg.Timestamp.UTC().Format("15:04")
+		ts := formatHistoryTimestamp(msg.Timestamp.UTC())
 
 		var formattedMsg string
 		if isBot {
@@ -204,6 +204,17 @@ func shouldIncludeDiscordTimestamp(ts time.Time, cutoff *time.Time) bool {
 
 func historyRecentOffset(totalMessages, messageIndex int) int {
 	return totalMessages - 1 - messageIndex
+}
+
+// formatHistoryTimestamp returns a compact timestamp for channel history labels.
+// Same calendar day (UTC) → "HH:mm"; different day → "MM/DD HH:mm" to avoid
+// ambiguity when the history window crosses midnight.
+func formatHistoryTimestamp(t time.Time) string {
+	now := time.Now().UTC()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return t.Format("15:04")
+	}
+	return t.Format("01/02 15:04")
 }
 
 // isBotAuthor returns true if the message author is the bot itself.
