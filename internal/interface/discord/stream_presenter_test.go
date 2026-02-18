@@ -63,7 +63,7 @@ func TestFormatToolStartStatusMessage(t *testing.T) {
 	}
 }
 
-func TestDiscordStreamPresenterToolGuardSendsDetailMessage(t *testing.T) {
+func TestDiscordStreamPresenterToolGuardLogsOnlyDoesNotSend(t *testing.T) {
 	sender := &fakeMessageSender{}
 	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
 
@@ -79,11 +79,9 @@ func TestDiscordStreamPresenterToolGuardSendsDetailMessage(t *testing.T) {
 	if stop {
 		t.Fatalf("stop = true, want false")
 	}
-	if len(sender.sendContents) != 1 {
-		t.Fatalf("send contents = %d, want 1", len(sender.sendContents))
-	}
-	if !strings.Contains(sender.sendContents[0], "[TOOL_GUARD_DETAIL]") {
-		t.Fatalf("expected guard detail prefix in message, got: %q", sender.sendContents[0])
+	// tool_guard details are logged to console only, not sent to Discord.
+	if len(sender.sendContents) != 0 {
+		t.Fatalf("send contents = %d, want 0 (tool guard must not be sent to Discord)", len(sender.sendContents))
 	}
 }
 
