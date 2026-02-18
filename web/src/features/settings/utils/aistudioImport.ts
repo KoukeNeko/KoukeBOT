@@ -32,6 +32,7 @@ export type AIStudioImportSourceType = 'har' | 'session_json' | 'curl'
 export interface AIStudioImportResult {
   sourceType: AIStudioImportSourceType
   session: AIStudioSessionInput
+  model?: string
   warnings: string[]
 }
 
@@ -203,6 +204,7 @@ function parseHARImport(raw: HARShape): AIStudioImportResult {
   return {
     sourceType: 'har',
     session,
+    model: '',
     warnings: buildWarnings(session),
   }
 }
@@ -221,6 +223,7 @@ function parseSessionJSONImport(raw: unknown): AIStudioImportResult {
   return {
     sourceType: 'session_json',
     session,
+    model: normalizeString(record.model ?? record.model_id),
     warnings: buildWarnings(session),
   }
 }
@@ -372,6 +375,33 @@ function chooseRPCURL(candidates: string[]): string {
   return candidates[0]
 }
 
+function normalizeImportedModel(value: string): string {
+  const text = value.trim()
+  if (!text) return ''
+  if (text.startsWith('models/')) {
+    return text.slice('models/'.length).trim()
+  }
+  return text
+}
+
+function extractModelFromJSONBody(rawBody: string): string {
+  const text = rawBody.trim()
+  if (!text) return ''
+  try {
+    const parsed = JSON.parse(text)
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return ''
+    }
+    const first = parsed[0]
+    if (typeof first !== 'string') {
+      return ''
+    }
+    return normalizeImportedModel(first)
+  } catch {
+    return ''
+  }
+}
+
 function parseCurlImport(rawText: string): AIStudioImportResult {
   const normalized = normalizeCurlCommand(rawText)
   const tokens = tokenizeShellLike(normalized)
@@ -384,6 +414,7 @@ function parseCurlImport(rawText: string): AIStudioImportResult {
 
   const headers: Record<string, string> = {}
   const urlCandidates: string[] = []
+  const requestBodies: string[] = []
   let cookieFromOption = ''
   let userAgentFromOption = ''
   let refererFromOption = ''
@@ -406,6 +437,20 @@ function parseCurlImport(rawText: string): AIStudioImportResult {
       i += 1
       if (urlValue.startsWith('http://') || urlValue.startsWith('https://')) {
         urlCandidates.push(urlValue)
+      }
+      continue
+    }
+    if (
+      token === '--data-raw' ||
+      token === '--data' ||
+      token === '--data-binary' ||
+      token === '--data-ascii' ||
+      token === '-d'
+    ) {
+      const bodyValue = tokens[i + 1] ?? ''
+      i += 1
+      if (bodyValue) {
+        requestBodies.push(bodyValue)
       }
       continue
     }
@@ -447,6 +492,9 @@ function parseCurlImport(rawText: string): AIStudioImportResult {
   }
 
   const cookie = headers.cookie || cookieFromOption
+  const parsedModel = requestBodies
+    .map(extractModelFromJSONBody)
+    .find((value) => value !== '') ?? ''
   const session: AIStudioSessionInput = {
     endpoint,
     api_key: headers['x-goog-api-key'] ?? '',
@@ -468,6 +516,7 @@ function parseCurlImport(rawText: string): AIStudioImportResult {
   return {
     sourceType: 'curl',
     session,
+    model: parsedModel,
     warnings: buildWarnings(session),
   }
 }

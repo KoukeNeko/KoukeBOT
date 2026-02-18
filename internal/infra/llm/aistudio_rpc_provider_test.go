@@ -234,3 +234,21 @@ func TestVerifyAIStudioSessionRefreshesTokenAfterUnauthorized(t *testing.T) {
 		t.Fatalf("CountTokens calls = %d, want 2", countTokenCalls)
 	}
 }
+
+func TestNewAIStudioRPCProviderFallsBackToGeminiModelForNonGeminiInput(t *testing.T) {
+	provider, err := NewAIStudioRPCProvider(&AIStudioSession{
+		Endpoint:           "https://example.com",
+		APIKey:             "api-key",
+		XBrowserValidation: "validation",
+		XClientData:        "client-data",
+		XGoogAuthUser:      "0",
+		UserAgent:          "Mozilla/test",
+	}, "claude-opus-4-6-thinking")
+	if err != nil {
+		t.Fatalf("NewAIStudioRPCProvider() error = %v", err)
+	}
+
+	if got := provider.ModelInfo().Model; got != "gemini-3-pro-preview" {
+		t.Fatalf("model = %q, want %q", got, "gemini-3-pro-preview")
+	}
+}

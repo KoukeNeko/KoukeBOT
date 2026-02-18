@@ -50,6 +50,7 @@ describe('parseAIStudioImport', () => {
     expect(result.session.x_client_data).toBe('c2')
     expect(result.session.x_goog_authuser).toBe('0')
     expect(result.session.x_goog_ext_519733851_bin).toBe('ext2')
+    expect(result.model).toBe('')
     expect(result.warnings.length).toBe(0)
   })
 
@@ -69,6 +70,7 @@ describe('parseAIStudioImport', () => {
     expect(result.session.api_key).toBe('api-key')
     expect(result.session.x_browser_validation).toBe('validation')
     expect(result.session.cookie).toContain('SID=')
+    expect(result.model).toBe('')
   })
 
   it('reports warnings for missing cookie/authorization', () => {
@@ -110,6 +112,7 @@ curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkal
     expect(result.session.x_goog_ext_519733851_bin).toBe('ext-token')
     expect(result.session.cookie).toContain('SID=abc')
     expect(result.session.authorization).toContain('SAPISIDHASH')
+    expect(result.model).toBe('gemini-3-pro-preview')
     expect(result.warnings.length).toBe(0)
   })
 
@@ -121,6 +124,7 @@ curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkal
     const result = parseAIStudioImport(curl)
     expect(result.sourceType).toBe('curl')
     expect(result.session.endpoint).toBe('https://alkalimakersuite-pa.clients6.google.com')
+    expect(result.model).toBe('')
     expect(result.warnings.some((item) => item.includes('cookie/authorization'))).toBe(true)
   })
 

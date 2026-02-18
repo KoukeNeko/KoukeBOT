@@ -46,10 +46,7 @@ func NewAIStudioRPCProvider(session *AIStudioSession, model string) (*AIStudioRP
 		return nil, err
 	}
 
-	normalizedModel := NormalizeGoogleModelAlias(model)
-	if normalizedModel == "" {
-		normalizedModel = googleProviderSpec(ProviderGoogleGeminiCLI).DefaultModel
-	}
+	normalizedModel := normalizeAIStudioModel(model)
 
 	return &AIStudioRPCProvider{
 		httpClient: &http.Client{Timeout: 70 * time.Second},
@@ -77,7 +74,7 @@ func (g *AIStudioRPCProvider) WithModel(model string) Provider {
 	accessTokenExpiry := g.accessTokenExpiry
 	g.authMu.Unlock()
 
-	normalizedModel := NormalizeGoogleModelAlias(model)
+	normalizedModel := normalizeAIStudioModel(model)
 	if normalizedModel == "" {
 		normalizedModel = g.model
 	}
@@ -90,6 +87,17 @@ func (g *AIStudioRPCProvider) WithModel(model string) Provider {
 		accessToken:       accessToken,
 		accessTokenExpiry: accessTokenExpiry,
 	}
+}
+
+func normalizeAIStudioModel(model string) string {
+	normalized := NormalizeGoogleModelAlias(model)
+	if normalized == "" {
+		return googleProviderSpec(ProviderGoogleGeminiCLI).DefaultModel
+	}
+	if !strings.HasPrefix(normalized, "gemini-") {
+		return googleProviderSpec(ProviderGoogleGeminiCLI).DefaultModel
+	}
+	return normalized
 }
 
 func (g *AIStudioRPCProvider) ModelInfo() ModelCapabilities {

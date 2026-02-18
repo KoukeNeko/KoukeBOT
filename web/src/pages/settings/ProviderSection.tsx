@@ -501,6 +501,10 @@ export default function ProviderSection({
             <div className="meta">來源：<code>{aistudioImport.sourceType}</code></div>
             <div className="aistudio-import-grid">
               <div className="aistudio-import-row">
+                <span>model</span>
+                <code>{aistudioImport.model || "(auto)"}</code>
+              </div>
+              <div className="aistudio-import-row">
                 <span>endpoint</span>
                 <code>{aistudioImport.session.endpoint || "(empty)"}</code>
               </div>

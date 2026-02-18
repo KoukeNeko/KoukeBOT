@@ -114,7 +114,10 @@ export function useAIStudioActions() {
     }
     setUploading(true)
     try {
-      const verify = await verifyAIStudioSession({ session: activeImport.session })
+      const verify = await verifyAIStudioSession({
+        session: activeImport.session,
+        model: activeImport.model ?? '',
+      })
       if (!verify.verified) {
         setStatusMessage({
           type: 'err',
