@@ -523,7 +523,8 @@ func appendFallbackNoteToStream(input <-chan llm.StreamChunk, note string) <-cha
 		defer close(output)
 		for chunk := range input {
 			if chunk.Done && chunk.Error == nil && len(chunk.ToolCalls) == 0 {
-				output <- llm.StreamChunk{Content: note}
+				// Prepend \n\n so the notice starts on its own line after the LLM response.
+				output <- llm.StreamChunk{Content: "\n\n" + note}
 			}
 			output <- chunk
 		}
@@ -540,7 +541,7 @@ func formatFallbackNotice(fallbackModel, reason string) string {
 	if why == "" {
 		why = "primary model failed"
 	}
-	return fmt.Sprintf("[Model fallback] switched to %s due to %s", model, why)
+	return fmt.Sprintf("`[Model fallback] switched to %s due to %s`", model, why)
 }
 
 func normalizeFallbackReason(reason string) string {
