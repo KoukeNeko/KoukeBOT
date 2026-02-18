@@ -1,3 +1,4 @@
+export * from './aistudio'
 export * from './chat'
 export * from './mcp'
 export * from './oauth'

@@ -76,6 +76,52 @@ func (p *errProvider) ModelInfo() llm.ModelCapabilities {
 
 func (p *errProvider) RegisterTools([]domain.Tool) {}
 
+type countingProvider struct {
+	id              string
+	chatErr         error
+	streamErr       error
+	multimodalErr   error
+	chatCalls       int
+	streamCalls     int
+	multimodalCalls int
+}
+
+func (p *countingProvider) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	p.chatCalls++
+	if p.chatErr != nil {
+		return nil, p.chatErr
+	}
+	return &llm.ChatResponse{Content: p.id}, nil
+}
+
+func (p *countingProvider) StreamChat(context.Context, llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+	p.streamCalls++
+	if p.streamErr != nil {
+		return nil, p.streamErr
+	}
+	ch := make(chan llm.StreamChunk, 2)
+	ch <- llm.StreamChunk{Content: p.id}
+	ch <- llm.StreamChunk{Done: true}
+	close(ch)
+	return ch, nil
+}
+
+func (p *countingProvider) StreamChatMultimodal(context.Context, string, []domain.MultimodalMessage, domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
+	p.multimodalCalls++
+	if p.multimodalErr != nil {
+		return nil, p.multimodalErr
+	}
+	ch := make(chan llm.StreamChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (p *countingProvider) ModelInfo() llm.ModelCapabilities {
+	return llm.ModelCapabilities{ProviderName: p.id, Model: "gemini-2.5-pro"}
+}
+
+func (p *countingProvider) RegisterTools([]domain.Tool) {}
+
 func TestParseResetDelay(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -676,5 +722,127 @@ func TestProviderPoolTransientErrorFailsOverToNextAccount(t *testing.T) {
 		if entry.ConsecutiveFailures == 0 {
 			t.Fatalf("expected first account consecutive failures > 0")
 		}
+	}
+}
+
+func TestProviderPoolOAuthExhaustionFallbackOnQuotaExhausted(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	quotaErr := errors.New(`429 RESOURCE_EXHAUSTED {"quotaResetDelay":"90s"}`)
+	pool.AddOrReplace(&errProvider{err: quotaErr}, "quota@example.com")
+
+	fallback := &countingProvider{id: "aistudio-rpc"}
+	pool.SetOAuthExhaustionFallback(fallback)
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected AI Studio fallback success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "aistudio-rpc") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Content, "[Provider fallback]") {
+		t.Fatalf("expected provider fallback annotation, got: %q", resp.Content)
+	}
+	if fallback.chatCalls != 1 {
+		t.Fatalf("fallback chat calls = %d, want 1", fallback.chatCalls)
+	}
+
+	metrics := pool.MetricsSnapshot()
+	if metrics.OAuthExhaustionFallbackTry != 1 || metrics.OAuthExhaustionFallbackOK != 1 || metrics.OAuthExhaustionFallbackFail != 0 {
+		t.Fatalf("unexpected fallback metrics: %+v", metrics)
+	}
+}
+
+func TestProviderPoolOAuthExhaustionFallbackSkipsNonQuotaErrors(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.AddOrReplace(&errProvider{err: errors.New("validation failed: missing tool_use_id")}, "validation@example.com")
+
+	fallback := &countingProvider{id: "aistudio-rpc"}
+	pool.SetOAuthExhaustionFallback(fallback)
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "validation") {
+		t.Fatalf("expected validation error, got: %v", err)
+	}
+	if fallback.chatCalls != 0 {
+		t.Fatalf("fallback should not be called, calls=%d", fallback.chatCalls)
+	}
+	if metrics := pool.MetricsSnapshot(); metrics.OAuthExhaustionFallbackTry != 0 {
+		t.Fatalf("unexpected fallback attempt metric: %+v", metrics)
+	}
+}
+
+func TestProviderPoolOAuthExhaustionFallbackDisabledForMultimodal(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	quotaErr := errors.New(`429 RESOURCE_EXHAUSTED {"quotaResetDelay":"90s"}`)
+	pool.AddOrReplace(&errProvider{err: quotaErr}, "quota@example.com")
+
+	fallback := &countingProvider{id: "aistudio-rpc"}
+	pool.SetOAuthExhaustionFallback(fallback)
+
+	_, err := pool.StreamChatMultimodal(
+		context.Background(),
+		"sys",
+		[]domain.MultimodalMessage{{Role: domain.RoleUser, Parts: []domain.MessagePart{{Text: "hi"}}}},
+		domain.GenerationConfig{},
+	)
+	if err == nil {
+		t.Fatal("expected exhausted error")
+	}
+	if !strings.Contains(err.Error(), "exhausted") {
+		t.Fatalf("expected exhausted error, got: %v", err)
+	}
+	if fallback.chatCalls != 0 || fallback.streamCalls != 0 || fallback.multimodalCalls != 0 {
+		t.Fatalf("fallback should not be called on multimodal path: %#v", fallback)
+	}
+	if metrics := pool.MetricsSnapshot(); metrics.OAuthExhaustionFallbackTry != 0 {
+		t.Fatalf("unexpected fallback attempt metric: %+v", metrics)
+	}
+}
+
+func TestProviderPoolOAuthExhaustionFallbackFailureKeepsExhaustedSemantics(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	quotaErr := errors.New(`429 RESOURCE_EXHAUSTED {"quotaResetDelay":"90s"}`)
+	pool.AddOrReplace(&errProvider{err: quotaErr}, "quota@example.com")
+
+	fallback := &countingProvider{
+		id:      "aistudio-rpc",
+		chatErr: errors.New("aistudio rpc HTTP 401"),
+	}
+	pool.SetOAuthExhaustionFallback(fallback)
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected exhausted error with fallback context")
+	}
+	if !strings.Contains(err.Error(), "all 1 OAuth account(s) exhausted") {
+		t.Fatalf("expected exhausted error semantics, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "AI Studio fallback failed") {
+		t.Fatalf("expected fallback failure context, got: %v", err)
+	}
+	if fallback.chatCalls != 1 {
+		t.Fatalf("fallback chat calls = %d, want 1", fallback.chatCalls)
+	}
+
+	metrics := pool.MetricsSnapshot()
+	if metrics.OAuthExhaustionFallbackTry != 1 || metrics.OAuthExhaustionFallbackOK != 0 || metrics.OAuthExhaustionFallbackFail != 1 {
+		t.Fatalf("unexpected fallback metrics: %+v", metrics)
 	}
 }

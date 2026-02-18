@@ -105,6 +105,30 @@ export default function RuntimeMetricsCard({ runtimeMetrics }: Props) {
           </span>
         </div>
         <div className="runtime-metric-card">
+          <span className="runtime-metric-label">
+            OAuth exhaustion fallback (try)
+          </span>
+          <span className="runtime-metric-value">
+            {runtimeMetrics.pool_oauth_exhaustion_fallback_try.toLocaleString()}
+          </span>
+        </div>
+        <div className="runtime-metric-card">
+          <span className="runtime-metric-label">
+            OAuth exhaustion fallback (ok)
+          </span>
+          <span className="runtime-metric-value">
+            {runtimeMetrics.pool_oauth_exhaustion_fallback_ok.toLocaleString()}
+          </span>
+        </div>
+        <div className="runtime-metric-card">
+          <span className="runtime-metric-label">
+            OAuth exhaustion fallback (fail)
+          </span>
+          <span className="runtime-metric-value">
+            {runtimeMetrics.pool_oauth_exhaustion_fallback_fail.toLocaleString()}
+          </span>
+        </div>
+        <div className="runtime-metric-card">
           <span className="runtime-metric-label">Pool accounts (current)</span>
           <span className="runtime-metric-value">
             {runtimeMetrics.pool_accounts_total.toLocaleString()}

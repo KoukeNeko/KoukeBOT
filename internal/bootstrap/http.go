@@ -35,6 +35,7 @@ func StartAPIServer(
 		runtime.DiscordRuntime,
 		discordBot,
 		oauthFlow,
+		paths.AIStudioSessionPath,
 		runtime.ConvStore,
 		runtime.ImageStore,
 		ctx,

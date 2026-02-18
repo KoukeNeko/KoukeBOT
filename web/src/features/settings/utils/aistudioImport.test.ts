@@ -1,0 +1,90 @@
+import { describe, expect, it } from 'vitest'
+
+import { parseAIStudioImport } from './aistudioImport'
+
+describe('parseAIStudioImport', () => {
+  it('parses HAR and extracts latest GenerateContent session fields', () => {
+    const har = {
+      log: {
+        entries: [
+          {
+            startedDateTime: '2026-02-18T09:00:00Z',
+            request: {
+              method: 'POST',
+              url: 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent',
+              headers: [
+                { name: 'x-goog-api-key', value: 'k1' },
+                { name: 'x-browser-validation', value: 'b1' },
+                { name: 'x-client-data', value: 'c1' },
+                { name: 'x-goog-authuser', value: '1' },
+                { name: 'x-goog-ext-519733851-bin', value: 'ext1' },
+                { name: 'cookie', value: 'SID=abc' },
+                { name: 'user-agent', value: 'ua1' },
+              ],
+            },
+          },
+          {
+            startedDateTime: '2026-02-18T10:00:00Z',
+            request: {
+              method: 'POST',
+              url: 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent',
+              headers: [
+                { name: 'x-goog-api-key', value: 'k2' },
+                { name: 'x-browser-validation', value: 'b2' },
+                { name: 'x-client-data', value: 'c2' },
+                { name: 'x-goog-authuser', value: '0' },
+                { name: 'x-goog-ext-519733851-bin', value: 'ext2' },
+                { name: 'authorization', value: 'Bearer xyz' },
+              ],
+            },
+          },
+        ],
+      },
+    }
+
+    const result = parseAIStudioImport(JSON.stringify(har))
+    expect(result.sourceType).toBe('har')
+    expect(result.session.endpoint).toBe('https://alkalimakersuite-pa.clients6.google.com')
+    expect(result.session.api_key).toBe('k2')
+    expect(result.session.x_browser_validation).toBe('b2')
+    expect(result.session.x_client_data).toBe('c2')
+    expect(result.session.x_goog_authuser).toBe('0')
+    expect(result.session.x_goog_ext_519733851_bin).toBe('ext2')
+    expect(result.warnings.length).toBe(0)
+  })
+
+  it('parses session JSON payload', () => {
+    const payload = {
+      endpoint: 'https://alkalimakersuite-pa.clients6.google.com',
+      api_key: 'api-key',
+      x_browser_validation: 'validation',
+      x_client_data: 'client-data',
+      x_goog_authuser: '0',
+      cookie: 'SID=abc',
+      user_agent: 'Mozilla/test',
+    }
+
+    const result = parseAIStudioImport(JSON.stringify(payload))
+    expect(result.sourceType).toBe('session_json')
+    expect(result.session.api_key).toBe('api-key')
+    expect(result.session.x_browser_validation).toBe('validation')
+    expect(result.session.cookie).toContain('SID=')
+  })
+
+  it('reports warnings for missing cookie/authorization', () => {
+    const payload = {
+      endpoint: 'https://alkalimakersuite-pa.clients6.google.com',
+      api_key: 'api-key',
+      x_browser_validation: 'validation',
+      x_client_data: 'client-data',
+      x_goog_authuser: '0',
+    }
+
+    const result = parseAIStudioImport(JSON.stringify(payload))
+    expect(result.warnings.some((item) => item.includes('cookie/authorization'))).toBe(true)
+  })
+
+  it('throws for malformed JSON', () => {
+    expect(() => parseAIStudioImport('{oops')).toThrow('檔案不是有效 JSON。')
+  })
+})

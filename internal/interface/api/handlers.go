@@ -30,6 +30,7 @@ type Handlers struct {
 	discordRuntime         *discordruntime.Runtime
 	discordPersona         DiscordPersonaController
 	oauthFlow              *llm.GeminiOAuthFlow
+	aiStudioSessionPath    string
 	convStore              store.ConversationRepository
 	imageStore             *store.ImageStore
 	ctx                    context.Context
@@ -51,23 +52,25 @@ func NewHandlers(
 	discordRuntime *discordruntime.Runtime,
 	discordPersona DiscordPersonaController,
 	oauthFlow *llm.GeminiOAuthFlow,
+	aiStudioSessionPath string,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
 	ctx context.Context,
 ) *Handlers {
 	h := &Handlers{
-		personaService:   personaService,
-		chatService:      chatService,
-		schedulerService: schedulerService,
-		settingsStore:    settingsStore,
-		providerManager:  providerManager,
-		mcpManager:       mcpManager,
-		discordRuntime:   discordRuntime,
-		discordPersona:   discordPersona,
-		oauthFlow:        oauthFlow,
-		convStore:        convStore,
-		imageStore:       imageStore,
-		ctx:              ctx,
+		personaService:      personaService,
+		chatService:         chatService,
+		schedulerService:    schedulerService,
+		settingsStore:       settingsStore,
+		providerManager:     providerManager,
+		mcpManager:          mcpManager,
+		discordRuntime:      discordRuntime,
+		discordPersona:      discordPersona,
+		oauthFlow:           oauthFlow,
+		aiStudioSessionPath: aiStudioSessionPath,
+		convStore:           convStore,
+		imageStore:          imageStore,
+		ctx:                 ctx,
 	}
 	h.settingsRuntimeApplier = NewSettingsRuntimeApplier(h)
 	return h

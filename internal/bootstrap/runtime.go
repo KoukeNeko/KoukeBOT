@@ -27,13 +27,14 @@ type Loggers struct {
 }
 
 type Paths struct {
-	PersonasDir        string
-	ConversationsDir   string
-	ImagesDir          string
-	ScheduledTasksPath string
-	OAuthTokenPath     string
-	OAuthPoolPath      string
-	WebDistDir         string
+	PersonasDir         string
+	ConversationsDir    string
+	ImagesDir           string
+	ScheduledTasksPath  string
+	OAuthTokenPath      string
+	OAuthPoolPath       string
+	AIStudioSessionPath string
+	WebDistDir          string
 }
 
 type RuntimeServices struct {

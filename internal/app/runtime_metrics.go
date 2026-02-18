@@ -13,6 +13,9 @@ type RuntimeMetrics struct {
 	PoolTransientWaitRetryFailed    uint64
 	PoolAllAccountsExhausted        uint64
 	PoolModelFallback               uint64
+	PoolOAuthExhaustionFallbackTry  uint64
+	PoolOAuthExhaustionFallbackOK   uint64
+	PoolOAuthExhaustionFallbackFail uint64
 	PoolAccountsTotal               int
 	PoolAccountsExhaustedCurrent    int
 }
@@ -39,6 +42,9 @@ func BuildRuntimeMetricsSnapshot(chat *ChatService, providerManager *ProviderMan
 	result.PoolTransientWaitRetryFailed = poolMetrics.TransientWaitRetryFailed
 	result.PoolAllAccountsExhausted = poolMetrics.AllAccountsExhausted
 	result.PoolModelFallback = poolMetrics.ModelFallback
+	result.PoolOAuthExhaustionFallbackTry = poolMetrics.OAuthExhaustionFallbackTry
+	result.PoolOAuthExhaustionFallbackOK = poolMetrics.OAuthExhaustionFallbackOK
+	result.PoolOAuthExhaustionFallbackFail = poolMetrics.OAuthExhaustionFallbackFail
 	result.PoolAccountsTotal = len(entries)
 
 	exhausted := 0

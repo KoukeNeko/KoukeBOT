@@ -23,6 +23,24 @@ vi.mock('./useOAuthActions', () => ({
   }),
 }))
 
+vi.mock('./useAIStudioActions', () => ({
+  useAIStudioActions: () => ({
+    sessionStatus: null,
+    selectedFileName: '',
+    parsedImport: null,
+    statusMessage: null,
+    uploading: false,
+    verifyingCurrent: false,
+    deleting: false,
+    setStatusMessage: vi.fn(),
+    refreshSessionStatus: vi.fn().mockResolvedValue({ configured: false }),
+    parseUploadFile: vi.fn(),
+    uploadVerifyApply: vi.fn(),
+    verifyCurrentSession: vi.fn(),
+    deleteSession: vi.fn(),
+  }),
+}))
+
 const settingsFixture: SettingsData = {
   gemini_api_key: '',
   gemini_model: 'gemini-2.5-pro',
@@ -100,6 +118,9 @@ const metricsFixture: RuntimeMetrics = {
   pool_transient_wait_retry_failed: 0,
   pool_all_accounts_exhausted: 0,
   pool_model_fallback: 0,
+  pool_oauth_exhaustion_fallback_try: 0,
+  pool_oauth_exhaustion_fallback_ok: 0,
+  pool_oauth_exhaustion_fallback_fail: 0,
   pool_accounts_total: 0,
   pool_accounts_exhausted_current: 0,
 }

@@ -149,7 +149,7 @@ func (h *Handlers) completeOAuthCallback(flowID, code, state, expectedProviderID
 		return nil, fmt.Errorf("provider creation: %w", err)
 	}
 
-	pool := h.ensureOAuthPool(loadedSettings, providerID)
+	pool := h.ensureOAuthPool(loadedSettings, providerID, model)
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("OAuth account added to pool: %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
@@ -347,7 +347,7 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	pool := h.ensureOAuthPool(loadedSettings, providerID)
+	pool := h.ensureOAuthPool(loadedSettings, providerID, model)
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("Imported pasted token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
@@ -398,7 +398,7 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pool := h.ensureOAuthPool(loadedSettings, providerID)
+	pool := h.ensureOAuthPool(loadedSettings, providerID, model)
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 	logAPI.Logf("Imported Gemini CLI token for %s (project: %s, pool size: %d)",
 		tokenData.Email, tokenData.ProjectID, pool.Size())
@@ -563,7 +563,7 @@ func (h *Handlers) OAuthPoolVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pool := h.ensureOAuthPool(settings, providerID)
+	pool := h.ensureOAuthPool(settings, providerID, model)
 	checkedAt := time.Now().UTC().Format(time.RFC3339)
 	results := make([]OAuthPoolVerifyResult, 0, len(tokens))
 	verifiedCount := 0

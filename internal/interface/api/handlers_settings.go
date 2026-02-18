@@ -289,6 +289,7 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 
 	pool := app.NewProviderPool()
 	configureOAuthPoolFromSettings(pool, s, providerID, poolPath)
+	h.attachAIStudioOAuthFallback(pool, model)
 	fallbackEnabled := s.FallbackEnabled || s.FallbackModelEnabled
 	fallbackModel := resolveFallbackModelShort(s, providerID)
 

@@ -15,6 +15,7 @@ import type {
   RuntimeMetrics,
   SettingsData,
 } from '../../../types'
+import { useAIStudioActions } from './useAIStudioActions'
 import { useOAuthActions, type StatusMessage } from './useOAuthActions'
 
 const defaultProviderModels: Record<string, string> = {
@@ -109,6 +110,7 @@ export function useSettingsData() {
     setMessage,
     setStatus: (next) => setStatus(next),
   })
+  const aistudio = useAIStudioActions()
 
   const refreshRuntimeMetrics = useCallback(async () => {
     try {
@@ -131,12 +133,16 @@ export function useSettingsData() {
       getProviderStatus(),
       getRuntimeMetrics().catch(() => null as RuntimeMetrics | null),
       oauth.refreshOAuthSnapshot().catch(() => ({ oauth: null, poolEntries: [] })),
+      aistudio.refreshSessionStatus().catch(() => null),
       listPersonas(),
     ])
-      .then(async ([settings, currentStatus, metrics, oauthSnapshot, personaList]) => {
+      .then(async ([settings, currentStatus, metrics, oauthSnapshot, aiStudioStatus, personaList]) => {
         setForm(settings)
         setStatus(currentStatus)
         setRuntimeMetrics(metrics)
+        if (aiStudioStatus) {
+          // Session status is already pushed into hook state by refreshSessionStatus.
+        }
         if (oauthSnapshot.oauth) {
           oauth.setOAuthStatus(oauthSnapshot.oauth)
         }
@@ -265,5 +271,6 @@ export function useSettingsData() {
     personaOptions,
     handleSave,
     oauth,
+    aistudio,
   }
 }

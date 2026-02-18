@@ -132,6 +132,17 @@ export default function SettingsPage({ vm }: Props) {
             onImportPastedToken={vm.oauth.handleImportPastedToken}
             importingCLI={vm.oauth.importingCLI}
             onImportCLIToken={vm.oauth.handleImportCLIToken}
+            aistudioStatus={vm.aistudio.sessionStatus}
+            aistudioFileName={vm.aistudio.selectedFileName}
+            aistudioImport={vm.aistudio.parsedImport}
+            aistudioMessage={vm.aistudio.statusMessage}
+            aistudioUploading={vm.aistudio.uploading}
+            aistudioVerifyingCurrent={vm.aistudio.verifyingCurrent}
+            aistudioDeleting={vm.aistudio.deleting}
+            onAIStudioFileSelected={vm.aistudio.parseUploadFile}
+            onAIStudioUploadVerifyApply={vm.aistudio.uploadVerifyApply}
+            onAIStudioVerifyCurrent={vm.aistudio.verifyCurrentSession}
+            onAIStudioDelete={vm.aistudio.deleteSession}
           />
         );
       case "discord":

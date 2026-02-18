@@ -140,6 +140,7 @@ func initOAuthProvider(
 		}
 		pool.SetCircuitBreaker(threshold, openDuration)
 	}
+	attachAIStudioFallbackProvider(pool, paths.AIStudioSessionPath, model, logs)
 
 	for _, tokenData := range tokens {
 		if err := llm.RefreshIfNeeded(ctx, tokenData, ""); err != nil {
@@ -172,6 +173,22 @@ func initOAuthProvider(
 	pm.Update(pool)
 	logs.LLM.Logf("OAuth pool: %d account(s) (model: %s)", pool.Size(), model)
 	return true
+}
+
+func attachAIStudioFallbackProvider(pool *app.ProviderPool, sessionPath, model string, logs Loggers) {
+	if pool == nil {
+		return
+	}
+	provider, err := llm.LoadAIStudioRPCProviderFromFile(sessionPath, model)
+	if err != nil {
+		pool.SetOAuthExhaustionFallback(nil)
+		logs.LLM.Warnf("AI Studio fallback disabled: %v", err)
+		return
+	}
+	pool.SetOAuthExhaustionFallback(provider)
+	if provider != nil {
+		logs.LLM.Logf("AI Studio OAuth exhaustion fallback enabled (model: %s)", provider.ModelInfo().Model)
+	}
 }
 
 func resolveBootstrapProviderType(settings config.Settings, providerID string) string {

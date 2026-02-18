@@ -33,11 +33,26 @@ func NewRouter(
 	discordRuntime *discordruntime.Runtime,
 	discordPersona DiscordPersonaController,
 	oauthFlow *llm.GeminiOAuthFlow,
+	aiStudioSessionPath string,
 	convStore store.ConversationRepository,
 	imageStore *store.ImageStore,
 	ctx context.Context,
 ) *Router {
-	handlers := NewHandlers(personaService, chatService, schedulerService, settingsStore, providerManager, mcpManager, discordRuntime, discordPersona, oauthFlow, convStore, imageStore, ctx)
+	handlers := NewHandlers(
+		personaService,
+		chatService,
+		schedulerService,
+		settingsStore,
+		providerManager,
+		mcpManager,
+		discordRuntime,
+		discordPersona,
+		oauthFlow,
+		aiStudioSessionPath,
+		convStore,
+		imageStore,
+		ctx,
+	)
 	mux := http.NewServeMux()
 
 	r := &Router{mux: mux, handlers: handlers}
@@ -93,6 +108,12 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/oauth/pool", r.handlers.OAuthPoolList)
 	r.mux.HandleFunc("POST /api/oauth/pool/verify", r.handlers.OAuthPoolVerify)
 	r.mux.HandleFunc("DELETE /api/oauth/pool/{email}", r.handlers.OAuthPoolRemove)
+
+	// AI Studio session
+	r.mux.HandleFunc("GET /api/aistudio/session", r.handlers.AIStudioSessionGet)
+	r.mux.HandleFunc("PUT /api/aistudio/session", r.handlers.AIStudioSessionPut)
+	r.mux.HandleFunc("DELETE /api/aistudio/session", r.handlers.AIStudioSessionDelete)
+	r.mux.HandleFunc("POST /api/aistudio/session/verify", r.handlers.AIStudioSessionVerify)
 
 	// Health
 	r.mux.HandleFunc("GET /api/health", r.handlers.Health)

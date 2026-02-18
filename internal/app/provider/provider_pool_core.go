@@ -192,21 +192,21 @@ func (pp *ProviderPool) MarkTransientFailure(email string, err error, cooldown t
 func (pp *ProviderPool) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 	return tryPool(ctx, pp, func(p llm.Provider) (*llm.ChatResponse, error) {
 		return p.Chat(ctx, req)
-	})
+	}, true)
 }
 
 // StreamChat implements llm.Provider with automatic failover.
 func (pp *ProviderPool) StreamChat(ctx context.Context, req llm.ChatRequest) (<-chan llm.StreamChunk, error) {
 	return tryPool(ctx, pp, func(p llm.Provider) (<-chan llm.StreamChunk, error) {
 		return p.StreamChat(ctx, req)
-	})
+	}, true)
 }
 
 // StreamChatMultimodal implements llm.Provider with automatic failover.
 func (pp *ProviderPool) StreamChatMultimodal(ctx context.Context, systemPrompt string, messages []domain.MultimodalMessage, generation domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
 	return tryPool(ctx, pp, func(p llm.Provider) (<-chan llm.StreamChunk, error) {
 		return p.StreamChatMultimodal(ctx, systemPrompt, messages, generation)
-	})
+	}, false)
 }
 
 // ModelInfo returns capabilities from the first available provider.
@@ -258,10 +258,13 @@ func (pp *ProviderPool) RegisterTools(tools []domain.Tool) {
 	for _, e := range pp.entries {
 		e.provider.RegisterTools(tools)
 	}
+	if pp.oauthExhaustionFallback != nil {
+		pp.oauthExhaustionFallback.RegisterTools(tools)
+	}
 }
 
 // tryPool is a generic failover function.
-func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error)) (T, error) {
+func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error), allowOAuthExhaustionFallback bool) (T, error) {
 	var zero T
 
 	// Circuit breaker: immediately reject if open.
@@ -291,6 +294,14 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		selection := pp.selectOrWaitProvider(ctx, waitRetryUsed)
 		waitRetryUsed = selection.waitRetryUsed
 		if selection.err != nil {
+			if allowOAuthExhaustionFallback {
+				if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, selection.err); attempted {
+					if fallbackErr == nil {
+						return result, nil
+					}
+					return zero, fmt.Errorf("%w (AI Studio fallback failed: %s)", selection.err, truncateError(fallbackErr, 220))
+				}
+			}
 			return zero, selection.err
 		}
 		if selection.retry {
@@ -399,7 +410,17 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		}
 	}
 
-	return zero, pp.exhaustedError(waitRetryUsed)
+	exhaustedErr := pp.exhaustedError(waitRetryUsed)
+	if allowOAuthExhaustionFallback {
+		if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, exhaustedErr); attempted {
+			if fallbackErr == nil {
+				return result, nil
+			}
+			return zero, fmt.Errorf("%w (AI Studio fallback failed: %s)", exhaustedErr, truncateError(fallbackErr, 220))
+		}
+	}
+
+	return zero, exhaustedErr
 }
 
 // enqueueAndRetry queues the request if the request queue is enabled,
@@ -490,8 +511,95 @@ func tryFallbackModel[T any](ctx context.Context, pp *ProviderPool, fn func(llm.
 	return result, nil
 }
 
+func tryOAuthExhaustionFallback[T any](
+	ctx context.Context,
+	pp *ProviderPool,
+	fn func(llm.Provider) (T, error),
+	triggerErr error,
+) (T, bool, error) {
+	var zero T
+
+	fallbackProvider, reason, eligible := pp.oauthExhaustionFallbackProvider(triggerErr)
+	if !eligible {
+		return zero, false, nil
+	}
+
+	atomic.AddUint64(&pp.metricOAuthExhaustionFallbackTry, 1)
+	logPool.Logf("metric pool.oauth_exhaustion_fallback_try=1")
+	logPool.Warnf("all OAuth accounts quota-exhausted — trying provider fallback via %s",
+		fallbackProvider.ModelInfo().ProviderName)
+
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			atomic.AddUint64(&pp.metricOAuthExhaustionFallbackFail, 1)
+			logPool.Logf("metric pool.oauth_exhaustion_fallback_fail=1")
+			return zero, true, err
+		}
+	}
+
+	result, err := fn(fallbackProvider)
+	if err != nil {
+		atomic.AddUint64(&pp.metricOAuthExhaustionFallbackFail, 1)
+		logPool.Logf("metric pool.oauth_exhaustion_fallback_fail=1")
+		logPool.Warnf("provider fallback failed: %s", truncateError(err, 220))
+		return zero, true, err
+	}
+
+	result = annotateProviderFallbackResult(result, fallbackProvider.ModelInfo().ProviderName, reason)
+	pp.recordEffectiveState(fallbackProvider, fallbackProvider.ModelInfo().Model, reason, true)
+	atomic.AddUint64(&pp.metricOAuthExhaustionFallbackOK, 1)
+	logPool.Logf("metric pool.oauth_exhaustion_fallback_ok=1")
+	return result, true, nil
+}
+
+func (pp *ProviderPool) oauthExhaustionFallbackProvider(triggerErr error) (llm.Provider, string, bool) {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+
+	if pp == nil || pp.oauthExhaustionFallback == nil || len(pp.entries) == 0 {
+		return nil, "", false
+	}
+
+	now := time.Now()
+	sawQuota := false
+	for _, entry := range pp.entries {
+		if entry.isAvailable(now) {
+			return nil, "", false
+		}
+
+		lastErr := strings.TrimSpace(entry.lastError)
+		if lastErr == "" {
+			return nil, "", false
+		}
+		if classifyError(fmt.Errorf("%s", lastErr)) != errorQuota {
+			return nil, "", false
+		}
+		sawQuota = true
+	}
+	if !sawQuota {
+		return nil, "", false
+	}
+
+	reason := "all OAuth accounts exhausted by quota"
+	if triggerErr != nil {
+		if text := strings.TrimSpace(triggerErr.Error()); text != "" {
+			reason = text
+		}
+	}
+	return pp.oauthExhaustionFallback, reason, true
+}
+
 func annotateFallbackResult[T any](result T, fallbackModel, reason string) T {
 	note := formatFallbackNotice(fallbackModel, reason)
+	return annotateResultWithNotice(result, note)
+}
+
+func annotateProviderFallbackResult[T any](result T, providerName, reason string) T {
+	note := formatProviderFallbackNotice(providerName, reason)
+	return annotateResultWithNotice(result, note)
+}
+
+func annotateResultWithNotice[T any](result T, note string) T {
 	if strings.TrimSpace(note) == "" {
 		return result
 	}
@@ -542,7 +650,19 @@ func formatFallbackNotice(fallbackModel, reason string) string {
 	if why == "" {
 		why = "primary model failed"
 	}
-	return fmt.Sprintf("```\n[Model fallback]\nSwitched to %s\n%s\n```", model, why)
+	return fmt.Sprintf("```\n[Model fallback] switched to %s\n%s\n```", model, why)
+}
+
+func formatProviderFallbackNotice(providerName, reason string) string {
+	name := strings.TrimSpace(providerName)
+	if name == "" {
+		name = "fallback provider"
+	}
+	why := normalizeFallbackReason(reason)
+	if why == "" {
+		why = "all OAuth accounts exhausted"
+	}
+	return fmt.Sprintf("```\n[Provider fallback] switched to %s\n%s\n```", name, why)
 }
 
 func normalizeFallbackReason(reason string) string {

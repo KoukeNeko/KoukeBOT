@@ -16,13 +16,14 @@ import (
 )
 
 const (
-	personasDir        = "configs/personas"
-	settingsPath       = "data/settings.json"
-	scheduledTasksPath = "data/schedules/tasks.json"
-	oauthTokenPath     = "data/gemini_oauth.json"
-	oauthPoolPath      = "data/oauth_pool.json"
-	defaultModel       = "gemini-2.5-pro"
-	defaultPort        = "8080"
+	personasDir         = "configs/personas"
+	settingsPath        = "data/settings.json"
+	scheduledTasksPath  = "data/schedules/tasks.json"
+	oauthTokenPath      = "data/gemini_oauth.json"
+	oauthPoolPath       = "data/oauth_pool.json"
+	aiStudioSessionPath = "data/aistudio_session.json"
+	defaultModel        = "gemini-2.5-pro"
+	defaultPort         = "8080"
 )
 
 var (
@@ -56,13 +57,14 @@ func run() error {
 		HTTP:    logHTTP,
 	}
 	paths := bootstrap.Paths{
-		PersonasDir:        personasDir,
-		ConversationsDir:   "data/conversations",
-		ImagesDir:          "data/images",
-		ScheduledTasksPath: scheduledTasksPath,
-		OAuthTokenPath:     oauthTokenPath,
-		OAuthPoolPath:      oauthPoolPath,
-		WebDistDir:         filepath.Join("web", "dist"),
+		PersonasDir:         personasDir,
+		ConversationsDir:    "data/conversations",
+		ImagesDir:           "data/images",
+		ScheduledTasksPath:  scheduledTasksPath,
+		OAuthTokenPath:      oauthTokenPath,
+		OAuthPoolPath:       oauthPoolPath,
+		AIStudioSessionPath: aiStudioSessionPath,
+		WebDistDir:          filepath.Join("web", "dist"),
 	}
 
 	port := bootstrap.ResolvePort(defaultPort)

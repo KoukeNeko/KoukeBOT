@@ -1,7 +1,8 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import Select from "../../components/ui/Select";
 import Checkbox from "../../components/ui/Checkbox";
-import type { SettingsData, OAuthStatus, PoolEntry, OAuthStartResult } from "../../types";
+import type { SettingsData, OAuthStatus, PoolEntry, OAuthStartResult, AIStudioSessionStatus } from "../../types";
+import type { AIStudioImportResult } from "../../features/settings/utils/aistudioImport";
 
 export type ProviderTab = "api-key" | "oauth" | "pool";
 
@@ -11,6 +12,11 @@ type SelectOption = {
 };
 
 type StatusMessage = {
+  type: "ok" | "err";
+  text: string;
+} | null;
+
+type AIStudioStatusMessage = {
   type: "ok" | "err";
   text: string;
 } | null;
@@ -48,6 +54,17 @@ type Props = {
   onImportPastedToken: (providerID: string) => void;
   importingCLI: boolean;
   onImportCLIToken: (providerID: string) => void;
+  aistudioStatus: AIStudioSessionStatus | null;
+  aistudioFileName: string;
+  aistudioImport: AIStudioImportResult | null;
+  aistudioMessage: AIStudioStatusMessage;
+  aistudioUploading: boolean;
+  aistudioVerifyingCurrent: boolean;
+  aistudioDeleting: boolean;
+  onAIStudioFileSelected: (file: File | null) => Promise<void>;
+  onAIStudioUploadVerifyApply: () => Promise<boolean>;
+  onAIStudioVerifyCurrent: () => Promise<boolean>;
+  onAIStudioDelete: () => Promise<boolean>;
 };
 
 export default function ProviderSection({
@@ -83,6 +100,17 @@ export default function ProviderSection({
   onImportPastedToken,
   importingCLI,
   onImportCLIToken,
+  aistudioStatus,
+  aistudioFileName,
+  aistudioImport,
+  aistudioMessage,
+  aistudioUploading,
+  aistudioVerifyingCurrent,
+  aistudioDeleting,
+  onAIStudioFileSelected,
+  onAIStudioUploadVerifyApply,
+  onAIStudioVerifyCurrent,
+  onAIStudioDelete,
 }: Props) {
   const isModalBusy = oauthStarting || oauthCompleting;
   const [errorDetailEmail, setErrorDetailEmail] = useState<string | null>(null);
@@ -91,6 +119,13 @@ export default function ProviderSection({
   const currentModelValue = form.model_id || form.gemini_model;
   const toLegacyModel = (modelID: string) =>
     modelID.includes("/") ? modelID.split("/").slice(1).join("/") : modelID;
+  const summarizeSecret = (value?: string) => {
+    const text = (value ?? "").trim();
+    if (!text) {
+      return "(empty)";
+    }
+    return `set(len=${text.length})`;
+  };
 
   const fallbackValueFromSettings = form.fallback_model_id || form.fallback_model || "";
   const resolvedFallbackValue =
@@ -406,6 +441,122 @@ export default function ProviderSection({
               )}
             </>
           )}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">AI Studio Fallback</h3>
+
+        <div className={`oauth-status-banner ${aistudioStatus?.configured ? "" : "aistudio-status-warn"}`}>
+          {aistudioStatus?.configured ? (
+            <p className="meta">
+              已設定 AI Studio session（OAuth exhausted 時可自動切換）。
+            </p>
+          ) : (
+            <p className="meta">尚未設定 AI Studio session。</p>
+          )}
+        </div>
+
+        <label className="form-field">
+          <span>Upload HAR / Session JSON</span>
+          <input
+            type="file"
+            accept=".har,.json,application/json"
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              void onAIStudioFileSelected(file);
+            }}
+          />
+          <span className="hint">
+            可上傳 AI Studio HAR 或 `aistudio_session.json`。流程會先 verify，成功才套用。
+          </span>
+          {aistudioFileName && (
+            <span className="hint">已選擇：<code>{aistudioFileName}</code></span>
+          )}
+        </label>
+
+        {aistudioImport && (
+          <div className="aistudio-import-summary">
+            <div className="meta">來源：<code>{aistudioImport.sourceType}</code></div>
+            <div className="aistudio-import-grid">
+              <div className="aistudio-import-row">
+                <span>endpoint</span>
+                <code>{aistudioImport.session.endpoint || "(empty)"}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>api_key</span>
+                <code>{summarizeSecret(aistudioImport.session.api_key)}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>x_browser_validation</span>
+                <code>{summarizeSecret(aistudioImport.session.x_browser_validation)}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>x_client_data</span>
+                <code>{summarizeSecret(aistudioImport.session.x_client_data)}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>x_goog_authuser</span>
+                <code>{summarizeSecret(aistudioImport.session.x_goog_authuser)}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>x_goog_ext_519733851_bin</span>
+                <code>{summarizeSecret(aistudioImport.session.x_goog_ext_519733851_bin)}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>cookie</span>
+                <code>{summarizeSecret(aistudioImport.session.cookie)}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>authorization</span>
+                <code>{summarizeSecret(aistudioImport.session.authorization)}</code>
+              </div>
+            </div>
+            {aistudioImport.warnings.length > 0 && (
+              <ul className="aistudio-warning-list">
+                {aistudioImport.warnings.map((warning, idx) => (
+                  <li key={`${warning}-${idx}`}>{warning}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {aistudioMessage && (
+          <p className={aistudioMessage.type === "ok" ? "success message" : "error message"}>
+            {aistudioMessage.text}
+          </p>
+        )}
+
+        <div className="aistudio-actions-row">
+          <button
+            type="button"
+            className="btn-primary aistudio-btn"
+            onClick={() => { void onAIStudioUploadVerifyApply(); }}
+            disabled={aistudioUploading || !aistudioImport}
+          >
+            {aistudioUploading ? "Verifying..." : "Upload & Verify & Apply"}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary aistudio-btn"
+            onClick={() => { void onAIStudioVerifyCurrent(); }}
+            disabled={aistudioVerifyingCurrent || !aistudioStatus?.configured}
+          >
+            {aistudioVerifyingCurrent ? "Verifying..." : "Verify Current Session"}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary aistudio-btn"
+            onClick={() => {
+              if (!aistudioStatus?.configured) return;
+              if (!confirm("確定要刪除 AI Studio session？")) return;
+              void onAIStudioDelete();
+            }}
+            disabled={aistudioDeleting || !aistudioStatus?.configured}
+          >
+            {aistudioDeleting ? "Deleting..." : "Delete Session"}
+          </button>
         </div>
       </section>
 

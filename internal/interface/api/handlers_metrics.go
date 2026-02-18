@@ -21,6 +21,9 @@ type RuntimeMetricsResponse struct {
 	PoolTransientWaitRetrySucceeded uint64 `json:"pool_transient_wait_retry_succeeded"`
 	PoolTransientWaitRetryFailed    uint64 `json:"pool_transient_wait_retry_failed"`
 	PoolAllAccountsExhausted        uint64 `json:"pool_all_accounts_exhausted"`
+	PoolOAuthExhaustionFallbackTry  uint64 `json:"pool_oauth_exhaustion_fallback_try"`
+	PoolOAuthExhaustionFallbackOK   uint64 `json:"pool_oauth_exhaustion_fallback_ok"`
+	PoolOAuthExhaustionFallbackFail uint64 `json:"pool_oauth_exhaustion_fallback_fail"`
 	PoolAccountsTotal               int    `json:"pool_accounts_total"`
 	PoolAccountsExhaustedCurrent    int    `json:"pool_accounts_exhausted_current"`
 }
@@ -42,6 +45,9 @@ func (h *Handlers) GetRuntimeMetrics(w http.ResponseWriter, r *http.Request) {
 		PoolTransientWaitRetrySucceeded: snapshot.PoolTransientWaitRetrySucceeded,
 		PoolTransientWaitRetryFailed:    snapshot.PoolTransientWaitRetryFailed,
 		PoolAllAccountsExhausted:        snapshot.PoolAllAccountsExhausted,
+		PoolOAuthExhaustionFallbackTry:  snapshot.PoolOAuthExhaustionFallbackTry,
+		PoolOAuthExhaustionFallbackOK:   snapshot.PoolOAuthExhaustionFallbackOK,
+		PoolOAuthExhaustionFallbackFail: snapshot.PoolOAuthExhaustionFallbackFail,
 		PoolAccountsTotal:               snapshot.PoolAccountsTotal,
 		PoolAccountsExhaustedCurrent:    snapshot.PoolAccountsExhaustedCurrent,
 	})

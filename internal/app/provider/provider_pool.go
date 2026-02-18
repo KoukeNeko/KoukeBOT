@@ -55,7 +55,7 @@ func (e *poolEntry) effectiveExhaustedUntil() time.Time {
 // PoolStatus is the public view of a pool entry for API responses.
 type PoolStatus struct {
 	Email          string     `json:"email"`
-	Status         string     `json:"status"` // "available", "cooldown", "disabled"
+	Status         string     `json:"status"`                    // "available", "cooldown", "disabled"
 	ExhaustedUntil *time.Time `json:"exhausted_until,omitempty"` // Backward compat: max(cooldownUntil, disabledUntil)
 	CooldownUntil  *time.Time `json:"cooldown_until,omitempty"`
 	DisabledUntil  *time.Time `json:"disabled_until,omitempty"`
@@ -100,6 +100,10 @@ type ProviderPool struct {
 	// Fallback model: tried when primary model has no capacity.
 	fallbackModel string
 
+	// OAuth exhaustion fallback provider (AI Studio RPC).
+	// Triggered only when all OAuth accounts are quota-exhausted.
+	oauthExhaustionFallback llm.Provider
+
 	// Observability fields for status endpoint / UI.
 	effectiveModel     string
 	effectiveEndpoint  string
@@ -116,6 +120,9 @@ type ProviderPool struct {
 	metricAllAccountsExhausted        uint64
 	metricModelCapacityGlobalCooldown uint64
 	metricModelFallback               uint64
+	metricOAuthExhaustionFallbackTry  uint64
+	metricOAuthExhaustionFallbackOK   uint64
+	metricOAuthExhaustionFallbackFail uint64
 }
 
 // NewProviderPool creates an empty provider pool.
@@ -163,6 +170,19 @@ func (pp *ProviderPool) SetFallbackModel(model string) {
 	pp.fallbackModel = strings.TrimSpace(model)
 }
 
+// SetOAuthExhaustionFallback configures a provider that will be used only when
+// all OAuth accounts are exhausted by quota errors.
+func (pp *ProviderPool) SetOAuthExhaustionFallback(provider llm.Provider) {
+	pp.mu.Lock()
+	pp.oauthExhaustionFallback = provider
+	tools := append([]domain.Tool(nil), pp.tools...)
+	pp.mu.Unlock()
+
+	if provider != nil && len(tools) > 0 {
+		provider.RegisterTools(tools)
+	}
+}
+
 // SetQueueConfig enables or disables the request queue that buffers incoming
 // requests when all accounts are in cooldown.
 func (pp *ProviderPool) SetQueueConfig(enabled bool, capacity int, timeout time.Duration) {
@@ -207,6 +227,9 @@ type ProviderPoolMetrics struct {
 	AllAccountsExhausted        uint64 `json:"all_accounts_exhausted"`
 	ModelCapacityGlobalCooldown uint64 `json:"model_capacity_global_cooldown"`
 	ModelFallback               uint64 `json:"model_fallback"`
+	OAuthExhaustionFallbackTry  uint64 `json:"oauth_exhaustion_fallback_try"`
+	OAuthExhaustionFallbackOK   uint64 `json:"oauth_exhaustion_fallback_ok"`
+	OAuthExhaustionFallbackFail uint64 `json:"oauth_exhaustion_fallback_fail"`
 }
 
 func (pp *ProviderPool) MetricsSnapshot() ProviderPoolMetrics {
@@ -220,5 +243,8 @@ func (pp *ProviderPool) MetricsSnapshot() ProviderPoolMetrics {
 		AllAccountsExhausted:        atomic.LoadUint64(&pp.metricAllAccountsExhausted),
 		ModelCapacityGlobalCooldown: atomic.LoadUint64(&pp.metricModelCapacityGlobalCooldown),
 		ModelFallback:               atomic.LoadUint64(&pp.metricModelFallback),
+		OAuthExhaustionFallbackTry:  atomic.LoadUint64(&pp.metricOAuthExhaustionFallbackTry),
+		OAuthExhaustionFallbackOK:   atomic.LoadUint64(&pp.metricOAuthExhaustionFallbackOK),
+		OAuthExhaustionFallbackFail: atomic.LoadUint64(&pp.metricOAuthExhaustionFallbackFail),
 	}
 }

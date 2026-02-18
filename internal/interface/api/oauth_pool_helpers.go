@@ -71,13 +71,14 @@ func configureOAuthPoolFromSettings(pool *app.ProviderPool, settings config.Sett
 	}
 }
 
-func (h *Handlers) ensureOAuthPool(settings config.Settings, providerID string) *app.ProviderPool {
+func (h *Handlers) ensureOAuthPool(settings config.Settings, providerID, model string) *app.ProviderPool {
 	pool := h.providerManager.GetPool()
 	if pool == nil {
 		pool = app.NewProviderPool()
 		h.providerManager.Update(pool)
 	}
 	configureOAuthPoolFromSettings(pool, settings, providerID, h.oauthFlow.PoolPath())
+	h.attachAIStudioOAuthFallback(pool, model)
 	return pool
 }
 
@@ -96,4 +97,17 @@ func (h *Handlers) persistOAuthProviderSelection(providerID string) {
 	}
 	_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
 	_ = h.settingsStore.Save(s)
+}
+
+func (h *Handlers) attachAIStudioOAuthFallback(pool *app.ProviderPool, model string) {
+	if pool == nil {
+		return
+	}
+	provider, err := llm.LoadAIStudioRPCProviderFromFile(h.aiStudioSessionPath, model)
+	if err != nil {
+		pool.SetOAuthExhaustionFallback(nil)
+		logAPI.Warnf("AI Studio fallback disabled: %v", err)
+		return
+	}
+	pool.SetOAuthExhaustionFallback(provider)
 }

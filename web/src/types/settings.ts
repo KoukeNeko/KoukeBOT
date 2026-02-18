@@ -126,6 +126,9 @@ export interface RuntimeMetrics {
   pool_transient_wait_retry_failed: number
   pool_all_accounts_exhausted: number
   pool_model_fallback: number
+  pool_oauth_exhaustion_fallback_try: number
+  pool_oauth_exhaustion_fallback_ok: number
+  pool_oauth_exhaustion_fallback_fail: number
   pool_accounts_total: number
   pool_accounts_exhausted_current: number
 }
