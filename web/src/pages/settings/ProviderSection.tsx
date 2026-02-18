@@ -458,17 +458,17 @@ export default function ProviderSection({
         </div>
 
         <label className="form-field">
-          <span>Upload HAR / Session JSON</span>
+          <span>Upload HAR / Session JSON / cURL</span>
           <input
             type="file"
-            accept=".har,.json,application/json"
+            accept=".har,.json,.txt,.sh,application/json,text/plain"
             onChange={(e) => {
               const file = e.target.files?.[0] ?? null;
               void onAIStudioFileSelected(file);
             }}
           />
           <span className="hint">
-            可上傳 AI Studio HAR 或 `aistudio_session.json`。流程會先 verify，成功才套用。
+            可上傳 AI Studio HAR、`aistudio_session.json` 或含 cURL 指令的文字檔。流程會先 verify，成功才套用。
           </span>
           {aistudioFileName && (
             <span className="hint">已選擇：<code>{aistudioFileName}</code></span>

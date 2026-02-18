@@ -56,7 +56,7 @@ export function useAIStudioActions() {
 
   const uploadVerifyApply = useCallback(async () => {
     if (!parsedImport) {
-      setStatusMessage({ type: 'err', text: '請先上傳 HAR 或 session JSON。' })
+      setStatusMessage({ type: 'err', text: '請先上傳 HAR、session JSON 或 cURL。' })
       return false
     }
     setUploading(true)

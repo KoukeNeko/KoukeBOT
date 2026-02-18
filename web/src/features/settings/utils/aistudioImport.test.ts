@@ -84,7 +84,47 @@ describe('parseAIStudioImport', () => {
     expect(result.warnings.some((item) => item.includes('cookie/authorization'))).toBe(true)
   })
 
+  it('parses cURL command and maps headers/cookie', () => {
+    const curl = `
+curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent' \\
+  -H 'accept-language: ja,en-US;q=0.9,en;q=0.8' \\
+  -H 'authorization: SAPISIDHASH testhash' \\
+  -H 'x-browser-validation: validation-token' \\
+  -H 'x-client-data: client-data-token' \\
+  -H 'x-goog-api-key: key-123' \\
+  -H 'x-goog-authuser: 0' \\
+  -H 'x-goog-ext-519733851-bin: ext-token' \\
+  -H 'x-browser-channel: beta' \\
+  -H 'user-agent: Mozilla/test' \\
+  -b 'SID=abc; HSID=def' \\
+  --data-raw $'["models/gemini-3-pro-preview",[]]'
+`
+
+    const result = parseAIStudioImport(curl)
+    expect(result.sourceType).toBe('curl')
+    expect(result.session.endpoint).toBe('https://alkalimakersuite-pa.clients6.google.com')
+    expect(result.session.api_key).toBe('key-123')
+    expect(result.session.x_browser_validation).toBe('validation-token')
+    expect(result.session.x_client_data).toBe('client-data-token')
+    expect(result.session.x_goog_authuser).toBe('0')
+    expect(result.session.x_goog_ext_519733851_bin).toBe('ext-token')
+    expect(result.session.cookie).toContain('SID=abc')
+    expect(result.session.authorization).toContain('SAPISIDHASH')
+    expect(result.warnings.length).toBe(0)
+  })
+
+  it('parses cURL from fenced code block', () => {
+    const curl = `\`\`\`bash
+curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/CountTokens' -H 'x-browser-validation: b' -H 'x-client-data: c'
+\`\`\``
+
+    const result = parseAIStudioImport(curl)
+    expect(result.sourceType).toBe('curl')
+    expect(result.session.endpoint).toBe('https://alkalimakersuite-pa.clients6.google.com')
+    expect(result.warnings.some((item) => item.includes('cookie/authorization'))).toBe(true)
+  })
+
   it('throws for malformed JSON', () => {
-    expect(() => parseAIStudioImport('{oops')).toThrow('檔案不是有效 JSON。')
+    expect(() => parseAIStudioImport('{oops')).toThrow('檔案不是有效 JSON 或 cURL。')
   })
 })
