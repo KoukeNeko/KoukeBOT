@@ -83,8 +83,8 @@ func TestRenderSystemPromptIncludesSystemInstructions(t *testing.T) {
 		"Tool results are encoded in TOON (`t=toolr`)",
 		"`items[]` where each item has `id`, `name`, `ok`, `out`",
 		"Channel history appears as user/assistant turns",
-		"[Name · HH:mm]",
-		"[↩ Name · HH:mm]",
+		"[Name · MM/DD HH:mm]",
+		"[↩ Name · MM/DD HH:mm]",
 	}
 	for _, want := range wants {
 		if !strings.Contains(got, want) {

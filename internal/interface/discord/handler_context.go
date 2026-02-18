@@ -200,14 +200,9 @@ func historyRecentOffset(totalMessages, messageIndex int) int {
 	return totalMessages - 1 - messageIndex
 }
 
-// formatHistoryTimestamp returns a compact timestamp for channel history labels.
-// Same calendar day (UTC) → "HH:mm"; different day → "MM/DD HH:mm" to avoid
-// ambiguity when the history window crosses midnight.
+// formatHistoryTimestamp returns a fixed "MM/DD HH:mm" timestamp for channel
+// history labels, ensuring consistent temporal context regardless of day boundary.
 func formatHistoryTimestamp(t time.Time) string {
-	now := time.Now().UTC()
-	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
-		return t.Format("15:04")
-	}
 	return t.Format("01/02 15:04")
 }
 
