@@ -137,8 +137,8 @@ func initOAuthProvider(
 		settings.TransientRecoveryWaitEnabled,
 		time.Duration(settings.TransientRecoveryWaitMaxSeconds)*time.Second,
 	)
-	if fallbackModel := resolveBootstrapFallbackModel(settings); fallbackModel != "" && (settings.FallbackEnabled || settings.FallbackModelEnabled) {
-		pool.SetFallbackModel(fallbackModel)
+	if fallbackModels := resolveBootstrapFallbackModels(settings, providerID, model); len(fallbackModels) > 0 && (settings.FallbackEnabled || settings.FallbackModelEnabled) {
+		pool.SetFallbackModels(fallbackModels)
 	}
 	if settings.RequestQueueEnabled {
 		capacity := settings.RequestQueueCapacity
@@ -235,13 +235,6 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 	}
 }
 
-func resolveBootstrapFallbackModel(settings config.Settings) string {
-	_, fallbackModel := llm.SplitProviderModelID(settings.FallbackModelID)
-	if fallbackModel == "" {
-		fallbackModel = llm.NormalizeGoogleModelAlias(settings.FallbackModel)
-	}
-	if fallbackModel == "" {
-		return ""
-	}
-	return fallbackModel
+func resolveBootstrapFallbackModels(settings config.Settings, providerID, primaryModel string) []string {
+	return config.ResolveFallbackModelChain(settings, providerID, primaryModel)
 }

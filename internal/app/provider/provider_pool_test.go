@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,76 @@ func (p *countingProvider) ModelInfo() llm.ModelCapabilities {
 }
 
 func (p *countingProvider) RegisterTools([]domain.Tool) {}
+
+type scriptedModelResult struct {
+	content string
+	err     error
+}
+
+type scriptedSwitchState struct {
+	results map[string]scriptedModelResult
+	calls   map[string]int
+}
+
+type scriptedSwitchProvider struct {
+	state *scriptedSwitchState
+	model string
+}
+
+func newScriptedSwitchProvider(primaryModel string, results map[string]scriptedModelResult) *scriptedSwitchProvider {
+	return &scriptedSwitchProvider{
+		state: &scriptedSwitchState{
+			results: results,
+			calls:   make(map[string]int),
+		},
+		model: llm.NormalizeGoogleModelAlias(primaryModel),
+	}
+}
+
+func (p *scriptedSwitchProvider) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	key := llm.NormalizeGoogleModelAlias(p.model)
+	p.state.calls[key]++
+	result, ok := p.state.results[key]
+	if !ok {
+		return nil, fmt.Errorf("no scripted result for model %s", key)
+	}
+	if result.err != nil {
+		return nil, result.err
+	}
+	return &llm.ChatResponse{Content: result.content}, nil
+}
+
+func (p *scriptedSwitchProvider) StreamChat(context.Context, llm.ChatRequest) (<-chan llm.StreamChunk, error) {
+	ch := make(chan llm.StreamChunk, 2)
+	resp, err := p.Chat(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		close(ch)
+		return nil, err
+	}
+	ch <- llm.StreamChunk{Content: resp.Content}
+	ch <- llm.StreamChunk{Done: true}
+	close(ch)
+	return ch, nil
+}
+
+func (p *scriptedSwitchProvider) StreamChatMultimodal(context.Context, string, []domain.MultimodalMessage, domain.GenerationConfig) (<-chan llm.StreamChunk, error) {
+	ch := make(chan llm.StreamChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (p *scriptedSwitchProvider) ModelInfo() llm.ModelCapabilities {
+	return llm.ModelCapabilities{ProviderName: "scripted-switch", Model: p.model}
+}
+
+func (p *scriptedSwitchProvider) RegisterTools([]domain.Tool) {}
+
+func (p *scriptedSwitchProvider) WithModel(model string) llm.Provider {
+	return &scriptedSwitchProvider{
+		state: p.state,
+		model: llm.NormalizeGoogleModelAlias(model),
+	}
+}
 
 func TestParseResetDelay(t *testing.T) {
 	tests := []struct {
@@ -511,10 +582,10 @@ func TestProviderPoolFallbackModelSucceeds(t *testing.T) {
 	}
 }
 
-func TestProviderPoolPrefersAIStudioBeforeFallbackModel(t *testing.T) {
+func TestProviderPoolPrefersModelFallbackBeforeAIStudioOnCapacity(t *testing.T) {
 	pool := NewProviderPool()
 	pool.SetAutoRetryCount(0)
-	pool.SetFallbackModel("gemini-2.0-flash")
+	pool.SetFallbackModels([]string{"gemini-2.0-flash", "gemini-2.0-flash-exp"})
 
 	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
 	primary := &switchableErrProvider{
@@ -531,19 +602,127 @@ func TestProviderPoolPrefersAIStudioBeforeFallbackModel(t *testing.T) {
 		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
 	})
 	if err != nil {
+		t.Fatalf("expected model fallback success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "fallback-model") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Content, "[Model fallback] switched to gemini-2.0-flash") {
+		t.Fatalf("expected model fallback annotation, got: %q", resp.Content)
+	}
+	if strings.Contains(resp.Content, "[Provider fallback]") {
+		t.Fatalf("did not expect provider fallback annotation, got: %q", resp.Content)
+	}
+	if aistudio.chatCalls != 0 {
+		t.Fatalf("AI Studio fallback calls = %d, want 0", aistudio.chatCalls)
+	}
+}
+
+func TestProviderPoolSecondFallbackModelSucceedsOnCapacity(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModels([]string{"gemini-2.5-pro", "gemini-2.0-flash"})
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	provider := newScriptedSwitchProvider("gemini-3-pro-preview", map[string]scriptedModelResult{
+		"gemini-3-pro-preview": {err: capErr},
+		"gemini-2.5-pro":       {err: capErr},
+		"gemini-2.0-flash":     {content: "fallback-2-ok"},
+	})
+	pool.AddOrReplace(provider, "a@example.com")
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected second fallback success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "fallback-2-ok") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Content, "[Model fallback] switched to gemini-2.0-flash") {
+		t.Fatalf("expected second fallback annotation, got: %q", resp.Content)
+	}
+	if provider.state.calls["gemini-3-pro-preview"] != 1 {
+		t.Fatalf("primary calls = %d, want 1", provider.state.calls["gemini-3-pro-preview"])
+	}
+	if provider.state.calls["gemini-2.5-pro"] != 1 {
+		t.Fatalf("fallback #1 calls = %d, want 1", provider.state.calls["gemini-2.5-pro"])
+	}
+	if provider.state.calls["gemini-2.0-flash"] != 1 {
+		t.Fatalf("fallback #2 calls = %d, want 1", provider.state.calls["gemini-2.0-flash"])
+	}
+	if metrics := pool.MetricsSnapshot(); metrics.ModelFallback != 1 {
+		t.Fatalf("expected model fallback metric=1, got %+v", metrics)
+	}
+}
+
+func TestProviderPoolCapacityFallbackChainThenAIStudio(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModels([]string{"gemini-2.5-pro", "gemini-2.0-flash"})
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	provider := newScriptedSwitchProvider("gemini-3-pro-preview", map[string]scriptedModelResult{
+		"gemini-3-pro-preview": {err: capErr},
+		"gemini-2.5-pro":       {err: errors.New("validation failed: bad request")},
+		"gemini-2.0-flash":     {err: errors.New("HTTP 503 Service Unavailable")},
+	})
+	pool.AddOrReplace(provider, "a@example.com")
+
+	aistudio := &countingProvider{id: "aistudio-rpc"}
+	pool.SetOAuthExhaustionFallback(aistudio)
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
 		t.Fatalf("expected AI Studio fallback success, got error: %v", err)
 	}
 	if resp == nil || !strings.Contains(resp.Content, "aistudio-rpc") {
 		t.Fatalf("unexpected response: %#v", resp)
-	}
-	if strings.Contains(resp.Content, "[Model fallback]") {
-		t.Fatalf("expected provider fallback before model fallback, got: %q", resp.Content)
 	}
 	if !strings.Contains(resp.Content, "[Provider fallback]") {
 		t.Fatalf("expected provider fallback annotation, got: %q", resp.Content)
 	}
 	if aistudio.chatCalls != 1 {
 		t.Fatalf("AI Studio fallback calls = %d, want 1", aistudio.chatCalls)
+	}
+	if provider.state.calls["gemini-2.5-pro"] != 1 || provider.state.calls["gemini-2.0-flash"] != 1 {
+		t.Fatalf("expected both fallback models attempted, calls=%+v", provider.state.calls)
+	}
+}
+
+func TestProviderPoolModelUnavailableDoesNotUseFallbackSecondModel(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModels([]string{"gemini-2.5-pro", "gemini-2.0-flash"})
+
+	unavailableErr := errors.New(`HTTP 404 {"status":"NOT_FOUND"}`)
+	provider := newScriptedSwitchProvider("gemini-3-pro-preview", map[string]scriptedModelResult{
+		"gemini-3-pro-preview": {err: unavailableErr},
+		"gemini-2.5-pro":       {content: "fallback-1-ok"},
+		"gemini-2.0-flash":     {content: "fallback-2-should-not-run"},
+	})
+	pool.AddOrReplace(provider, "a@example.com")
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected fallback #1 success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "fallback-1-ok") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if provider.state.calls["gemini-2.5-pro"] != 1 {
+		t.Fatalf("fallback #1 calls = %d, want 1", provider.state.calls["gemini-2.5-pro"])
+	}
+	if provider.state.calls["gemini-2.0-flash"] != 0 {
+		t.Fatalf("fallback #2 should not run on non-capacity errors, calls=%d", provider.state.calls["gemini-2.0-flash"])
 	}
 }
 
@@ -880,5 +1059,56 @@ func TestProviderPoolOAuthExhaustionFallbackFailureKeepsExhaustedSemantics(t *te
 	metrics := pool.MetricsSnapshot()
 	if metrics.OAuthExhaustionFallbackTry != 1 || metrics.OAuthExhaustionFallbackOK != 0 || metrics.OAuthExhaustionFallbackFail != 1 {
 		t.Fatalf("unexpected fallback metrics: %+v", metrics)
+	}
+}
+
+func TestProviderPoolOAuthExhaustionFallbackFailureDoesNotTriggerModelFallbackChain(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModels([]string{"gemini-2.5-pro", "gemini-2.0-flash"})
+
+	quotaErr := errors.New(`429 RESOURCE_EXHAUSTED {"quotaResetDelay":"90s"}`)
+	provider := newScriptedSwitchProvider("gemini-3-pro-preview", map[string]scriptedModelResult{
+		"gemini-3-pro-preview": {err: quotaErr},
+		"gemini-2.5-pro":       {content: "unexpected-fallback-1"},
+		"gemini-2.0-flash":     {content: "unexpected-fallback-2"},
+	})
+	pool.AddOrReplace(provider, "quota@example.com")
+
+	aistudio := &countingProvider{
+		id:      "aistudio-rpc",
+		chatErr: errors.New("aistudio rpc HTTP 500"),
+	}
+	pool.SetOAuthExhaustionFallback(aistudio)
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected exhausted error")
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response on failure, got: %#v", resp)
+	}
+	if !strings.Contains(err.Error(), "all 1 OAuth account(s) exhausted") {
+		t.Fatalf("expected exhausted semantics, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "AI Studio fallback failed") {
+		t.Fatalf("expected AI Studio fallback context, got: %v", err)
+	}
+	if aistudio.chatCalls != 1 {
+		t.Fatalf("fallback provider chat calls = %d, want 1", aistudio.chatCalls)
+	}
+	if provider.state.calls["gemini-2.5-pro"] != 0 || provider.state.calls["gemini-2.0-flash"] != 0 {
+		t.Fatalf("model fallback chain should not run on exhausted path, calls=%+v", provider.state.calls)
+	}
+
+	metrics := pool.MetricsSnapshot()
+	if metrics.OAuthExhaustionFallbackTry != 1 || metrics.OAuthExhaustionFallbackOK != 0 || metrics.OAuthExhaustionFallbackFail != 1 {
+		t.Fatalf("unexpected provider fallback metrics: %+v", metrics)
+	}
+	if metrics.ModelFallback != 0 {
+		t.Fatalf("model fallback metric should stay 0 on exhausted path, got: %+v", metrics)
 	}
 }

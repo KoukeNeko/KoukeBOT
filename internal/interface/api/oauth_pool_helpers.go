@@ -35,11 +35,12 @@ func configureOAuthPoolFromSettings(pool *app.ProviderPool, settings config.Sett
 	pool.SetTransientRecoveryWait(settings.TransientRecoveryWaitEnabled, waitMax)
 
 	fallbackEnabled := settings.FallbackEnabled || settings.FallbackModelEnabled
-	fallbackModel := resolveFallbackModelShort(settings, providerID)
-	if fallbackEnabled && fallbackModel != "" {
-		pool.SetFallbackModel(fallbackModel)
+	_, primaryModel, _ := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
+	fallbackModels := resolveFallbackModelChain(settings, providerID, primaryModel)
+	if fallbackEnabled && len(fallbackModels) > 0 {
+		pool.SetFallbackModels(fallbackModels)
 	} else {
-		pool.SetFallbackModel("")
+		pool.SetFallbackModels(nil)
 	}
 
 	if settings.RequestQueueEnabled {

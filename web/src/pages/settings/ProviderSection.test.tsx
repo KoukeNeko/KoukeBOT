@@ -15,6 +15,7 @@ function buildForm(): SettingsData {
     model_id: 'gemini-api-key/gemini-2.5-pro',
     fallback_enabled: false,
     fallback_model_id: '',
+    fallback_second_model_id: '',
     endpoint_policy: 'primary_then_sandbox',
     brave_api_key: '',
     web_search_enabled: false,
@@ -59,6 +60,7 @@ function buildForm(): SettingsData {
       'You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude.',
     fallback_model_enabled: false,
     fallback_model: '',
+    fallback_second_model: '',
     request_queue_enabled: true,
     request_queue_capacity: 10,
     request_queue_timeout_seconds: 120,
@@ -172,5 +174,27 @@ describe('ProviderSection', () => {
 
     expect(screen.getByText('AI Studio RPC (Direct / Test)')).toBeTruthy()
     expect(screen.getByText('Use Selected Provider')).toBeTruthy()
+  })
+
+  it('renders second fallback selector', () => {
+    render(
+      <ProviderSection
+        {...buildProps({
+          form: {
+            ...buildForm(),
+            fallback_model_enabled: true,
+            fallback_model_id: 'gemini-api-key/gemini-2.5-pro',
+            fallback_model: 'gemini-2.5-pro',
+          },
+          modelOptions: [
+            { value: 'gemini-api-key/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+            { value: 'gemini-api-key/gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('第二備用模型（可選）')).toBeTruthy()
+    expect(screen.getByText(/備用模型 #1 → 備用模型 #2 → AI Studio fallback/)).toBeTruthy()
   })
 })

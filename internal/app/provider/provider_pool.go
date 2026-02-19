@@ -97,8 +97,8 @@ type ProviderPool struct {
 	// Circuit breaker: trips open after repeated model capacity failures.
 	circuitBreaker *circuitBreaker
 
-	// Fallback model: tried when primary model has no capacity.
-	fallbackModel string
+	// Fallback models: tried in order when primary model has no capacity.
+	fallbackModels []string
 
 	// OAuth exhaustion fallback provider (AI Studio RPC).
 	// Triggered only when all OAuth accounts are quota-exhausted.
@@ -165,9 +165,38 @@ func (pp *ProviderPool) SetTransientRecoveryWait(enabled bool, maxWait time.Dura
 // SetFallbackModel configures a fallback model to try when the primary model
 // has no capacity. Empty string disables fallback.
 func (pp *ProviderPool) SetFallbackModel(model string) {
+	pp.SetFallbackModels([]string{model})
+}
+
+// SetFallbackModels configures fallback models in priority order when the
+// primary model has no capacity. Empty input disables model fallback.
+func (pp *ProviderPool) SetFallbackModels(models []string) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
-	pp.fallbackModel = strings.TrimSpace(model)
+
+	if len(models) == 0 {
+		pp.fallbackModels = nil
+		return
+	}
+
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, 2)
+	for _, model := range models {
+		trimmed := llm.NormalizeGoogleModelAlias(strings.TrimSpace(model))
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+		if len(normalized) >= 2 {
+			break
+		}
+	}
+
+	pp.fallbackModels = normalized
 }
 
 // SetOAuthExhaustionFallback configures a provider that will be used only when

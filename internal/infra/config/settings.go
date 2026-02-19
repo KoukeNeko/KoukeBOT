@@ -92,8 +92,10 @@ type Settings struct {
 	AutoRetryCount int `json:"auto_retry_count"` // Number of retries for short-delay 429s before switching accounts (default: 3)
 
 	// Fallback model when primary has no capacity (e.g. "gemini-2.0-flash")
-	FallbackModelEnabled bool   `json:"fallback_model_enabled"` // default: false
-	FallbackModel        string `json:"fallback_model"`
+	FallbackModelEnabled  bool   `json:"fallback_model_enabled"` // default: false
+	FallbackModel         string `json:"fallback_model"`
+	FallbackSecondModelID string `json:"fallback_second_model_id"` // "provider/model"
+	FallbackSecondModel   string `json:"fallback_second_model"`
 
 	// Request queue settings
 	RequestQueueEnabled  bool `json:"request_queue_enabled"`
@@ -268,14 +270,15 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 	)
 	settings.ProviderType = syncLegacyProviderTypeForSettings(settings.ProviderType, settings.ProviderID, settings.GeminiAPIKey)
 
-	if settings.FallbackEnabled || settings.FallbackModelEnabled || settings.FallbackModelID != "" || settings.FallbackModel != "" {
+	if settings.FallbackEnabled ||
+		settings.FallbackModelEnabled ||
+		settings.FallbackModelID != "" ||
+		settings.FallbackModel != "" ||
+		settings.FallbackSecondModelID != "" ||
+		settings.FallbackSecondModel != "" {
 		settings.FallbackEnabled = settings.FallbackEnabled || settings.FallbackModelEnabled
 	}
-	settings.FallbackModelID, settings.FallbackModel = resolveFallbackModelForSettings(
-		settings.ProviderID,
-		settings.FallbackModelID,
-		settings.FallbackModel,
-	)
+	normalizeFallbackChainForSettings(&settings, settings.ProviderID, settings.GeminiModel)
 	settings.FallbackModelEnabled = settings.FallbackEnabled
 
 	if settings.PersonaLockEveryTurns <= 0 {
@@ -528,6 +531,121 @@ func resolveFallbackModelForSettings(providerID, fallbackModelID, legacyFallback
 		return "", ""
 	}
 	return buildProviderModelIDForSettings(pid, legacy), legacy
+}
+
+type fallbackModelCandidate struct {
+	providerID string
+	model      string
+}
+
+func normalizeFallbackChainForSettings(settings *Settings, providerID, primaryModel string) {
+	if settings == nil {
+		return
+	}
+
+	chain := resolveFallbackModelCandidatesForSettings(*settings, providerID, primaryModel)
+
+	settings.FallbackModelID = ""
+	settings.FallbackModel = ""
+	settings.FallbackSecondModelID = ""
+	settings.FallbackSecondModel = ""
+
+	if len(chain) > 0 {
+		settings.FallbackModel = chain[0].model
+		settings.FallbackModelID = buildProviderModelIDForSettings(chain[0].providerID, chain[0].model)
+	}
+	if len(chain) > 1 {
+		settings.FallbackSecondModel = chain[1].model
+		settings.FallbackSecondModelID = buildProviderModelIDForSettings(chain[1].providerID, chain[1].model)
+	}
+}
+
+func resolveFallbackModelCandidatesForSettings(settings Settings, providerID, primaryModel string) []fallbackModelCandidate {
+	defaultProviderID := normalizeGoogleProviderIDForSettings(providerID)
+	first := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackModelID, settings.FallbackModel)
+	second := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackSecondModelID, settings.FallbackSecondModel)
+	return buildFallbackModelChainForSettings(primaryModel, first, second)
+}
+
+func resolveFallbackModelCandidateForSettings(defaultProviderID, fallbackModelID, legacyFallbackModel string) fallbackModelCandidate {
+	pid := normalizeGoogleProviderIDForSettings(defaultProviderID)
+	if fp, fm := splitProviderModelIDForSettings(fallbackModelID); fm != "" {
+		if fp != "" {
+			pid = fp
+		}
+		return fallbackModelCandidate{
+			providerID: pid,
+			model:      normalizeGoogleModelAliasForSettings(fm),
+		}
+	}
+	legacy := normalizeGoogleModelAliasForSettings(legacyFallbackModel)
+	if legacy == "" {
+		return fallbackModelCandidate{}
+	}
+	return fallbackModelCandidate{
+		providerID: pid,
+		model:      legacy,
+	}
+}
+
+func buildFallbackModelChainForSettings(primaryModel string, candidates ...fallbackModelCandidate) []fallbackModelCandidate {
+	normalizedPrimary := normalizeGoogleModelAliasForSettings(primaryModel)
+	seen := map[string]struct{}{}
+	chain := make([]fallbackModelCandidate, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		model := normalizeGoogleModelAliasForSettings(candidate.model)
+		if model == "" {
+			continue
+		}
+		if normalizedPrimary != "" && model == normalizedPrimary {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+
+		providerID := normalizeGoogleProviderIDForSettings(candidate.providerID)
+		if providerID == "" {
+			providerID = "google-gemini-cli"
+		}
+		chain = append(chain, fallbackModelCandidate{
+			providerID: providerID,
+			model:      model,
+		})
+		if len(chain) >= 2 {
+			break
+		}
+	}
+
+	return chain
+}
+
+// ResolveFallbackModelChain returns normalized fallback models in priority order.
+func ResolveFallbackModelChain(settings Settings, providerID, primaryModel string) []string {
+	candidates := resolveFallbackModelCandidatesForSettings(settings, providerID, primaryModel)
+	models := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.model == "" {
+			continue
+		}
+		models = append(models, candidate.model)
+	}
+	return models
+}
+
+// ResolveFallbackModelIDChain returns normalized provider/model IDs in priority order.
+func ResolveFallbackModelIDChain(settings Settings, providerID, primaryModel string) []string {
+	candidates := resolveFallbackModelCandidatesForSettings(settings, providerID, primaryModel)
+	modelIDs := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.model == "" {
+			continue
+		}
+		modelIDs = append(modelIDs, buildProviderModelIDForSettings(candidate.providerID, candidate.model))
+	}
+	return modelIDs
 }
 
 func normalizeGoogleProviderIDForSettings(providerID string) string {

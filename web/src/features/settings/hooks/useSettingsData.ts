@@ -48,6 +48,7 @@ const defaultSettings: SettingsData = {
   model_id: 'google-antigravity/claude-opus-4-6-thinking',
   fallback_enabled: false,
   fallback_model_id: '',
+  fallback_second_model_id: '',
   endpoint_policy: 'primary_then_sandbox',
   brave_api_key: '',
   web_search_enabled: false,
@@ -92,6 +93,7 @@ const defaultSettings: SettingsData = {
     'You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude.',
   fallback_model_enabled: false,
   fallback_model: '',
+  fallback_second_model: '',
   request_queue_enabled: true,
   request_queue_capacity: 10,
   request_queue_timeout_seconds: 120,
@@ -216,6 +218,11 @@ export function useSettingsData() {
           payload.gemini_model = toLegacyModel(payload.model_id || payload.gemini_model)
         }
       }
+
+      payload.fallback_model = toLegacyModel(payload.fallback_model_id || payload.fallback_model)
+      payload.fallback_second_model = toLegacyModel(
+        payload.fallback_second_model_id || payload.fallback_second_model,
+      )
 
       const result = await updateSettings(payload)
       const [nextStatus, updated] = await Promise.all([

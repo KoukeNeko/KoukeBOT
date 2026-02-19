@@ -163,6 +163,10 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 		existing.FallbackModelID = strings.TrimSpace(req.FallbackModelID)
 	}
 	existing.FallbackModel = llm.NormalizeGoogleModelAlias(req.FallbackModel)
+	if req.FallbackSecondModelID != "" {
+		existing.FallbackSecondModelID = strings.TrimSpace(req.FallbackSecondModelID)
+	}
+	existing.FallbackSecondModel = llm.NormalizeGoogleModelAlias(req.FallbackSecondModel)
 	if req.MCP != nil {
 		prevMCP := existing.MCP
 		existing.MCP = convertMCPSettingsUpdate(*req.MCP)
@@ -191,19 +195,21 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	)
 	existing.ProviderType = normalizeProviderTypeFromProviderID(existing.ProviderType, existing.ProviderID)
 
-	fallbackProviderID, fallbackModel := llm.SplitProviderModelID(existing.FallbackModelID)
-	if fallbackModel == "" {
-		fallbackModel = llm.NormalizeGoogleModelAlias(existing.FallbackModel)
+	fallbackModelChain := config.ResolveFallbackModelChain(*existing, existing.ProviderID, existing.GeminiModel)
+	fallbackModelIDChain := config.ResolveFallbackModelIDChain(*existing, existing.ProviderID, existing.GeminiModel)
+
+	existing.FallbackModel = ""
+	existing.FallbackModelID = ""
+	existing.FallbackSecondModel = ""
+	existing.FallbackSecondModelID = ""
+
+	if len(fallbackModelChain) > 0 {
+		existing.FallbackModel = fallbackModelChain[0]
+		existing.FallbackModelID = fallbackModelIDChain[0]
 	}
-	if fallbackProviderID == "" {
-		fallbackProviderID = existing.ProviderID
-	}
-	if fallbackModel != "" {
-		existing.FallbackModel = fallbackModel
-		existing.FallbackModelID = llm.BuildProviderModelID(fallbackProviderID, fallbackModel)
-	} else {
-		existing.FallbackModel = ""
-		existing.FallbackModelID = ""
+	if len(fallbackModelChain) > 1 {
+		existing.FallbackSecondModel = fallbackModelChain[1]
+		existing.FallbackSecondModelID = fallbackModelIDChain[1]
 	}
 	existing.FallbackModelEnabled = existing.FallbackModelEnabled || existing.FallbackEnabled
 	existing.FallbackEnabled = existing.FallbackModelEnabled

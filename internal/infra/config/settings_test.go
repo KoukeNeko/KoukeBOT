@@ -263,3 +263,69 @@ func TestNormalizeSettingsSupportsAIStudioRPCProviderID(t *testing.T) {
 		t.Fatalf("ModelID = %q, want %q", got.ModelID, "aistudio-rpc/gemini-3-pro-preview")
 	}
 }
+
+func TestNormalizeSettingsBuildsFallbackChainAndRemovesPrimaryOrDuplicates(t *testing.T) {
+	in := Settings{
+		ProviderType:             ProviderOAuth,
+		ProviderID:               "google-gemini-cli",
+		ModelID:                  "google-gemini-cli/gemini-3-pro-preview",
+		GeminiModel:              "gemini-3-pro-preview",
+		FallbackModelID:          "google-gemini-cli/gemini-3-pro-preview",
+		FallbackModel:            "gemini-3-pro-preview",
+		FallbackSecondModelID:    "google-gemini-cli/gemini-2.5-pro",
+		FallbackSecondModel:      "gemini-2.5-pro",
+		FallbackEnabled:          true,
+		FallbackModelEnabled:     true,
+		RequestQueueEnabled:      true,
+		RequestQueueCapacity:     DefaultRequestQueueCapacity,
+		RequestQueueTimeoutS:     DefaultRequestQueueTimeoutS,
+		MemoryRecentRounds:       DefaultMemoryRecentRounds,
+		MaxToolRounds:            DefaultMaxToolRounds,
+		MaxWebSearchCallsPerTurn: DefaultMaxWebSearchCallsPerTurn,
+	}
+
+	got := normalizeSettings(in, nil)
+	if got.FallbackModelID != "google-gemini-cli/gemini-2.5-pro" {
+		t.Fatalf("FallbackModelID = %q, want %q", got.FallbackModelID, "google-gemini-cli/gemini-2.5-pro")
+	}
+	if got.FallbackModel != "gemini-2.5-pro" {
+		t.Fatalf("FallbackModel = %q, want %q", got.FallbackModel, "gemini-2.5-pro")
+	}
+	if got.FallbackSecondModelID != "" {
+		t.Fatalf("FallbackSecondModelID = %q, want empty", got.FallbackSecondModelID)
+	}
+	if got.FallbackSecondModel != "" {
+		t.Fatalf("FallbackSecondModel = %q, want empty", got.FallbackSecondModel)
+	}
+}
+
+func TestResolveFallbackModelChainReturnsOrderedUniqueModels(t *testing.T) {
+	settings := Settings{
+		FallbackModelID:       "google-gemini-cli/gemini-3-flash",
+		FallbackModel:         "gemini-3-flash",
+		FallbackSecondModelID: "google-gemini-cli/gemini-2.0-flash",
+		FallbackSecondModel:   "gemini-2.0-flash",
+	}
+
+	got := ResolveFallbackModelChain(settings, "google-gemini-cli", "gemini-3-pro-preview")
+	if len(got) != 2 {
+		t.Fatalf("len(chain) = %d, want 2", len(got))
+	}
+	if got[0] != "gemini-3-flash-preview" {
+		t.Fatalf("chain[0] = %q, want %q", got[0], "gemini-3-flash-preview")
+	}
+	if got[1] != "gemini-2.0-flash" {
+		t.Fatalf("chain[1] = %q, want %q", got[1], "gemini-2.0-flash")
+	}
+
+	ids := ResolveFallbackModelIDChain(settings, "google-gemini-cli", "gemini-3-pro-preview")
+	if len(ids) != 2 {
+		t.Fatalf("len(id_chain) = %d, want 2", len(ids))
+	}
+	if ids[0] != "google-gemini-cli/gemini-3-flash-preview" {
+		t.Fatalf("id_chain[0] = %q, want %q", ids[0], "google-gemini-cli/gemini-3-flash-preview")
+	}
+	if ids[1] != "google-gemini-cli/gemini-2.0-flash" {
+		t.Fatalf("id_chain[1] = %q, want %q", ids[1], "google-gemini-cli/gemini-2.0-flash")
+	}
+}

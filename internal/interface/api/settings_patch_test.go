@@ -71,6 +71,48 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	}
 }
 
+func TestApplySettingsPatchNormalizesFallbackSecondChain(t *testing.T) {
+	h := &Handlers{}
+	enabled := true
+
+	existing := config.Settings{
+		ProviderType: config.ProviderOAuth,
+		ProviderID:   llm.ProviderGoogleGeminiCLI,
+		ModelID:      "google-gemini-cli/gemini-3-pro-preview",
+		GeminiModel:  "gemini-3-pro-preview",
+	}
+
+	err := h.applySettingsPatch(&existing, SettingsUpdateRequest{
+		ProviderType:          config.ProviderOAuth,
+		ProviderID:            llm.ProviderGoogleGeminiCLI,
+		ModelID:               "google-gemini-cli/gemini-3-pro-preview",
+		FallbackModelEnabled:  &enabled,
+		FallbackModelID:       "google-gemini-cli/gemini-3-pro-preview",
+		FallbackModel:         "gemini-3-pro-preview",
+		FallbackSecondModelID: "google-gemini-cli/gemini-2.0-flash",
+		FallbackSecondModel:   "gemini-2.0-flash",
+	})
+	if err != nil {
+		t.Fatalf("applySettingsPatch returned error: %v", err)
+	}
+
+	if !existing.FallbackModelEnabled || !existing.FallbackEnabled {
+		t.Fatalf("fallback flags should stay enabled")
+	}
+	if existing.FallbackModelID != "google-gemini-cli/gemini-2.0-flash" {
+		t.Fatalf("FallbackModelID = %q, want %q", existing.FallbackModelID, "google-gemini-cli/gemini-2.0-flash")
+	}
+	if existing.FallbackModel != "gemini-2.0-flash" {
+		t.Fatalf("FallbackModel = %q, want %q", existing.FallbackModel, "gemini-2.0-flash")
+	}
+	if existing.FallbackSecondModelID != "" {
+		t.Fatalf("FallbackSecondModelID = %q, want empty", existing.FallbackSecondModelID)
+	}
+	if existing.FallbackSecondModel != "" {
+		t.Fatalf("FallbackSecondModel = %q, want empty", existing.FallbackSecondModel)
+	}
+}
+
 func TestApplySettingsPatchRejectsInvalidPersonaID(t *testing.T) {
 	personaService, err := app.NewPersonaService(testPersonasPath())
 	if err != nil {

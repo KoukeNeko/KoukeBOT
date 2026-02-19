@@ -150,10 +150,15 @@ export default function ProviderSection({
   };
 
   const fallbackValueFromSettings = form.fallback_model_id || form.fallback_model || "";
-  const resolvedFallbackValue =
-    modelOptions.find((option) => option.value === fallbackValueFromSettings)?.value ||
-    modelOptions.find((option) => option.value.endsWith(`/${fallbackValueFromSettings}`))?.value ||
-    fallbackValueFromSettings;
+  const resolveModelSelectValue = (value: string) =>
+    modelOptions.find((option) => option.value === value)?.value ||
+    modelOptions.find((option) => option.value.endsWith(`/${value}`))?.value ||
+    value;
+  const resolvedFallbackValue = resolveModelSelectValue(fallbackValueFromSettings);
+  const fallbackSecondValueFromSettings = form.fallback_second_model_id || form.fallback_second_model || "";
+  const resolvedFallbackSecondValue = resolveModelSelectValue(fallbackSecondValueFromSettings);
+  const primaryLegacyModel = toLegacyModel(currentModelValue || "");
+  const firstFallbackLegacyModel = toLegacyModel(resolvedFallbackValue || "");
   const fallbackOptions: SelectOption[] = [
     { value: "", label: "不使用備用模型" },
     ...modelOptions,
@@ -165,6 +170,22 @@ export default function ProviderSection({
     fallbackOptions.splice(1, 0, {
       value: resolvedFallbackValue,
       label: resolvedFallbackValue,
+    });
+  }
+  const fallbackSecondOptions: SelectOption[] = [
+    { value: "", label: "不使用第二備用模型" },
+    ...modelOptions.filter((option) => {
+      const legacyModel = toLegacyModel(option.value);
+      return legacyModel !== primaryLegacyModel && legacyModel !== firstFallbackLegacyModel;
+    }),
+  ];
+  if (
+    resolvedFallbackSecondValue &&
+    !fallbackSecondOptions.some((option) => option.value === resolvedFallbackSecondValue)
+  ) {
+    fallbackSecondOptions.splice(1, 0, {
+      value: resolvedFallbackSecondValue,
+      label: resolvedFallbackSecondValue,
     });
   }
 
@@ -651,18 +672,42 @@ export default function ProviderSection({
           <span>備用模型</span>
           <Select
             value={resolvedFallbackValue}
-            onChange={(val) =>
+            onChange={(val) => {
+              const nextFallbackModel = toLegacyModel(val);
+              const secondFallbackLegacyModel = toLegacyModel(resolvedFallbackSecondValue || "");
+              const shouldClearSecond = !val || nextFallbackModel === secondFallbackLegacyModel;
               setForm({
                 ...form,
                 fallback_model_id: val,
-                fallback_model: toLegacyModel(val),
-              })
-            }
+                fallback_model: nextFallbackModel,
+                fallback_second_model_id: shouldClearSecond ? "" : form.fallback_second_model_id,
+                fallback_second_model: shouldClearSecond ? "" : form.fallback_second_model,
+              });
+            }}
             options={fallbackOptions}
             disabled={!form.fallback_model_enabled}
           />
           <span className="hint">
-            主模型因容量不足（MODEL_CAPACITY）失敗時，會嘗試此備用模型。預設關閉。
+            主模型因容量不足（MODEL_CAPACITY）失敗時，依序嘗試：備用模型 #1 → 備用模型 #2 → AI Studio fallback。
+          </span>
+        </label>
+
+        <label className="form-field">
+          <span>第二備用模型（可選）</span>
+          <Select
+            value={resolvedFallbackSecondValue}
+            onChange={(val) =>
+              setForm({
+                ...form,
+                fallback_second_model_id: val,
+                fallback_second_model: toLegacyModel(val),
+              })
+            }
+            options={fallbackSecondOptions}
+            disabled={!form.fallback_model_enabled || !resolvedFallbackValue}
+          />
+          <span className="hint">
+            僅在備用模型 #1 也失敗時才會使用。只針對 MODEL_CAPACITY 觸發。
           </span>
         </label>
 

@@ -50,6 +50,7 @@ const settingsFixture: SettingsData = {
   model_id: 'gemini-api-key/gemini-2.5-pro',
   fallback_enabled: false,
   fallback_model_id: '',
+  fallback_second_model_id: '',
   endpoint_policy: 'primary_then_sandbox',
   brave_api_key: '',
   web_search_enabled: false,
@@ -94,6 +95,7 @@ const settingsFixture: SettingsData = {
     'You are FORBIDDEN from switching into a generic assistant tone. Keep persona-specific stance, diction, and attitude.',
   fallback_model_enabled: false,
   fallback_model: '',
+  fallback_second_model: '',
   request_queue_enabled: true,
   request_queue_capacity: 10,
   request_queue_timeout_seconds: 120,
@@ -217,6 +219,37 @@ describe('useSettingsData', () => {
     expect(lastCall?.[0]).toMatchObject({
       provider_type: 'oauth',
       provider_id: 'aistudio-rpc',
+    })
+  })
+
+  it('includes second fallback model fields in save payload', async () => {
+    const { result } = renderHook(() => useSettingsData())
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        fallback_model_enabled: true,
+        fallback_model_id: 'gemini-api-key/gemini-2.5-pro',
+        fallback_model: 'gemini-2.5-pro',
+        fallback_second_model_id: 'gemini-api-key/gemini-2.0-flash',
+        fallback_second_model: 'gemini-2.0-flash',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSave()
+    })
+
+    const lastCall = vi.mocked(api.updateSettings).mock.calls.at(-1)
+    expect(lastCall?.[0]).toMatchObject({
+      fallback_model_id: 'gemini-api-key/gemini-2.5-pro',
+      fallback_model: 'gemini-2.5-pro',
+      fallback_second_model_id: 'gemini-api-key/gemini-2.0-flash',
+      fallback_second_model: 'gemini-2.0-flash',
     })
   })
 })

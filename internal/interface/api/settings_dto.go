@@ -52,6 +52,8 @@ type SettingsResponse struct {
 	ScheduledMonitorMaxPerUser      int                 `json:"scheduled_monitor_max_per_user"`
 	FallbackModelEnabled            bool                `json:"fallback_model_enabled"`
 	FallbackModel                   string              `json:"fallback_model"`
+	FallbackSecondModelID           string              `json:"fallback_second_model_id"`
+	FallbackSecondModel             string              `json:"fallback_second_model"`
 	RequestQueueEnabled             bool                `json:"request_queue_enabled"`
 	RequestQueueCapacity            int                 `json:"request_queue_capacity"`
 	RequestQueueTimeoutS            int                 `json:"request_queue_timeout_seconds"`
@@ -107,6 +109,8 @@ type SettingsUpdateRequest struct {
 	ScheduledMonitorMaxPerUser      *int                      `json:"scheduled_monitor_max_per_user"`
 	FallbackModelEnabled            *bool                     `json:"fallback_model_enabled"`
 	FallbackModel                   string                    `json:"fallback_model"`
+	FallbackSecondModelID           string                    `json:"fallback_second_model_id"`
+	FallbackSecondModel             string                    `json:"fallback_second_model"`
 	RequestQueueEnabled             *bool                     `json:"request_queue_enabled"`
 	RequestQueueCapacity            *int                      `json:"request_queue_capacity"`
 	RequestQueueTimeoutS            *int                      `json:"request_queue_timeout_seconds"`

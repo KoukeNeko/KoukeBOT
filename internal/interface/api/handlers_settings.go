@@ -23,7 +23,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerID, model, modelID := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
-	fallbackModelID, fallbackModel := resolveFallbackModelForResponse(settings, providerID)
+	fallbackModelID, fallbackModel, fallbackSecondModelID, fallbackSecondModel := resolveFallbackModelsForResponse(settings, providerID, model)
 
 	searchProvider := settings.SearchProvider
 	if searchProvider == "" {
@@ -84,6 +84,8 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		ScheduledMonitorMaxPerUser:      settings.ScheduledMonitorMaxPerUser,
 		FallbackModelEnabled:            settings.FallbackEnabled || settings.FallbackModelEnabled,
 		FallbackModel:                   fallbackModel,
+		FallbackSecondModelID:           fallbackSecondModelID,
+		FallbackSecondModel:             fallbackSecondModel,
 		RequestQueueEnabled:             settings.RequestQueueEnabled,
 		RequestQueueCapacity:            settings.RequestQueueCapacity,
 		RequestQueueTimeoutS:            settings.RequestQueueTimeoutS,
@@ -302,7 +304,7 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 	configureOAuthPoolFromSettings(pool, s, providerID, poolPath)
 	h.attachAIStudioOAuthFallback(pool, model)
 	fallbackEnabled := s.FallbackEnabled || s.FallbackModelEnabled
-	fallbackModel := resolveFallbackModelShort(s, providerID)
+	fallbackModels := resolveFallbackModelChain(s, providerID, model)
 
 	probeSuccess := false
 	probeNotFound := false
@@ -334,7 +336,7 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 		}
 
 		if strictOAuthProbe {
-			if probeErr := h.probeOAuthProviderStrict(richContext(h.ctx), p, model, fallbackModel, fallbackEnabled); probeErr != nil {
+			if probeErr := h.probeOAuthProviderStrict(richContext(h.ctx), p, model, fallbackModels, fallbackEnabled); probeErr != nil {
 				if isOAuthModelNotFoundError(probeErr) {
 					probeNotFound = true
 					logAPI.Warnf("build-provider: OAuth model probe 404 for %s: %v", tokenData.Email, probeErr)
@@ -385,14 +387,14 @@ func (h *Handlers) probeOAuthProviderStrict(
 	ctx context.Context,
 	provider llm.Provider,
 	primaryModel string,
-	fallbackModel string,
+	fallbackModels []string,
 	fallbackEnabled bool,
 ) error {
 	if err := h.probeOAuthTextModel(ctx, provider); err != nil {
-		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModel, fallbackEnabled)
+		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModels, fallbackEnabled)
 	}
 	if err := h.probeOAuthMultimodalModel(ctx, provider); err != nil {
-		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModel, fallbackEnabled)
+		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModels, fallbackEnabled)
 	}
 	return nil
 }
@@ -402,33 +404,47 @@ func (h *Handlers) handleOAuthProbeErrorWithFallback(
 	provider llm.Provider,
 	probeErr error,
 	primaryModel string,
-	fallbackModel string,
+	fallbackModels []string,
 	fallbackEnabled bool,
 ) error {
 	if !isOAuthModelNotFoundError(probeErr) {
 		return probeErr
 	}
-	if !fallbackEnabled || strings.TrimSpace(fallbackModel) == "" || fallbackModel == primaryModel {
+	if !fallbackEnabled || len(fallbackModels) == 0 {
 		return probeErr
 	}
 	switcher, ok := provider.(llm.ModelSwitcher)
 	if !ok {
 		return fmt.Errorf("fallback probe requested but provider does not support model switching: %w", probeErr)
 	}
-	fallbackProvider := switcher.WithModel(fallbackModel)
-	if err := h.probeOAuthTextModel(ctx, fallbackProvider); err != nil {
-		if isOAuthModelNotFoundError(err) {
-			return probeErr
+
+	primary := llm.NormalizeGoogleModelAlias(primaryModel)
+	for _, candidate := range fallbackModels {
+		fallbackModel := llm.NormalizeGoogleModelAlias(candidate)
+		if fallbackModel == "" {
+			continue
 		}
-		return fmt.Errorf("fallback text probe failed: %w", err)
-	}
-	if err := h.probeOAuthMultimodalModel(ctx, fallbackProvider); err != nil {
-		if isOAuthModelNotFoundError(err) {
-			return probeErr
+		if primary != "" && fallbackModel == primary {
+			continue
 		}
-		return fmt.Errorf("fallback multimodal probe failed: %w", err)
+
+		fallbackProvider := switcher.WithModel(fallbackModel)
+		if err := h.probeOAuthTextModel(ctx, fallbackProvider); err != nil {
+			if isOAuthModelNotFoundError(err) {
+				continue
+			}
+			return fmt.Errorf("fallback text probe failed (%s): %w", fallbackModel, err)
+		}
+		if err := h.probeOAuthMultimodalModel(ctx, fallbackProvider); err != nil {
+			if isOAuthModelNotFoundError(err) {
+				continue
+			}
+			return fmt.Errorf("fallback multimodal probe failed (%s): %w", fallbackModel, err)
+		}
+
+		return nil
 	}
-	return nil
+	return probeErr
 }
 
 func (h *Handlers) probeOAuthModel(ctx context.Context, provider llm.Provider) error {
@@ -544,23 +560,24 @@ func resolveProviderTypeForSettings(settings config.Settings, providerID string)
 	}
 }
 
-func resolveFallbackModelForResponse(settings config.Settings, providerID string) (string, string) {
-	fallbackProvider, fallbackModel := llm.SplitProviderModelID(settings.FallbackModelID)
-	if fallbackModel == "" {
-		fallbackModel = llm.NormalizeGoogleModelAlias(settings.FallbackModel)
+func resolveFallbackModelsForResponse(settings config.Settings, providerID, primaryModel string) (string, string, string, string) {
+	modelIDs := config.ResolveFallbackModelIDChain(settings, providerID, primaryModel)
+	models := config.ResolveFallbackModelChain(settings, providerID, primaryModel)
+
+	var firstModelID, firstModel, secondModelID, secondModel string
+	if len(models) > 0 {
+		firstModel = models[0]
+		firstModelID = modelIDs[0]
 	}
-	if fallbackProvider == "" {
-		fallbackProvider = providerID
+	if len(models) > 1 {
+		secondModel = models[1]
+		secondModelID = modelIDs[1]
 	}
-	if fallbackModel == "" {
-		return "", ""
-	}
-	return llm.BuildProviderModelID(fallbackProvider, fallbackModel), fallbackModel
+	return firstModelID, firstModel, secondModelID, secondModel
 }
 
-func resolveFallbackModelShort(settings config.Settings, providerID string) string {
-	_, fallbackModel := resolveFallbackModelForResponse(settings, providerID)
-	return fallbackModel
+func resolveFallbackModelChain(settings config.Settings, providerID, primaryModel string) []string {
+	return config.ResolveFallbackModelChain(settings, providerID, primaryModel)
 }
 
 func (h *Handlers) resolveProviderObservability() (model string, endpoint string, fallbackReason string) {

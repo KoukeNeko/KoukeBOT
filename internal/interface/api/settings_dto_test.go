@@ -25,7 +25,16 @@ func TestGetSettingsResponseIncludesWebToolMode(t *testing.T) {
 	dir := t.TempDir()
 	store := config.NewSettingsStore(filepath.Join(dir, "settings.json"))
 	if err := store.Save(config.Settings{
-		WebToolMode: config.WebToolModePlaywrightMCP,
+		WebToolMode:           config.WebToolModePlaywrightMCP,
+		ProviderID:            "google-gemini-cli",
+		ModelID:               "google-gemini-cli/gemini-3-pro-preview",
+		GeminiModel:           "gemini-3-pro-preview",
+		FallbackEnabled:       true,
+		FallbackModelEnabled:  true,
+		FallbackModelID:       "google-gemini-cli/gemini-2.5-pro",
+		FallbackModel:         "gemini-2.5-pro",
+		FallbackSecondModelID: "google-gemini-cli/gemini-2.0-flash",
+		FallbackSecondModel:   "gemini-2.0-flash",
 		MCP: config.MCPSettings{
 			DiscoveryTimeoutSeconds: config.DefaultMCPDiscoveryTimeoutSeconds,
 			ToolCallTimeoutSeconds:  config.DefaultMCPToolCallTimeoutSeconds,
@@ -49,5 +58,11 @@ func TestGetSettingsResponseIncludesWebToolMode(t *testing.T) {
 	}
 	if resp.WebToolMode != config.WebToolModePlaywrightMCP {
 		t.Fatalf("web_tool_mode = %q, want %q", resp.WebToolMode, config.WebToolModePlaywrightMCP)
+	}
+	if resp.FallbackSecondModelID != "google-gemini-cli/gemini-2.0-flash" {
+		t.Fatalf("fallback_second_model_id = %q, want %q", resp.FallbackSecondModelID, "google-gemini-cli/gemini-2.0-flash")
+	}
+	if resp.FallbackSecondModel != "gemini-2.0-flash" {
+		t.Fatalf("fallback_second_model = %q, want %q", resp.FallbackSecondModel, "gemini-2.0-flash")
 	}
 }

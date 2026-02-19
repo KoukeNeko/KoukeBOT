@@ -386,9 +386,53 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 		if lastErr != nil {
 			fallbackReason = lastErr.Error()
 		}
-		var providerFallbackErr error
+		if modelCapacityHit {
+			fallbackResult, modelFallbackErr := tryFallbackModelsInOrder(ctx, pp, fn, fallbackReason, true)
+			if modelFallbackErr == nil {
+				if pp.circuitBreaker != nil {
+					pp.circuitBreaker.recordSuccess()
+				}
+				return fallbackResult, nil
+			}
+			if isContextTerminated(modelFallbackErr) {
+				return zero, modelFallbackErr
+			}
 
-		// Prefer AI Studio provider fallback before model fallback.
+			var providerFallbackErr error
+			if allowOAuthExhaustionFallback {
+				if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, lastErr, false); attempted {
+					if fallbackErr == nil {
+						if pp.circuitBreaker != nil {
+							pp.circuitBreaker.recordSuccess()
+						}
+						return result, nil
+					}
+					providerFallbackErr = fallbackErr
+				}
+			}
+
+			if result, err := enqueueAndRetry(ctx, pp, fn); err == nil {
+				if pp.circuitBreaker != nil {
+					pp.circuitBreaker.recordSuccess()
+				}
+				return result, nil
+			}
+
+			if lastErr != nil {
+				if providerFallbackErr != nil {
+					return zero, fmt.Errorf("%w (model fallback failed: %s; AI Studio fallback failed: %s)",
+						lastErr,
+						truncateError(modelFallbackErr, 220),
+						truncateError(providerFallbackErr, 220),
+					)
+				}
+				return zero, fmt.Errorf("%w (model fallback failed: %s)", lastErr, truncateError(modelFallbackErr, 220))
+			}
+			return zero, fmt.Errorf("model fallback failed: %s", truncateError(modelFallbackErr, 220))
+		}
+
+		// Non-capacity model errors preserve existing behavior: try provider fallback first.
+		var providerFallbackErr error
 		if allowOAuthExhaustionFallback {
 			if result, attempted, fallbackErr := tryOAuthExhaustionFallback(ctx, pp, fn, lastErr, false); attempted {
 				if fallbackErr == nil {
@@ -401,22 +445,11 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			}
 		}
 
-		// Attempt fallback model before giving up.
 		if result, err := tryFallbackModel(ctx, pp, fn, fallbackReason); err == nil {
 			if pp.circuitBreaker != nil {
 				pp.circuitBreaker.recordSuccess()
 			}
 			return result, nil
-		}
-
-		// Queue the request if enabled; wait for cooldown to expire.
-		if modelCapacityHit {
-			if result, err := enqueueAndRetry(ctx, pp, fn); err == nil {
-				if pp.circuitBreaker != nil {
-					pp.circuitBreaker.recordSuccess()
-				}
-				return result, nil
-			}
 		}
 
 		if lastErr != nil {
@@ -485,18 +518,23 @@ func enqueueAndRetry[T any](ctx context.Context, pp *ProviderPool, fn func(llm.P
 // tryFallbackModel attempts the request on a fallback model using the first
 // available provider that supports ModelSwitcher.
 func tryFallbackModel[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider) (T, error), reason string) (T, error) {
+	return tryFallbackModelsInOrder(ctx, pp, fn, reason, false)
+}
+
+func tryFallbackModelsInOrder[T any](
+	ctx context.Context,
+	pp *ProviderPool,
+	fn func(llm.Provider) (T, error),
+	reason string,
+	includeSecond bool,
+) (T, error) {
 	var zero T
 
-	pp.mu.RLock()
-	fallbackModel := pp.fallbackModel
-	pp.mu.RUnlock()
-
-	if fallbackModel == "" {
+	models := pp.fallbackModelsSnapshot(includeSecond)
+	if len(models) == 0 {
 		return zero, fmt.Errorf("no fallback model configured")
 	}
 
-	// Pick any provider regardless of exhaustion status (all are exhausted
-	// due to global cooldown, but we need one to clone with a different model).
 	pp.mu.RLock()
 	if len(pp.entries) == 0 {
 		pp.mu.RUnlock()
@@ -511,21 +549,53 @@ func tryFallbackModel[T any](ctx context.Context, pp *ProviderPool, fn func(llm.
 		return zero, fmt.Errorf("provider %s does not support model switching", email)
 	}
 
-	fallbackProvider := switcher.WithModel(fallbackModel)
-	logPool.Logf("attempting fallback model %s via account %s", fallbackModel, email)
+	var fallbackErr error
+	for _, fallbackModel := range models {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return zero, err
+			}
+		}
 
-	result, err := fn(fallbackProvider)
-	if err != nil {
-		logPool.Warnf("fallback model %s failed: %s", fallbackModel, truncateError(err, 200))
-		return zero, fmt.Errorf("fallback model %s: %w", fallbackModel, err)
+		fallbackProvider := switcher.WithModel(fallbackModel)
+		logPool.Logf("attempting fallback model %s via account %s", fallbackModel, email)
+
+		result, err := fn(fallbackProvider)
+		if err != nil {
+			logPool.Warnf("fallback model %s failed: %s", fallbackModel, truncateError(err, 200))
+			fallbackErr = fmt.Errorf("fallback model %s: %w", fallbackModel, err)
+			continue
+		}
+
+		result = annotateFallbackResult(result, fallbackModel, reason)
+		pp.recordEffectiveState(fallbackProvider, fallbackModel, reason, true)
+		atomic.AddUint64(&pp.metricModelFallback, 1)
+		logPool.Logf("metric pool.model_fallback=1")
+		logPool.Logf("fallback model %s succeeded", fallbackModel)
+		return result, nil
 	}
 
-	result = annotateFallbackResult(result, fallbackModel, reason)
-	pp.recordEffectiveState(fallbackProvider, fallbackModel, reason, true)
-	atomic.AddUint64(&pp.metricModelFallback, 1)
-	logPool.Logf("metric pool.model_fallback=1")
-	logPool.Logf("fallback model %s succeeded", fallbackModel)
-	return result, nil
+	if fallbackErr != nil {
+		return zero, fallbackErr
+	}
+	return zero, fmt.Errorf("fallback model attempt failed")
+}
+
+func (pp *ProviderPool) fallbackModelsSnapshot(includeSecond bool) []string {
+	if pp == nil {
+		return nil
+	}
+
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+
+	if len(pp.fallbackModels) == 0 {
+		return nil
+	}
+	if includeSecond {
+		return append([]string(nil), pp.fallbackModels...)
+	}
+	return []string{pp.fallbackModels[0]}
 }
 
 func tryOAuthExhaustionFallback[T any](
@@ -548,7 +618,7 @@ func tryOAuthExhaustionFallback[T any](
 		logPool.Warnf("all OAuth accounts quota-exhausted — trying provider fallback via %s",
 			fallbackProvider.ModelInfo().ProviderName)
 	} else {
-		logPool.Warnf("trying provider fallback via %s before model fallback",
+		logPool.Warnf("trying provider fallback via %s",
 			fallbackProvider.ModelInfo().ProviderName)
 	}
 
