@@ -136,6 +136,8 @@ func backfillProviderFieldsFromPrevious(previous, next config.Settings) config.S
 	next.FallbackModel = previous.FallbackModel
 	next.FallbackSecondModelID = previous.FallbackSecondModelID
 	next.FallbackSecondModel = previous.FallbackSecondModel
+	next.FallbackThirdModelID = previous.FallbackThirdModelID
+	next.FallbackThirdModel = previous.FallbackThirdModel
 	next.EndpointPolicy = previous.EndpointPolicy
 	return next
 }
@@ -150,6 +152,8 @@ func hasExplicitProviderPayload(settings config.Settings) bool {
 		strings.TrimSpace(settings.FallbackModel) != "" ||
 		strings.TrimSpace(settings.FallbackSecondModelID) != "" ||
 		strings.TrimSpace(settings.FallbackSecondModel) != "" ||
+		strings.TrimSpace(settings.FallbackThirdModelID) != "" ||
+		strings.TrimSpace(settings.FallbackThirdModel) != "" ||
 		settings.FallbackEnabled ||
 		settings.FallbackModelEnabled ||
 		strings.TrimSpace(settings.EndpointPolicy) != ""

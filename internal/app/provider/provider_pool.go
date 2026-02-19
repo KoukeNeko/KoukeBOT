@@ -180,7 +180,7 @@ func (pp *ProviderPool) SetFallbackModels(models []string) {
 	}
 
 	seen := map[string]struct{}{}
-	normalized := make([]string, 0, 2)
+	normalized := make([]string, 0, 3)
 	for _, model := range models {
 		trimmed := llm.NormalizeGoogleModelAlias(strings.TrimSpace(model))
 		if trimmed == "" {
@@ -191,7 +191,7 @@ func (pp *ProviderPool) SetFallbackModels(models []string) {
 		}
 		seen[trimmed] = struct{}{}
 		normalized = append(normalized, trimmed)
-		if len(normalized) >= 2 {
+		if len(normalized) >= 3 {
 			break
 		}
 	}

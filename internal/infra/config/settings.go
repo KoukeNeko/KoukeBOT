@@ -96,6 +96,8 @@ type Settings struct {
 	FallbackModel         string `json:"fallback_model"`
 	FallbackSecondModelID string `json:"fallback_second_model_id"` // "provider/model"
 	FallbackSecondModel   string `json:"fallback_second_model"`
+	FallbackThirdModelID  string `json:"fallback_third_model_id"` // "provider/model"
+	FallbackThirdModel    string `json:"fallback_third_model"`
 
 	// Request queue settings
 	RequestQueueEnabled  bool `json:"request_queue_enabled"`
@@ -275,7 +277,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 		settings.FallbackModelID != "" ||
 		settings.FallbackModel != "" ||
 		settings.FallbackSecondModelID != "" ||
-		settings.FallbackSecondModel != "" {
+		settings.FallbackSecondModel != "" ||
+		settings.FallbackThirdModelID != "" ||
+		settings.FallbackThirdModel != "" {
 		settings.FallbackEnabled = settings.FallbackEnabled || settings.FallbackModelEnabled
 	}
 	normalizeFallbackChainForSettings(&settings, settings.ProviderID, settings.GeminiModel)
@@ -549,6 +553,8 @@ func normalizeFallbackChainForSettings(settings *Settings, providerID, primaryMo
 	settings.FallbackModel = ""
 	settings.FallbackSecondModelID = ""
 	settings.FallbackSecondModel = ""
+	settings.FallbackThirdModelID = ""
+	settings.FallbackThirdModel = ""
 
 	if len(chain) > 0 {
 		settings.FallbackModel = chain[0].model
@@ -558,13 +564,18 @@ func normalizeFallbackChainForSettings(settings *Settings, providerID, primaryMo
 		settings.FallbackSecondModel = chain[1].model
 		settings.FallbackSecondModelID = buildProviderModelIDForSettings(chain[1].providerID, chain[1].model)
 	}
+	if len(chain) > 2 {
+		settings.FallbackThirdModel = chain[2].model
+		settings.FallbackThirdModelID = buildProviderModelIDForSettings(chain[2].providerID, chain[2].model)
+	}
 }
 
 func resolveFallbackModelCandidatesForSettings(settings Settings, providerID, primaryModel string) []fallbackModelCandidate {
 	defaultProviderID := normalizeGoogleProviderIDForSettings(providerID)
 	first := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackModelID, settings.FallbackModel)
 	second := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackSecondModelID, settings.FallbackSecondModel)
-	return buildFallbackModelChainForSettings(primaryModel, first, second)
+	third := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackThirdModelID, settings.FallbackThirdModel)
+	return buildFallbackModelChainForSettings(primaryModel, first, second, third)
 }
 
 func resolveFallbackModelCandidateForSettings(defaultProviderID, fallbackModelID, legacyFallbackModel string) fallbackModelCandidate {
@@ -614,7 +625,7 @@ func buildFallbackModelChainForSettings(primaryModel string, candidates ...fallb
 			providerID: providerID,
 			model:      model,
 		})
-		if len(chain) >= 2 {
+		if len(chain) >= 3 {
 			break
 		}
 	}

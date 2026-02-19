@@ -658,6 +658,50 @@ func TestProviderPoolSecondFallbackModelSucceedsOnCapacity(t *testing.T) {
 	}
 }
 
+func TestProviderPoolThirdFallbackModelSucceedsOnCapacity(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModels([]string{"gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"})
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	provider := newScriptedSwitchProvider("gemini-3-pro-preview", map[string]scriptedModelResult{
+		"gemini-3-pro-preview": {err: capErr},
+		"gemini-2.5-pro":       {err: capErr},
+		"gemini-2.0-flash":     {err: capErr},
+		"gemini-1.5-flash":     {content: "fallback-3-ok"},
+	})
+	pool.AddOrReplace(provider, "a@example.com")
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected third fallback success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "fallback-3-ok") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Content, "[Model fallback] switched to gemini-1.5-flash") {
+		t.Fatalf("expected third fallback annotation, got: %q", resp.Content)
+	}
+	if provider.state.calls["gemini-3-pro-preview"] != 1 {
+		t.Fatalf("primary calls = %d, want 1", provider.state.calls["gemini-3-pro-preview"])
+	}
+	if provider.state.calls["gemini-2.5-pro"] != 1 {
+		t.Fatalf("fallback #1 calls = %d, want 1", provider.state.calls["gemini-2.5-pro"])
+	}
+	if provider.state.calls["gemini-2.0-flash"] != 1 {
+		t.Fatalf("fallback #2 calls = %d, want 1", provider.state.calls["gemini-2.0-flash"])
+	}
+	if provider.state.calls["gemini-1.5-flash"] != 1 {
+		t.Fatalf("fallback #3 calls = %d, want 1", provider.state.calls["gemini-1.5-flash"])
+	}
+	if metrics := pool.MetricsSnapshot(); metrics.ModelFallback != 1 {
+		t.Fatalf("expected model fallback metric=1, got %+v", metrics)
+	}
+}
+
 func TestProviderPoolCapacityFallbackChainThenAIStudio(t *testing.T) {
 	pool := NewProviderPool()
 	pool.SetAutoRetryCount(0)

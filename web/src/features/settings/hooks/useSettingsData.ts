@@ -49,6 +49,7 @@ const defaultSettings: SettingsData = {
   fallback_enabled: false,
   fallback_model_id: '',
   fallback_second_model_id: '',
+  fallback_third_model_id: '',
   endpoint_policy: 'primary_then_sandbox',
   brave_api_key: '',
   web_search_enabled: false,
@@ -94,6 +95,7 @@ const defaultSettings: SettingsData = {
   fallback_model_enabled: false,
   fallback_model: '',
   fallback_second_model: '',
+  fallback_third_model: '',
   request_queue_enabled: true,
   request_queue_capacity: 10,
   request_queue_timeout_seconds: 120,
@@ -222,6 +224,9 @@ export function useSettingsData() {
       payload.fallback_model = toLegacyModel(payload.fallback_model_id || payload.fallback_model)
       payload.fallback_second_model = toLegacyModel(
         payload.fallback_second_model_id || payload.fallback_second_model,
+      )
+      payload.fallback_third_model = toLegacyModel(
+        payload.fallback_third_model_id || payload.fallback_third_model,
       )
 
       const result = await updateSettings(payload)

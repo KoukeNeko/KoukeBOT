@@ -16,6 +16,7 @@ function buildForm(): SettingsData {
     fallback_enabled: false,
     fallback_model_id: '',
     fallback_second_model_id: '',
+    fallback_third_model_id: '',
     endpoint_policy: 'primary_then_sandbox',
     brave_api_key: '',
     web_search_enabled: false,
@@ -61,6 +62,7 @@ function buildForm(): SettingsData {
     fallback_model_enabled: false,
     fallback_model: '',
     fallback_second_model: '',
+    fallback_third_model: '',
     request_queue_enabled: true,
     request_queue_capacity: 10,
     request_queue_timeout_seconds: 120,
@@ -176,7 +178,7 @@ describe('ProviderSection', () => {
     expect(screen.getByText('Use Selected Provider')).toBeTruthy()
   })
 
-  it('renders second fallback selector', () => {
+  it('renders second/third fallback selectors', () => {
     render(
       <ProviderSection
         {...buildProps({
@@ -195,6 +197,7 @@ describe('ProviderSection', () => {
     )
 
     expect(screen.getByText('第二備用模型（可選）')).toBeTruthy()
-    expect(screen.getByText(/備用模型 #1 → 備用模型 #2 → AI Studio fallback/)).toBeTruthy()
+    expect(screen.getByText('第三備用模型（可選）')).toBeTruthy()
+    expect(screen.getByText(/備用模型 #1 → 備用模型 #2 → 備用模型 #3 → AI Studio fallback/)).toBeTruthy()
   })
 })

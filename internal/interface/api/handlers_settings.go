@@ -23,7 +23,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerID, model, modelID := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
-	fallbackModelID, fallbackModel, fallbackSecondModelID, fallbackSecondModel := resolveFallbackModelsForResponse(settings, providerID, model)
+	fallbackModelID, fallbackModel, fallbackSecondModelID, fallbackSecondModel, fallbackThirdModelID, fallbackThirdModel := resolveFallbackModelsForResponse(settings, providerID, model)
 
 	searchProvider := settings.SearchProvider
 	if searchProvider == "" {
@@ -86,6 +86,8 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 		FallbackModel:                   fallbackModel,
 		FallbackSecondModelID:           fallbackSecondModelID,
 		FallbackSecondModel:             fallbackSecondModel,
+		FallbackThirdModelID:            fallbackThirdModelID,
+		FallbackThirdModel:              fallbackThirdModel,
 		RequestQueueEnabled:             settings.RequestQueueEnabled,
 		RequestQueueCapacity:            settings.RequestQueueCapacity,
 		RequestQueueTimeoutS:            settings.RequestQueueTimeoutS,
@@ -560,11 +562,11 @@ func resolveProviderTypeForSettings(settings config.Settings, providerID string)
 	}
 }
 
-func resolveFallbackModelsForResponse(settings config.Settings, providerID, primaryModel string) (string, string, string, string) {
+func resolveFallbackModelsForResponse(settings config.Settings, providerID, primaryModel string) (string, string, string, string, string, string) {
 	modelIDs := config.ResolveFallbackModelIDChain(settings, providerID, primaryModel)
 	models := config.ResolveFallbackModelChain(settings, providerID, primaryModel)
 
-	var firstModelID, firstModel, secondModelID, secondModel string
+	var firstModelID, firstModel, secondModelID, secondModel, thirdModelID, thirdModel string
 	if len(models) > 0 {
 		firstModel = models[0]
 		firstModelID = modelIDs[0]
@@ -573,7 +575,11 @@ func resolveFallbackModelsForResponse(settings config.Settings, providerID, prim
 		secondModel = models[1]
 		secondModelID = modelIDs[1]
 	}
-	return firstModelID, firstModel, secondModelID, secondModel
+	if len(models) > 2 {
+		thirdModel = models[2]
+		thirdModelID = modelIDs[2]
+	}
+	return firstModelID, firstModel, secondModelID, secondModel, thirdModelID, thirdModel
 }
 
 func resolveFallbackModelChain(settings config.Settings, providerID, primaryModel string) []string {

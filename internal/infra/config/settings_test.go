@@ -274,6 +274,8 @@ func TestNormalizeSettingsBuildsFallbackChainAndRemovesPrimaryOrDuplicates(t *te
 		FallbackModel:            "gemini-3-pro-preview",
 		FallbackSecondModelID:    "google-gemini-cli/gemini-2.5-pro",
 		FallbackSecondModel:      "gemini-2.5-pro",
+		FallbackThirdModelID:     "google-gemini-cli/gemini-2.5-pro",
+		FallbackThirdModel:       "gemini-2.5-pro",
 		FallbackEnabled:          true,
 		FallbackModelEnabled:     true,
 		RequestQueueEnabled:      true,
@@ -297,6 +299,12 @@ func TestNormalizeSettingsBuildsFallbackChainAndRemovesPrimaryOrDuplicates(t *te
 	if got.FallbackSecondModel != "" {
 		t.Fatalf("FallbackSecondModel = %q, want empty", got.FallbackSecondModel)
 	}
+	if got.FallbackThirdModelID != "" {
+		t.Fatalf("FallbackThirdModelID = %q, want empty", got.FallbackThirdModelID)
+	}
+	if got.FallbackThirdModel != "" {
+		t.Fatalf("FallbackThirdModel = %q, want empty", got.FallbackThirdModel)
+	}
 }
 
 func TestResolveFallbackModelChainReturnsOrderedUniqueModels(t *testing.T) {
@@ -305,11 +313,13 @@ func TestResolveFallbackModelChainReturnsOrderedUniqueModels(t *testing.T) {
 		FallbackModel:         "gemini-3-flash",
 		FallbackSecondModelID: "google-gemini-cli/gemini-2.0-flash",
 		FallbackSecondModel:   "gemini-2.0-flash",
+		FallbackThirdModelID:  "google-gemini-cli/gemini-2.5-pro",
+		FallbackThirdModel:    "gemini-2.5-pro",
 	}
 
 	got := ResolveFallbackModelChain(settings, "google-gemini-cli", "gemini-3-pro-preview")
-	if len(got) != 2 {
-		t.Fatalf("len(chain) = %d, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("len(chain) = %d, want 3", len(got))
 	}
 	if got[0] != "gemini-3-flash-preview" {
 		t.Fatalf("chain[0] = %q, want %q", got[0], "gemini-3-flash-preview")
@@ -317,15 +327,21 @@ func TestResolveFallbackModelChainReturnsOrderedUniqueModels(t *testing.T) {
 	if got[1] != "gemini-2.0-flash" {
 		t.Fatalf("chain[1] = %q, want %q", got[1], "gemini-2.0-flash")
 	}
+	if got[2] != "gemini-2.5-pro" {
+		t.Fatalf("chain[2] = %q, want %q", got[2], "gemini-2.5-pro")
+	}
 
 	ids := ResolveFallbackModelIDChain(settings, "google-gemini-cli", "gemini-3-pro-preview")
-	if len(ids) != 2 {
-		t.Fatalf("len(id_chain) = %d, want 2", len(ids))
+	if len(ids) != 3 {
+		t.Fatalf("len(id_chain) = %d, want 3", len(ids))
 	}
 	if ids[0] != "google-gemini-cli/gemini-3-flash-preview" {
 		t.Fatalf("id_chain[0] = %q, want %q", ids[0], "google-gemini-cli/gemini-3-flash-preview")
 	}
 	if ids[1] != "google-gemini-cli/gemini-2.0-flash" {
 		t.Fatalf("id_chain[1] = %q, want %q", ids[1], "google-gemini-cli/gemini-2.0-flash")
+	}
+	if ids[2] != "google-gemini-cli/gemini-2.5-pro" {
+		t.Fatalf("id_chain[2] = %q, want %q", ids[2], "google-gemini-cli/gemini-2.5-pro")
 	}
 }

@@ -35,6 +35,8 @@ func TestGetSettingsResponseIncludesWebToolMode(t *testing.T) {
 		FallbackModel:         "gemini-2.5-pro",
 		FallbackSecondModelID: "google-gemini-cli/gemini-2.0-flash",
 		FallbackSecondModel:   "gemini-2.0-flash",
+		FallbackThirdModelID:  "google-gemini-cli/gemini-1.5-flash",
+		FallbackThirdModel:    "gemini-1.5-flash",
 		MCP: config.MCPSettings{
 			DiscoveryTimeoutSeconds: config.DefaultMCPDiscoveryTimeoutSeconds,
 			ToolCallTimeoutSeconds:  config.DefaultMCPToolCallTimeoutSeconds,
@@ -64,5 +66,11 @@ func TestGetSettingsResponseIncludesWebToolMode(t *testing.T) {
 	}
 	if resp.FallbackSecondModel != "gemini-2.0-flash" {
 		t.Fatalf("fallback_second_model = %q, want %q", resp.FallbackSecondModel, "gemini-2.0-flash")
+	}
+	if resp.FallbackThirdModelID != "google-gemini-cli/gemini-1.5-flash" {
+		t.Fatalf("fallback_third_model_id = %q, want %q", resp.FallbackThirdModelID, "google-gemini-cli/gemini-1.5-flash")
+	}
+	if resp.FallbackThirdModel != "gemini-1.5-flash" {
+		t.Fatalf("fallback_third_model = %q, want %q", resp.FallbackThirdModel, "gemini-1.5-flash")
 	}
 }

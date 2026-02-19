@@ -157,8 +157,11 @@ export default function ProviderSection({
   const resolvedFallbackValue = resolveModelSelectValue(fallbackValueFromSettings);
   const fallbackSecondValueFromSettings = form.fallback_second_model_id || form.fallback_second_model || "";
   const resolvedFallbackSecondValue = resolveModelSelectValue(fallbackSecondValueFromSettings);
+  const fallbackThirdValueFromSettings = form.fallback_third_model_id || form.fallback_third_model || "";
+  const resolvedFallbackThirdValue = resolveModelSelectValue(fallbackThirdValueFromSettings);
   const primaryLegacyModel = toLegacyModel(currentModelValue || "");
   const firstFallbackLegacyModel = toLegacyModel(resolvedFallbackValue || "");
+  const secondFallbackLegacyModel = toLegacyModel(resolvedFallbackSecondValue || "");
   const fallbackOptions: SelectOption[] = [
     { value: "", label: "不使用備用模型" },
     ...modelOptions,
@@ -186,6 +189,26 @@ export default function ProviderSection({
     fallbackSecondOptions.splice(1, 0, {
       value: resolvedFallbackSecondValue,
       label: resolvedFallbackSecondValue,
+    });
+  }
+  const fallbackThirdOptions: SelectOption[] = [
+    { value: "", label: "不使用第三備用模型" },
+    ...modelOptions.filter((option) => {
+      const legacyModel = toLegacyModel(option.value);
+      return (
+        legacyModel !== primaryLegacyModel &&
+        legacyModel !== firstFallbackLegacyModel &&
+        legacyModel !== secondFallbackLegacyModel
+      );
+    }),
+  ];
+  if (
+    resolvedFallbackThirdValue &&
+    !fallbackThirdOptions.some((option) => option.value === resolvedFallbackThirdValue)
+  ) {
+    fallbackThirdOptions.splice(1, 0, {
+      value: resolvedFallbackThirdValue,
+      label: resolvedFallbackThirdValue,
     });
   }
 
@@ -674,21 +697,25 @@ export default function ProviderSection({
             value={resolvedFallbackValue}
             onChange={(val) => {
               const nextFallbackModel = toLegacyModel(val);
-              const secondFallbackLegacyModel = toLegacyModel(resolvedFallbackSecondValue || "");
-              const shouldClearSecond = !val || nextFallbackModel === secondFallbackLegacyModel;
+              const secondLegacyModel = toLegacyModel(resolvedFallbackSecondValue || "");
+              const thirdLegacyModel = toLegacyModel(resolvedFallbackThirdValue || "");
+              const shouldClearSecond = !val || nextFallbackModel === secondLegacyModel;
+              const shouldClearThird = !val || shouldClearSecond || nextFallbackModel === thirdLegacyModel;
               setForm({
                 ...form,
                 fallback_model_id: val,
                 fallback_model: nextFallbackModel,
                 fallback_second_model_id: shouldClearSecond ? "" : form.fallback_second_model_id,
                 fallback_second_model: shouldClearSecond ? "" : form.fallback_second_model,
+                fallback_third_model_id: shouldClearThird ? "" : form.fallback_third_model_id,
+                fallback_third_model: shouldClearThird ? "" : form.fallback_third_model,
               });
             }}
             options={fallbackOptions}
             disabled={!form.fallback_model_enabled}
           />
           <span className="hint">
-            主模型因容量不足（MODEL_CAPACITY）失敗時，依序嘗試：備用模型 #1 → 備用模型 #2 → AI Studio fallback。
+            主模型因容量不足（MODEL_CAPACITY）失敗時，依序嘗試：備用模型 #1 → 備用模型 #2 → 備用模型 #3 → AI Studio fallback。
           </span>
         </label>
 
@@ -696,18 +723,42 @@ export default function ProviderSection({
           <span>第二備用模型（可選）</span>
           <Select
             value={resolvedFallbackSecondValue}
-            onChange={(val) =>
+            onChange={(val) => {
+              const nextSecondModel = toLegacyModel(val);
+              const thirdLegacyModel = toLegacyModel(resolvedFallbackThirdValue || "");
+              const shouldClearThird = !val || nextSecondModel === thirdLegacyModel;
               setForm({
                 ...form,
                 fallback_second_model_id: val,
-                fallback_second_model: toLegacyModel(val),
-              })
-            }
+                fallback_second_model: nextSecondModel,
+                fallback_third_model_id: shouldClearThird ? "" : form.fallback_third_model_id,
+                fallback_third_model: shouldClearThird ? "" : form.fallback_third_model,
+              });
+            }}
             options={fallbackSecondOptions}
             disabled={!form.fallback_model_enabled || !resolvedFallbackValue}
           />
           <span className="hint">
             僅在備用模型 #1 也失敗時才會使用。只針對 MODEL_CAPACITY 觸發。
+          </span>
+        </label>
+
+        <label className="form-field">
+          <span>第三備用模型（可選）</span>
+          <Select
+            value={resolvedFallbackThirdValue}
+            onChange={(val) =>
+              setForm({
+                ...form,
+                fallback_third_model_id: val,
+                fallback_third_model: toLegacyModel(val),
+              })
+            }
+            options={fallbackThirdOptions}
+            disabled={!form.fallback_model_enabled || !resolvedFallbackValue || !resolvedFallbackSecondValue}
+          />
+          <span className="hint">
+            僅在備用模型 #2 也失敗時才會使用。只針對 MODEL_CAPACITY 觸發。
           </span>
         </label>
 

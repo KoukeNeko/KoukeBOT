@@ -54,6 +54,8 @@ type SettingsResponse struct {
 	FallbackModel                   string              `json:"fallback_model"`
 	FallbackSecondModelID           string              `json:"fallback_second_model_id"`
 	FallbackSecondModel             string              `json:"fallback_second_model"`
+	FallbackThirdModelID            string              `json:"fallback_third_model_id"`
+	FallbackThirdModel              string              `json:"fallback_third_model"`
 	RequestQueueEnabled             bool                `json:"request_queue_enabled"`
 	RequestQueueCapacity            int                 `json:"request_queue_capacity"`
 	RequestQueueTimeoutS            int                 `json:"request_queue_timeout_seconds"`
@@ -111,6 +113,8 @@ type SettingsUpdateRequest struct {
 	FallbackModel                   string                    `json:"fallback_model"`
 	FallbackSecondModelID           string                    `json:"fallback_second_model_id"`
 	FallbackSecondModel             string                    `json:"fallback_second_model"`
+	FallbackThirdModelID            string                    `json:"fallback_third_model_id"`
+	FallbackThirdModel              string                    `json:"fallback_third_model"`
 	RequestQueueEnabled             *bool                     `json:"request_queue_enabled"`
 	RequestQueueCapacity            *int                      `json:"request_queue_capacity"`
 	RequestQueueTimeoutS            *int                      `json:"request_queue_timeout_seconds"`

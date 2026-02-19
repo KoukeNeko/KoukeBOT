@@ -167,6 +167,10 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 		existing.FallbackSecondModelID = strings.TrimSpace(req.FallbackSecondModelID)
 	}
 	existing.FallbackSecondModel = llm.NormalizeGoogleModelAlias(req.FallbackSecondModel)
+	if req.FallbackThirdModelID != "" {
+		existing.FallbackThirdModelID = strings.TrimSpace(req.FallbackThirdModelID)
+	}
+	existing.FallbackThirdModel = llm.NormalizeGoogleModelAlias(req.FallbackThirdModel)
 	if req.MCP != nil {
 		prevMCP := existing.MCP
 		existing.MCP = convertMCPSettingsUpdate(*req.MCP)
@@ -202,6 +206,8 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	existing.FallbackModelID = ""
 	existing.FallbackSecondModel = ""
 	existing.FallbackSecondModelID = ""
+	existing.FallbackThirdModel = ""
+	existing.FallbackThirdModelID = ""
 
 	if len(fallbackModelChain) > 0 {
 		existing.FallbackModel = fallbackModelChain[0]
@@ -210,6 +216,10 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if len(fallbackModelChain) > 1 {
 		existing.FallbackSecondModel = fallbackModelChain[1]
 		existing.FallbackSecondModelID = fallbackModelIDChain[1]
+	}
+	if len(fallbackModelChain) > 2 {
+		existing.FallbackThirdModel = fallbackModelChain[2]
+		existing.FallbackThirdModelID = fallbackModelIDChain[2]
 	}
 	existing.FallbackModelEnabled = existing.FallbackModelEnabled || existing.FallbackEnabled
 	existing.FallbackEnabled = existing.FallbackModelEnabled

@@ -51,6 +51,7 @@ const settingsFixture: SettingsData = {
   fallback_enabled: false,
   fallback_model_id: '',
   fallback_second_model_id: '',
+  fallback_third_model_id: '',
   endpoint_policy: 'primary_then_sandbox',
   brave_api_key: '',
   web_search_enabled: false,
@@ -96,6 +97,7 @@ const settingsFixture: SettingsData = {
   fallback_model_enabled: false,
   fallback_model: '',
   fallback_second_model: '',
+  fallback_third_model: '',
   request_queue_enabled: true,
   request_queue_capacity: 10,
   request_queue_timeout_seconds: 120,
@@ -222,7 +224,7 @@ describe('useSettingsData', () => {
     })
   })
 
-  it('includes second fallback model fields in save payload', async () => {
+  it('includes second/third fallback model fields in save payload', async () => {
     const { result } = renderHook(() => useSettingsData())
 
     await waitFor(() => {
@@ -237,6 +239,8 @@ describe('useSettingsData', () => {
         fallback_model: 'gemini-2.5-pro',
         fallback_second_model_id: 'gemini-api-key/gemini-2.0-flash',
         fallback_second_model: 'gemini-2.0-flash',
+        fallback_third_model_id: 'gemini-api-key/gemini-2.5-flash',
+        fallback_third_model: 'gemini-2.5-flash',
       })
     })
 
@@ -250,6 +254,8 @@ describe('useSettingsData', () => {
       fallback_model: 'gemini-2.5-pro',
       fallback_second_model_id: 'gemini-api-key/gemini-2.0-flash',
       fallback_second_model: 'gemini-2.0-flash',
+      fallback_third_model_id: 'gemini-api-key/gemini-2.5-flash',
+      fallback_third_model: 'gemini-2.5-flash',
     })
   })
 })

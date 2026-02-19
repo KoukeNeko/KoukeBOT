@@ -71,7 +71,7 @@ func TestApplySettingsPatchKeepsMaskedSecretAndAppliesPointers(t *testing.T) {
 	}
 }
 
-func TestApplySettingsPatchNormalizesFallbackSecondChain(t *testing.T) {
+func TestApplySettingsPatchNormalizesFallbackSecondThirdChain(t *testing.T) {
 	h := &Handlers{}
 	enabled := true
 
@@ -91,6 +91,8 @@ func TestApplySettingsPatchNormalizesFallbackSecondChain(t *testing.T) {
 		FallbackModel:         "gemini-3-pro-preview",
 		FallbackSecondModelID: "google-gemini-cli/gemini-2.0-flash",
 		FallbackSecondModel:   "gemini-2.0-flash",
+		FallbackThirdModelID:  "google-gemini-cli/gemini-2.0-flash",
+		FallbackThirdModel:    "gemini-2.0-flash",
 	})
 	if err != nil {
 		t.Fatalf("applySettingsPatch returned error: %v", err)
@@ -110,6 +112,12 @@ func TestApplySettingsPatchNormalizesFallbackSecondChain(t *testing.T) {
 	}
 	if existing.FallbackSecondModel != "" {
 		t.Fatalf("FallbackSecondModel = %q, want empty", existing.FallbackSecondModel)
+	}
+	if existing.FallbackThirdModelID != "" {
+		t.Fatalf("FallbackThirdModelID = %q, want empty", existing.FallbackThirdModelID)
+	}
+	if existing.FallbackThirdModel != "" {
+		t.Fatalf("FallbackThirdModel = %q, want empty", existing.FallbackThirdModel)
 	}
 }
 

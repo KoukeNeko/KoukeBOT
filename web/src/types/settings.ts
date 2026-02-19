@@ -8,6 +8,7 @@ export interface SettingsData {
   fallback_enabled: boolean
   fallback_model_id: string
   fallback_second_model_id: string
+  fallback_third_model_id: string
   endpoint_policy: 'primary_then_sandbox'
   deprecated_fields?: string[]
   brave_api_key: string
@@ -41,6 +42,7 @@ export interface SettingsData {
   fallback_model_enabled: boolean
   fallback_model: string
   fallback_second_model: string
+  fallback_third_model: string
   request_queue_enabled: boolean
   request_queue_capacity: number
   request_queue_timeout_seconds: number
