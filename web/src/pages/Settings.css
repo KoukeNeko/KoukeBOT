@@ -568,6 +568,29 @@
   border-left: 2px solid rgba(240, 170, 74, 0.9);
 }
 
+.aistudio-ops-guide {
+  margin-top: 0.7rem;
+  margin-bottom: 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  background: rgba(14, 18, 32, 0.45);
+}
+
+.aistudio-ops-title {
+  margin: 0 0 0.45rem;
+  color: #dbe4ff;
+  font-size: 0.82rem;
+}
+
+.aistudio-ops-list {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.79rem;
+  line-height: 1.45;
+}
+
 .aistudio-import-summary {
   margin-top: 0.6rem;
   border: 1px solid rgba(255, 255, 255, 0.08);

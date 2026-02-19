@@ -28,3 +28,9 @@ npm --prefix web run build
 ## Web Tool Mode
 - `classic`: uses `web_search` / `web_fetch` settings in Tools section.
 - `playwright_mcp`: classic web tools are disabled at runtime; use `/mcp` for managed Playwright MCP discovery/testing.
+
+## AI Studio RPC Notes
+- AI Studio fallback/direct-provider operation guide: `docs/runbook/aistudio-rpc.md`.
+- In Settings UI:
+  - `AI Studio Fallback` section handles upload/verify/apply of session data.
+  - `Provider = AI Studio RPC (Direct / Test)` forces direct routing for testing.

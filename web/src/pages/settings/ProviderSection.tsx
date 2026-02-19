@@ -485,6 +485,17 @@ export default function ProviderSection({
           )}
         </div>
 
+        <div className="aistudio-ops-guide">
+          <p className="meta aistudio-ops-title">操作說明（快速）</p>
+          <ol className="aistudio-ops-list">
+            <li>先上傳或貼上 HAR / session JSON / cURL，並點 `Parse Pasted Text`。</li>
+            <li>確認摘要包含有效 `cookie` 或 `authorization` 後，點 `Upload & Verify & Apply`。</li>
+            <li>若只做備援：維持 OAuth provider；若要強制測試：上方 Provider 選 `AI Studio RPC (Direct / Test)` 並儲存。</li>
+            <li>憑證過期時重新擷取最新 HAR/cURL 再套用。</li>
+          </ol>
+          <p className="hint">詳細文件：<code>docs/runbook/aistudio-rpc.md</code></p>
+        </div>
+
         <label className="form-field">
           <span>Upload HAR / Session JSON / cURL</span>
           <input
