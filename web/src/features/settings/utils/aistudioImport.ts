@@ -12,6 +12,9 @@ type HARRequest = {
   method?: string
   url?: string
   headers?: HARHeader[]
+  postData?: {
+    text?: string
+  }
 }
 
 type HAREntry = {
@@ -61,6 +64,7 @@ function hasKnownSessionField(value: Record<string, unknown>): boolean {
     'x_client_data',
     'x_goog_authuser',
     'x_goog_ext_519733851_bin',
+    'request_state',
     'cookie',
     'authorization',
     'user_agent',
@@ -70,6 +74,7 @@ function hasKnownSessionField(value: Record<string, unknown>): boolean {
     'x_browser_channel',
     'x_browser_copyright',
     'x_browser_year',
+    'time_zone',
   ]
   return knownFields.some((key) => key in value)
 }
@@ -83,6 +88,7 @@ function normalizeSessionInput(raw: Record<string, unknown>): AIStudioSessionInp
     x_client_data: normalizeString(source.x_client_data),
     x_goog_authuser: normalizeString(source.x_goog_authuser) || '0',
     x_goog_ext_519733851_bin: normalizeString(source.x_goog_ext_519733851_bin),
+    request_state: normalizeString(source.request_state),
     cookie: normalizeString(source.cookie),
     authorization: normalizeString(source.authorization),
     user_agent: normalizeString(source.user_agent),
@@ -92,6 +98,7 @@ function normalizeSessionInput(raw: Record<string, unknown>): AIStudioSessionInp
     x_browser_channel: normalizeString(source.x_browser_channel),
     x_browser_copyright: normalizeString(source.x_browser_copyright),
     x_browser_year: normalizeString(source.x_browser_year),
+    time_zone: normalizeString(source.time_zone),
   }
 }
 
@@ -143,6 +150,9 @@ function buildWarnings(session: AIStudioSessionInput): string[] {
   if (!session.x_goog_ext_519733851_bin) {
     warnings.push('缺少 x-goog-ext-519733851-bin，後端會套用預設值。')
   }
+  if (!session.request_state) {
+    warnings.push('缺少 request_state，某些 AI Studio session 在 GenerateContent 會回 invalid argument。')
+  }
   if (session.endpoint) {
     try {
       const host = new URL(session.endpoint).hostname
@@ -183,6 +193,7 @@ function parseHARImport(raw: HARShape): AIStudioImportResult {
     }
   }
   const headers = headersToMap(request.headers)
+  const bodyMeta = extractRPCBodyMetaFromJSONBody(normalizeString(request.postData?.text))
   const session: AIStudioSessionInput = {
     endpoint,
     api_key: headers['x-goog-api-key'] ?? '',
@@ -190,6 +201,7 @@ function parseHARImport(raw: HARShape): AIStudioImportResult {
     x_client_data: headers['x-client-data'] ?? '',
     x_goog_authuser: headers['x-goog-authuser'] || '0',
     x_goog_ext_519733851_bin: headers['x-goog-ext-519733851-bin'] ?? '',
+    request_state: bodyMeta.requestState,
     cookie: headers.cookie ?? '',
     authorization: headers.authorization ?? '',
     user_agent: headers['user-agent'] ?? '',
@@ -199,12 +211,13 @@ function parseHARImport(raw: HARShape): AIStudioImportResult {
     x_browser_channel: headers['x-browser-channel'] ?? '',
     x_browser_copyright: headers['x-browser-copyright'] ?? '',
     x_browser_year: headers['x-browser-year'] ?? '',
+    time_zone: bodyMeta.timeZone,
   }
 
   return {
     sourceType: 'har',
     session,
-    model: '',
+    model: bodyMeta.model,
     warnings: buildWarnings(session),
   }
 }
@@ -384,21 +397,72 @@ function normalizeImportedModel(value: string): string {
   return text
 }
 
-function extractModelFromJSONBody(rawBody: string): string {
+type ParsedRPCBodyMeta = {
+  model: string
+  requestState: string
+  timeZone: string
+}
+
+function isLikelyIanaTimeZone(value: string): boolean {
+  const text = value.trim()
+  if (!text) return false
+  if (text === 'UTC') return true
+  if (!text.includes('/')) return false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i)
+    const isUpper = ch >= 65 && ch <= 90
+    const isLower = ch >= 97 && ch <= 122
+    const isDigit = ch >= 48 && ch <= 57
+    const isAllowedPunct =
+      text[i] === '/' || text[i] === '_' || text[i] === '-' || text[i] === '+'
+    if (!(isUpper || isLower || isDigit || isAllowedPunct)) {
+      return false
+    }
+  }
+  return true
+}
+
+function findTimeZoneInNode(node: unknown): string {
+  if (typeof node === 'string') {
+    return isLikelyIanaTimeZone(node) ? node.trim() : ''
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findTimeZoneInNode(child)
+      if (found) return found
+    }
+  }
+  if (node && typeof node === 'object') {
+    for (const child of Object.values(node as Record<string, unknown>)) {
+      const found = findTimeZoneInNode(child)
+      if (found) return found
+    }
+  }
+  return ''
+}
+
+function extractRPCBodyMetaFromJSONBody(rawBody: string): ParsedRPCBodyMeta {
+  const empty: ParsedRPCBodyMeta = { model: '', requestState: '', timeZone: '' }
   const text = rawBody.trim()
-  if (!text) return ''
+  if (!text) return empty
   try {
     const parsed = JSON.parse(text)
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      return ''
+      return empty
     }
     const first = parsed[0]
-    if (typeof first !== 'string') {
-      return ''
+    const model = typeof first === 'string' ? normalizeImportedModel(first) : ''
+    const requestState = typeof parsed[4] === 'string' ? parsed[4].trim() : ''
+    let timeZone = ''
+    if (parsed.length > 14) {
+      timeZone = findTimeZoneInNode(parsed[14])
     }
-    return normalizeImportedModel(first)
+    if (!timeZone) {
+      timeZone = findTimeZoneInNode(parsed)
+    }
+    return { model, requestState, timeZone }
   } catch {
-    return ''
+    return empty
   }
 }
 
@@ -492,9 +556,11 @@ function parseCurlImport(rawText: string): AIStudioImportResult {
   }
 
   const cookie = headers.cookie || cookieFromOption
-  const parsedModel = requestBodies
-    .map(extractModelFromJSONBody)
-    .find((value) => value !== '') ?? ''
+  const bodyMetas = requestBodies.map(extractRPCBodyMetaFromJSONBody)
+  const parsedModel = bodyMetas.map((meta) => meta.model).find((value) => value !== '') ?? ''
+  const parsedRequestState =
+    bodyMetas.map((meta) => meta.requestState).find((value) => value !== '') ?? ''
+  const parsedTimeZone = bodyMetas.map((meta) => meta.timeZone).find((value) => value !== '') ?? ''
   const session: AIStudioSessionInput = {
     endpoint,
     api_key: headers['x-goog-api-key'] ?? '',
@@ -502,6 +568,7 @@ function parseCurlImport(rawText: string): AIStudioImportResult {
     x_client_data: headers['x-client-data'] ?? '',
     x_goog_authuser: headers['x-goog-authuser'] || '0',
     x_goog_ext_519733851_bin: headers['x-goog-ext-519733851-bin'] ?? '',
+    request_state: parsedRequestState,
     cookie,
     authorization: headers.authorization ?? '',
     user_agent: headers['user-agent'] || userAgentFromOption,
@@ -511,6 +578,7 @@ function parseCurlImport(rawText: string): AIStudioImportResult {
     x_browser_channel: headers['x-browser-channel'] ?? '',
     x_browser_copyright: headers['x-browser-copyright'] ?? '',
     x_browser_year: headers['x-browser-year'] ?? '',
+    time_zone: parsedTimeZone,
   }
 
   return {

@@ -26,6 +26,7 @@ type AIStudioSessionMaskedPayload struct {
 	XClientData        string `json:"x_client_data,omitempty"`
 	XGoogAuthUser      string `json:"x_goog_authuser,omitempty"`
 	XGoogExt519733851  string `json:"x_goog_ext_519733851_bin,omitempty"`
+	RequestState       string `json:"request_state,omitempty"`
 	Cookie             string `json:"cookie,omitempty"`
 	Authorization      string `json:"authorization,omitempty"`
 	UserAgent          string `json:"user_agent,omitempty"`
@@ -35,6 +36,7 @@ type AIStudioSessionMaskedPayload struct {
 	XBrowserChannel    string `json:"x_browser_channel,omitempty"`
 	XBrowserCopyright  string `json:"x_browser_copyright,omitempty"`
 	XBrowserYear       string `json:"x_browser_year,omitempty"`
+	TimeZone           string `json:"time_zone,omitempty"`
 }
 
 type AIStudioSessionVerifyRequest struct {
@@ -236,6 +238,7 @@ func maskAIStudioSession(session *llm.AIStudioSession) *AIStudioSessionMaskedPay
 		XClientData:        summarizeSecret(session.XClientData),
 		XGoogAuthUser:      summarizeSecret(session.XGoogAuthUser),
 		XGoogExt519733851:  summarizeSecret(session.XGoogExt519733851),
+		RequestState:       summarizeSecret(session.RequestState),
 		Cookie:             summarizeSecret(session.Cookie),
 		Authorization:      summarizeSecret(session.Authorization),
 		UserAgent:          summarizeSecret(session.UserAgent),
@@ -245,6 +248,7 @@ func maskAIStudioSession(session *llm.AIStudioSession) *AIStudioSessionMaskedPay
 		XBrowserChannel:    strings.TrimSpace(session.XBrowserChannel),
 		XBrowserCopyright:  strings.TrimSpace(session.XBrowserCopyright),
 		XBrowserYear:       strings.TrimSpace(session.XBrowserYear),
+		TimeZone:           strings.TrimSpace(session.TimeZone),
 	}
 }
 

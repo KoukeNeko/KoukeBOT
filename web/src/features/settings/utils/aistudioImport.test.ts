@@ -28,6 +28,9 @@ describe('parseAIStudioImport', () => {
             request: {
               method: 'POST',
               url: 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent',
+              postData: {
+                text: '["models/gemini-3-pro-preview",[],null,null,"!req-state",null,null,null,null,null,null,null,null,null,[[null,null,"Asia/Taipei"]]]',
+              },
               headers: [
                 { name: 'x-goog-api-key', value: 'k2' },
                 { name: 'x-browser-validation', value: 'b2' },
@@ -50,7 +53,9 @@ describe('parseAIStudioImport', () => {
     expect(result.session.x_client_data).toBe('c2')
     expect(result.session.x_goog_authuser).toBe('0')
     expect(result.session.x_goog_ext_519733851_bin).toBe('ext2')
-    expect(result.model).toBe('')
+    expect(result.session.request_state).toBe('!req-state')
+    expect(result.session.time_zone).toBe('Asia/Taipei')
+    expect(result.model).toBe('gemini-3-pro-preview')
     expect(result.warnings.length).toBe(0)
   })
 
@@ -99,7 +104,7 @@ curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkal
   -H 'x-browser-channel: beta' \\
   -H 'user-agent: Mozilla/test' \\
   -b 'SID=abc; HSID=def' \\
-  --data-raw $'["models/gemini-3-pro-preview",[]]'
+  --data-raw $'["models/gemini-3-pro-preview",[],null,null,"!req-curl",null,null,null,null,null,null,null,null,null,[[null,null,"Asia/Taipei"]]]'
 `
 
     const result = parseAIStudioImport(curl)
@@ -110,6 +115,8 @@ curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkal
     expect(result.session.x_client_data).toBe('client-data-token')
     expect(result.session.x_goog_authuser).toBe('0')
     expect(result.session.x_goog_ext_519733851_bin).toBe('ext-token')
+    expect(result.session.request_state).toBe('!req-curl')
+    expect(result.session.time_zone).toBe('Asia/Taipei')
     expect(result.session.cookie).toContain('SID=abc')
     expect(result.session.authorization).toContain('SAPISIDHASH')
     expect(result.model).toBe('gemini-3-pro-preview')

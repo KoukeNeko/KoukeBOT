@@ -210,6 +210,11 @@ func (g *AIStudioRPCProvider) buildGenerateContentPayload(req ChatRequest) []any
 	if topP <= 0 {
 		topP = 0.95
 	}
+	requestState := strings.TrimSpace(g.session.RequestState)
+	timeZone := strings.TrimSpace(g.session.TimeZone)
+	if timeZone == "" {
+		timeZone = "UTC"
+	}
 
 	return []any{
 		"models/" + NormalizeGoogleModelAlias(g.model), // model
@@ -231,7 +236,7 @@ func (g *AIStudioRPCProvider) buildGenerateContentPayload(req ChatRequest) []any
 			nil,
 			1,
 		},
-		"",
+		requestState,
 		nil,
 		[]any{[]any{nil, nil, nil, []any{}}},
 		nil,
@@ -240,7 +245,7 @@ func (g *AIStudioRPCProvider) buildGenerateContentPayload(req ChatRequest) []any
 		1,
 		nil,
 		nil,
-		[]any{[]any{nil, nil, "UTC"}},
+		[]any{[]any{nil, nil, timeZone}},
 	}
 }
 

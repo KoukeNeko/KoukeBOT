@@ -31,6 +31,7 @@ type AIStudioSession struct {
 	XClientData        string `json:"x_client_data"`
 	XGoogAuthUser      string `json:"x_goog_authuser"`
 	XGoogExt519733851  string `json:"x_goog_ext_519733851_bin,omitempty"`
+	RequestState       string `json:"request_state,omitempty"`
 
 	Cookie        string `json:"cookie,omitempty"`
 	Authorization string `json:"authorization,omitempty"`
@@ -43,6 +44,7 @@ type AIStudioSession struct {
 	XBrowserChannel   string `json:"x_browser_channel,omitempty"`
 	XBrowserCopyright string `json:"x_browser_copyright,omitempty"`
 	XBrowserYear      string `json:"x_browser_year,omitempty"`
+	TimeZone          string `json:"time_zone,omitempty"`
 }
 
 // LoadAIStudioSession reads an AI Studio session file. Returns (nil, nil) when
@@ -159,6 +161,7 @@ func normalizeAIStudioSession(session *AIStudioSession) *AIStudioSession {
 	normalized.XClientData = strings.TrimSpace(normalized.XClientData)
 	normalized.XGoogAuthUser = strings.TrimSpace(normalized.XGoogAuthUser)
 	normalized.XGoogExt519733851 = strings.TrimSpace(normalized.XGoogExt519733851)
+	normalized.RequestState = strings.TrimSpace(normalized.RequestState)
 	normalized.Cookie = strings.TrimSpace(normalized.Cookie)
 	normalized.Authorization = strings.TrimSpace(normalized.Authorization)
 	normalized.UserAgent = strings.TrimSpace(normalized.UserAgent)
@@ -168,6 +171,7 @@ func normalizeAIStudioSession(session *AIStudioSession) *AIStudioSession {
 	normalized.XBrowserChannel = strings.TrimSpace(normalized.XBrowserChannel)
 	normalized.XBrowserCopyright = strings.TrimSpace(normalized.XBrowserCopyright)
 	normalized.XBrowserYear = strings.TrimSpace(normalized.XBrowserYear)
+	normalized.TimeZone = strings.TrimSpace(normalized.TimeZone)
 
 	if normalized.Endpoint == "" {
 		normalized.Endpoint = defaultAIStudioEndpoint
@@ -201,6 +205,9 @@ func normalizeAIStudioSession(session *AIStudioSession) *AIStudioSession {
 	}
 	if normalized.XBrowserYear == "" {
 		normalized.XBrowserYear = defaultAIStudioBrowserYear
+	}
+	if normalized.TimeZone == "" {
+		normalized.TimeZone = "UTC"
 	}
 
 	return &normalized

@@ -562,12 +562,20 @@ export default function ProviderSection({
                 <code>{summarizeSecret(aistudioImport.session.x_goog_ext_519733851_bin)}</code>
               </div>
               <div className="aistudio-import-row">
+                <span>request_state</span>
+                <code>{summarizeSecret(aistudioImport.session.request_state)}</code>
+              </div>
+              <div className="aistudio-import-row">
                 <span>cookie</span>
                 <code>{summarizeSecret(aistudioImport.session.cookie)}</code>
               </div>
               <div className="aistudio-import-row">
                 <span>authorization</span>
                 <code>{summarizeSecret(aistudioImport.session.authorization)}</code>
+              </div>
+              <div className="aistudio-import-row">
+                <span>time_zone</span>
+                <code>{aistudioImport.session.time_zone || "(empty)"}</code>
               </div>
             </div>
             {aistudioImport.warnings.length > 0 && (

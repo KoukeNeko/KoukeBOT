@@ -5,6 +5,7 @@ export interface AIStudioSessionInput {
   x_client_data: string
   x_goog_authuser?: string
   x_goog_ext_519733851_bin?: string
+  request_state?: string
   cookie?: string
   authorization?: string
   user_agent?: string
@@ -14,6 +15,7 @@ export interface AIStudioSessionInput {
   x_browser_channel?: string
   x_browser_copyright?: string
   x_browser_year?: string
+  time_zone?: string
 }
 
 export interface AIStudioSessionMasked {
@@ -23,6 +25,7 @@ export interface AIStudioSessionMasked {
   x_client_data?: string
   x_goog_authuser?: string
   x_goog_ext_519733851_bin?: string
+  request_state?: string
   cookie?: string
   authorization?: string
   user_agent?: string
@@ -32,6 +35,7 @@ export interface AIStudioSessionMasked {
   x_browser_channel?: string
   x_browser_copyright?: string
   x_browser_year?: string
+  time_zone?: string
 }
 
 export interface AIStudioSessionStatus {
