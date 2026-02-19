@@ -205,9 +205,24 @@ func (h *Handlers) updateAIStudioFallbackProvider(provider llm.Provider) {
 	}
 	pool := h.providerManager.GetPool()
 	if pool == nil {
+		if !h.usingAIStudioDirectProvider() {
+			return
+		}
+		h.providerManager.Update(provider)
 		return
 	}
 	pool.SetOAuthExhaustionFallback(provider)
+}
+
+func (h *Handlers) usingAIStudioDirectProvider() bool {
+	if h == nil || h.settingsStore == nil {
+		return false
+	}
+	settings, err := h.settingsStore.Load()
+	if err != nil {
+		return false
+	}
+	return llm.NormalizeGoogleProviderID(settings.ProviderID) == llm.ProviderAIStudioRPC
 }
 
 func maskAIStudioSession(session *llm.AIStudioSession) *AIStudioSessionMaskedPayload {

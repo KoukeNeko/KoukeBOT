@@ -22,6 +22,7 @@ const defaultProviderModels: Record<string, string> = {
   'gemini-api-key': 'gemini-api-key/gemini-2.5-pro',
   'google-antigravity': 'google-antigravity/claude-opus-4-6-thinking',
   'google-gemini-cli': 'google-gemini-cli/gemini-3-pro-preview',
+  'aistudio-rpc': 'aistudio-rpc/gemini-3-pro-preview',
 }
 
 function extractProviderFromModelID(modelID: string): string {
@@ -203,7 +204,9 @@ export function useSettingsData() {
           payload.gemini_model = toLegacyModel(payload.model_id || payload.gemini_model)
         } else {
           const oauthProviderID =
-            payload.provider_id === 'google-gemini-cli' || payload.provider_id === 'google-antigravity'
+            payload.provider_id === 'google-gemini-cli' ||
+            payload.provider_id === 'google-antigravity' ||
+            payload.provider_id === 'aistudio-rpc'
               ? payload.provider_id
               : 'google-antigravity'
           payload.provider_id = oauthProviderID

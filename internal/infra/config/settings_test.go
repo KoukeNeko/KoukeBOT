@@ -239,3 +239,27 @@ func TestNormalizeSettingsNormalizesLegacyClaudeModelAlias(t *testing.T) {
 		t.Fatalf("ModelID = %q, want %q", got.ModelID, "google-antigravity/claude-opus-4-6-thinking")
 	}
 }
+
+func TestNormalizeSettingsSupportsAIStudioRPCProviderID(t *testing.T) {
+	in := Settings{
+		ProviderType: ProviderOAuth,
+		ProviderID:   "aistudio",
+		ModelID:      "aistudio-rpc/gemini-3-pro-preview",
+		GeminiModel:  "gemini-3-pro-preview",
+	}
+	raw := map[string]json.RawMessage{
+		"provider_id": json.RawMessage(`"aistudio"`),
+		"model_id":    json.RawMessage(`"aistudio-rpc/gemini-3-pro-preview"`),
+	}
+
+	got := normalizeSettings(in, raw)
+	if got.ProviderID != "aistudio-rpc" {
+		t.Fatalf("ProviderID = %q, want %q", got.ProviderID, "aistudio-rpc")
+	}
+	if got.ProviderType != ProviderOAuth {
+		t.Fatalf("ProviderType = %q, want %q", got.ProviderType, ProviderOAuth)
+	}
+	if got.ModelID != "aistudio-rpc/gemini-3-pro-preview" {
+		t.Fatalf("ModelID = %q, want %q", got.ModelID, "aistudio-rpc/gemini-3-pro-preview")
+	}
+}

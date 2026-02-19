@@ -20,6 +20,14 @@ func initProvider(
 	paths Paths,
 	logs Loggers,
 ) {
+	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderAIStudioRPC {
+		if initAIStudioProvider(pm, paths.AIStudioSessionPath, model, logs) {
+			return
+		}
+		logs.LLM.Warnf("AI Studio RPC selected but session is unavailable — configure at http://localhost:%s/settings", port)
+		return
+	}
+
 	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderGoogleGeminiCLI {
 		// When provider_type is explicitly "oauth", route to OAuth pool
 		// instead of local CLI binary.
@@ -54,6 +62,20 @@ func initProvider(
 		}
 		logs.LLM.Warnf("no LLM credentials — configure at http://localhost:%s/settings", port)
 	}
+}
+
+func initAIStudioProvider(pm *app.ProviderManager, sessionPath, model string, logs Loggers) bool {
+	provider, err := llm.LoadAIStudioRPCProviderFromFile(sessionPath, model)
+	if err != nil {
+		logs.LLM.Warnf("failed to init AI Studio RPC provider: %v", err)
+		return false
+	}
+	if provider == nil {
+		return false
+	}
+	pm.Update(provider)
+	logs.LLM.Logf("AI Studio RPC provider (model: %s)", provider.ModelInfo().Model)
+	return true
 }
 
 func initGeminiCLIProvider(pm *app.ProviderManager, model string, logs Loggers) bool {
@@ -197,7 +219,7 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 		return config.ProviderAPIKey
 	case llm.ProviderGoogleAntigravity:
 		return config.ProviderOAuth
-	case llm.ProviderGoogleGeminiCLI:
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	}
 	switch settings.ProviderType {

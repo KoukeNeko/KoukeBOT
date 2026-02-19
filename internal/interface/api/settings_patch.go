@@ -305,7 +305,7 @@ func resolveProviderTypeWithLegacyFallback(providerType, providerID, apiKey stri
 	switch llm.NormalizeGoogleProviderID(providerID) {
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
-	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	default:
 		if strings.TrimSpace(apiKey) != "" {
@@ -319,7 +319,7 @@ func normalizeProviderTypeFromProviderID(providerType, providerID string) string
 	switch llm.NormalizeGoogleProviderID(providerID) {
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
-	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	default:
 		return providerType

@@ -153,4 +153,24 @@ describe('ProviderSection', () => {
     expect(screen.getByText('缺少 cookie/authorization，verify 很可能失敗。')).toBeTruthy()
     expect(screen.getByText('aistudio.har')).toBeTruthy()
   })
+
+  it('shows AI Studio RPC as selectable provider in oauth tab', () => {
+    render(
+      <ProviderSection
+        {...buildProps({
+          providerTab: 'oauth',
+          form: {
+            ...buildForm(),
+            provider_type: 'oauth',
+            provider_id: 'aistudio-rpc',
+            model_id: 'aistudio-rpc/gemini-3-pro-preview',
+            gemini_model: 'gemini-3-pro-preview',
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByText('AI Studio RPC (Direct / Test)')).toBeTruthy()
+    expect(screen.getByText('Use Selected Provider')).toBeTruthy()
+  })
 })

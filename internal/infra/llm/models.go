@@ -34,6 +34,11 @@ func ListGeminiModels(ctx context.Context, apiKey string, oauthToken *OAuthToken
 func ListGeminiModelsForProvider(ctx context.Context, apiKey string, oauthToken *OAuthTokenData, providerType string) ([]ModelEntry, error) {
 	providerID := NormalizeGoogleProviderID(providerType)
 
+	// aistudio-rpc uses reverse-engineered RPC; keep a static catalog.
+	if providerID == ProviderAIStudioRPC {
+		return staticCatalogForProvider(providerID), nil
+	}
+
 	// google-gemini-cli is a local CLI runtime provider; no remote discovery needed.
 	if providerID == ProviderGoogleGeminiCLI {
 		return staticCatalogForProvider(providerID), nil
@@ -247,7 +252,7 @@ func normalizeReturnedModelID(providerID, modelID string) string {
 		return BuildProviderModelID(pid, mid)
 	}
 	mid := NormalizeGoogleModelAlias(modelID)
-	if providerID == ProviderGoogleGeminiCLI || providerID == ProviderGoogleAntigravity {
+	if providerID == ProviderGoogleGeminiCLI || providerID == ProviderGoogleAntigravity || providerID == ProviderAIStudioRPC {
 		return BuildProviderModelID(providerID, mid)
 	}
 	return NormalizeModelID(mid)
@@ -260,6 +265,8 @@ func staticCatalogForProvider(providerID string) []ModelEntry {
 		return providerCatalogForAntigravity()
 	case ProviderGoogleGeminiCLI:
 		return providerCatalogForGeminiCLI()
+	case ProviderAIStudioRPC:
+		return providerCatalogForAIStudioRPC()
 	default:
 		return defaultModelsWithCapabilities()
 	}
@@ -392,6 +399,56 @@ func providerCatalogForAntigravity() []ModelEntry {
 			SupportsMultimodal: true,
 			SupportsTools:      true,
 			Reasoning:          true,
+		},
+	})
+}
+
+func providerCatalogForAIStudioRPC() []ModelEntry {
+	return normalizeModelEntries([]ModelEntry{
+		{
+			ID:                 BuildProviderModelID(ProviderAIStudioRPC, "gemini-3-pro-preview"),
+			DisplayName:        "AI Studio RPC / Gemini 3 Pro (Preview)",
+			ProviderID:         ProviderAIStudioRPC,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      false,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(ProviderAIStudioRPC, "gemini-3-flash-preview"),
+			DisplayName:        "AI Studio RPC / Gemini 3 Flash (Preview)",
+			ProviderID:         ProviderAIStudioRPC,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      false,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(ProviderAIStudioRPC, "gemini-2.5-pro"),
+			DisplayName:        "AI Studio RPC / Gemini 2.5 Pro",
+			ProviderID:         ProviderAIStudioRPC,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      false,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(ProviderAIStudioRPC, "gemini-2.5-flash"),
+			DisplayName:        "AI Studio RPC / Gemini 2.5 Flash",
+			ProviderID:         ProviderAIStudioRPC,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      false,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(ProviderAIStudioRPC, "gemini-2.0-flash"),
+			DisplayName:        "AI Studio RPC / Gemini 2.0 Flash",
+			ProviderID:         ProviderAIStudioRPC,
+			SupportsText:       true,
+			SupportsMultimodal: false,
+			SupportsTools:      false,
+			Reasoning:          false,
 		},
 	})
 }

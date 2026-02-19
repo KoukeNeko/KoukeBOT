@@ -456,6 +456,13 @@ func TestShouldRunStrictOAuthProbe(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "explicit aistudio rpc provider",
+			settings: config.Settings{
+				ProviderID: llm.ProviderAIStudioRPC,
+			},
+			want: false,
+		},
+		{
 			name: "oauth provider",
 			settings: config.Settings{
 				ProviderType: config.ProviderOAuth,

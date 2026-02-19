@@ -185,6 +185,9 @@ func shouldRunStrictOAuthProbe(settings config.Settings) bool {
 		case llm.ProviderGoogleGeminiCLI:
 			// Probe when using OAuth pool; skip when using local CLI binary.
 			return normalizeProviderTypeForSelection(settings.ProviderType) == config.ProviderOAuth
+		case llm.ProviderAIStudioRPC:
+			// AI Studio direct provider does not use OAuth pool probes.
+			return false
 		case llm.ProviderGeminiAPIKey:
 			return false
 		}

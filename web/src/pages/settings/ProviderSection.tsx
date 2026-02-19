@@ -120,8 +120,24 @@ export default function ProviderSection({
 }: Props) {
   const isModalBusy = oauthStarting || oauthCompleting;
   const [errorDetailEmail, setErrorDetailEmail] = useState<string | null>(null);
-  const selectedOAuthProviderID =
+  const selectedOAuthPoolProviderID =
     form.provider_id === "google-gemini-cli" ? "google-gemini-cli" : "google-antigravity";
+  const selectedProviderID =
+    form.provider_id === "google-antigravity" ||
+    form.provider_id === "google-gemini-cli" ||
+    form.provider_id === "aistudio-rpc"
+      ? form.provider_id
+      : "google-antigravity";
+  const defaultModelForProvider = (providerID: string) => {
+    switch (providerID) {
+      case "google-antigravity":
+        return "google-antigravity/claude-opus-4-6-thinking";
+      case "aistudio-rpc":
+        return "aistudio-rpc/gemini-3-pro-preview";
+      default:
+        return "google-gemini-cli/gemini-3-pro-preview";
+    }
+  };
   const currentModelValue = form.model_id || form.gemini_model;
   const toLegacyModel = (modelID: string) =>
     modelID.includes("/") ? modelID.split("/").slice(1).join("/") : modelID;
@@ -390,7 +406,7 @@ export default function ProviderSection({
                   <button
                     type="button"
                     className="btn-secondary"
-                    onClick={() => { void onVerifyPool(selectedOAuthProviderID); }}
+                    onClick={() => { void onVerifyPool(selectedOAuthPoolProviderID); }}
                     disabled={verifyingPool}
                   >
                     {verifyingPool ? "驗證中..." : "驗證全部帳號"}
@@ -398,53 +414,59 @@ export default function ProviderSection({
                 )}
               </div>
 
-              {pool.length > 0 && (
-                <div className="oauth-section-subtle">
-                  <label className="form-field">
-                    <span>OAuth Provider</span>
-                    <Select
-                      value={selectedOAuthProviderID}
-                      onChange={(val) => {
-                        const providerID = val === "google-antigravity" ? "google-antigravity" : "google-gemini-cli";
-                        setForm({
-                          ...form,
-                          provider_id: providerID,
-                          model_id: providerID === "google-antigravity"
-                            ? "google-antigravity/claude-opus-4-6-thinking"
-                            : "google-gemini-cli/gemini-3-pro-preview",
-                          gemini_model: providerID === "google-antigravity" ? "claude-opus-4-6-thinking" : "gemini-3-pro-preview",
-                        });
-                      }}
-                      options={[
-                        { value: "google-antigravity", label: "Google Antigravity (OAuth Pool / Recommended)" },
-                        { value: "google-gemini-cli", label: "Google Gemini CLI (Local CLI Runtime)" },
-                      ]}
-                    />
-                    <span className="hint">
-                      Google Antigravity 走 OAuth 帳號池（Cloud Code Assist）；Google Gemini CLI 走伺服器本機 `gemini` CLI。
+              <div className="oauth-section-subtle">
+                <label className="form-field">
+                  <span>Provider</span>
+                  <Select
+                    value={selectedProviderID}
+                    onChange={(val) => {
+                      const providerID =
+                        val === "google-antigravity" || val === "google-gemini-cli" || val === "aistudio-rpc"
+                          ? val
+                          : "google-antigravity";
+                      const modelID = defaultModelForProvider(providerID);
+                      setForm({
+                        ...form,
+                        provider_id: providerID,
+                        model_id: modelID,
+                        gemini_model: toLegacyModel(modelID),
+                      });
+                    }}
+                    options={[
+                      { value: "google-antigravity", label: "Google Antigravity (OAuth Pool / Recommended)" },
+                      { value: "google-gemini-cli", label: "Google Gemini CLI (Local CLI Runtime)" },
+                      { value: "aistudio-rpc", label: "AI Studio RPC (Direct / Test)" },
+                    ]}
+                  />
+                  <span className="hint">
+                    Antigravity 走 OAuth 帳號池；Gemini CLI 走本機 `gemini`；AI Studio RPC 可強制直連（測試用）。
+                  </span>
+                  {selectedProviderID === "aistudio-rpc" && !aistudioStatus?.configured && (
+                    <span className="hint" style={{ color: "#fca5a5" }}>
+                      尚未設定 AI Studio session，套用後請先到下方 AI Studio Fallback 區塊上傳並驗證。
                     </span>
-                  </label>
+                  )}
+                </label>
 
-                  <label className="form-field">
-                    <span>Model</span>
-                    <Select
-                      value={currentModelValue}
-                      onChange={(val) =>
-                        setForm({
-                          ...form,
-                          model_id: val,
-                          gemini_model: toLegacyModel(val),
-                        })
-                      }
-                      options={modelOptions}
-                    />
-                  </label>
+                <label className="form-field">
+                  <span>Model</span>
+                  <Select
+                    value={currentModelValue}
+                    onChange={(val) =>
+                      setForm({
+                        ...form,
+                        model_id: val,
+                        gemini_model: toLegacyModel(val),
+                      })
+                    }
+                    options={modelOptions}
+                  />
+                </label>
 
-                  <button onClick={() => onSave("oauth")} disabled={saving} className="btn-save-bottom">
-                    {saving ? "Saving..." : "Use OAuth Provider"}
-                  </button>
-                </div>
-              )}
+                <button onClick={() => onSave("oauth")} disabled={saving} className="btn-save-bottom">
+                  {saving ? "Saving..." : "Use Selected Provider"}
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -732,7 +754,7 @@ export default function ProviderSection({
                   </button>
                 </div>
                 <button
-                  onClick={() => onStartOAuth(selectedOAuthProviderID)}
+                  onClick={() => onStartOAuth(selectedOAuthPoolProviderID)}
                   disabled={isModalBusy}
                   className="btn-primary"
                 >
@@ -793,7 +815,7 @@ export default function ProviderSection({
                   disabled={importingPasted}
                 />
                 <button
-                  onClick={() => onImportPastedToken(selectedOAuthProviderID)}
+                  onClick={() => onImportPastedToken(selectedOAuthPoolProviderID)}
                   disabled={importingPasted || !pastedTokenJSON.trim()}
                   className="btn-primary"
                 >
@@ -805,7 +827,7 @@ export default function ProviderSection({
 
               <div className="oauth-detect-block">
                 <button
-                  onClick={() => onImportCLIToken(selectedOAuthProviderID)}
+                  onClick={() => onImportCLIToken(selectedOAuthPoolProviderID)}
                   disabled={importingCLI}
                   className="btn-secondary"
                 >

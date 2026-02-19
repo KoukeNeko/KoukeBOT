@@ -6,6 +6,7 @@ const (
 	ProviderGoogleGeminiCLI   = "google-gemini-cli"
 	ProviderGoogleAntigravity = "google-antigravity"
 	ProviderGeminiAPIKey      = "gemini-api-key"
+	ProviderAIStudioRPC       = "aistudio-rpc"
 
 	EndpointPolicyPrimaryThenSandbox = "primary_then_sandbox"
 
@@ -42,6 +43,17 @@ func googleProviderSpec(providerID string) GoogleProviderSpec {
 				codeAssistSandboxEndpoint,
 			},
 		}
+	case ProviderAIStudioRPC:
+		return GoogleProviderSpec{
+			ID:           ProviderAIStudioRPC,
+			Label:        "AI Studio RPC",
+			DefaultModel: "gemini-3-pro-preview",
+			OAuthScopes:  nil,
+			RedirectURI:  "",
+			EndpointCandidates: []string{
+				defaultAIStudioEndpoint,
+			},
+		}
 	default:
 		return GoogleProviderSpec{
 			ID:           ProviderGoogleGeminiCLI,
@@ -66,6 +78,8 @@ func NormalizeGoogleProviderID(providerID string) string {
 	switch normalized {
 	case ProviderGoogleAntigravity:
 		return ProviderGoogleAntigravity
+	case ProviderAIStudioRPC, "aistudio", "ai-studio":
+		return ProviderAIStudioRPC
 	case ProviderGeminiAPIKey:
 		return ProviderGeminiAPIKey
 	case ProviderGoogleGeminiCLI, "gemini-cli", "oauth", "cli", "":

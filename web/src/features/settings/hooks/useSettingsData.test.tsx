@@ -181,4 +181,42 @@ describe('useSettingsData', () => {
       text: 'save-failed',
     })
   })
+
+  it('keeps aistudio-rpc provider when saving oauth settings', async () => {
+    vi.mocked(api.getSettings).mockResolvedValueOnce({
+      ...settingsFixture,
+      provider_type: 'oauth',
+      provider_id: 'aistudio-rpc',
+      model_id: 'aistudio-rpc/gemini-3-pro-preview',
+      gemini_model: 'gemini-3-pro-preview',
+    })
+    vi.mocked(api.listModels).mockResolvedValue([
+      {
+        id: 'aistudio-rpc/gemini-3-pro-preview',
+        display_name: 'AI Studio RPC / Gemini 3 Pro (Preview)',
+        provider_id: 'aistudio-rpc',
+        supports_text: true,
+        supports_multimodal: false,
+        supports_tools: false,
+        reasoning: true,
+      },
+    ])
+
+    const { result } = renderHook(() => useSettingsData())
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleSave('oauth')
+    })
+
+    expect(api.updateSettings).toHaveBeenCalled()
+    const lastCall = vi.mocked(api.updateSettings).mock.calls.at(-1)
+    expect(lastCall?.[0]).toMatchObject({
+      provider_type: 'oauth',
+      provider_id: 'aistudio-rpc',
+    })
+  })
 })

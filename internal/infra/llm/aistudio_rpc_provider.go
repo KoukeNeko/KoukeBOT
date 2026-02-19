@@ -92,10 +92,10 @@ func (g *AIStudioRPCProvider) WithModel(model string) Provider {
 func normalizeAIStudioModel(model string) string {
 	normalized := NormalizeGoogleModelAlias(model)
 	if normalized == "" {
-		return googleProviderSpec(ProviderGoogleGeminiCLI).DefaultModel
+		return googleProviderSpec(ProviderAIStudioRPC).DefaultModel
 	}
 	if !strings.HasPrefix(normalized, "gemini-") {
-		return googleProviderSpec(ProviderGoogleGeminiCLI).DefaultModel
+		return googleProviderSpec(ProviderAIStudioRPC).DefaultModel
 	}
 	return normalized
 }
@@ -109,7 +109,7 @@ func (g *AIStudioRPCProvider) ModelInfo() ModelCapabilities {
 		ContextWindow:     1_000_000,
 		MaxOutputTokens:   resolveMaxTokensForModel(g.model, defaultMaxOutputTokens),
 		SupportsStreaming: true,
-		ProviderName:      "aistudio-rpc",
+		ProviderName:      ProviderAIStudioRPC,
 		Model:             g.model,
 	}
 }

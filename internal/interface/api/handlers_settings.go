@@ -148,6 +148,17 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 		strictOAuthProbe,
 	)
 
+	if normalizedProviderID == llm.ProviderAIStudioRPC {
+		provider, err := llm.LoadAIStudioRPCProviderFromFile(h.aiStudioSessionPath, model)
+		if err != nil {
+			return nil, fmt.Errorf("invalid AI Studio session: %w", err)
+		}
+		if provider == nil {
+			return nil, fmt.Errorf("AI Studio session is not configured")
+		}
+		return provider, nil
+	}
+
 	// OpenClaw-aligned behavior:
 	// - google-gemini-cli/* with explicit OAuth → Cloud Code Assist OAuth bridge.
 	// - google-gemini-cli/* without OAuth → local Gemini CLI binary.
@@ -516,7 +527,7 @@ func resolveProviderTypeForSettings(settings config.Settings, providerID string)
 	switch llm.NormalizeGoogleProviderID(providerID) {
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
-	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity:
+	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	}
 

@@ -31,3 +31,28 @@ func TestResolveProviderAndModelNormalizesLegacyClaudeModel(t *testing.T) {
 		t.Fatalf("modelID = %q, want %q", modelID, "google-antigravity/claude-opus-4-6-thinking")
 	}
 }
+
+func TestNormalizeGoogleProviderIDSupportsAIStudioRPCAliases(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "aistudio-rpc", want: ProviderAIStudioRPC},
+		{in: "aistudio", want: ProviderAIStudioRPC},
+		{in: "ai-studio", want: ProviderAIStudioRPC},
+	}
+
+	for _, tt := range tests {
+		if got := NormalizeGoogleProviderID(tt.in); got != tt.want {
+			t.Fatalf("NormalizeGoogleProviderID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestDefaultProviderModelIDForAIStudioRPC(t *testing.T) {
+	got := DefaultProviderModelID(ProviderAIStudioRPC)
+	want := "aistudio-rpc/gemini-3-pro-preview"
+	if got != want {
+		t.Fatalf("DefaultProviderModelID(%q) = %q, want %q", ProviderAIStudioRPC, got, want)
+	}
+}
