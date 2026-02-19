@@ -242,6 +242,60 @@ export default function ProviderSection({
                 )}
               </div>
 
+              <div className="oauth-section-subtle">
+                <label className="form-field">
+                  <span>Provider</span>
+                  <Select
+                    value={selectedProviderID}
+                    onChange={(val) => {
+                      const providerID =
+                        val === "google-antigravity" || val === "google-gemini-cli" || val === "aistudio-rpc"
+                          ? val
+                          : "google-antigravity";
+                      const modelID = defaultModelForProvider(providerID);
+                      setForm({
+                        ...form,
+                        provider_id: providerID,
+                        model_id: modelID,
+                        gemini_model: toLegacyModel(modelID),
+                      });
+                    }}
+                    options={[
+                      { value: "google-antigravity", label: "Google Antigravity (OAuth Pool / Recommended)" },
+                      { value: "google-gemini-cli", label: "Google Gemini CLI (Local CLI Runtime)" },
+                      { value: "aistudio-rpc", label: "AI Studio RPC (Direct / Test)" },
+                    ]}
+                  />
+                  <span className="hint">
+                    Antigravity 走 OAuth 帳號池；Gemini CLI 走本機 `gemini`；AI Studio RPC 可強制直連（測試用）。
+                  </span>
+                  {selectedProviderID === "aistudio-rpc" && !aistudioStatus?.configured && (
+                    <span className="hint" style={{ color: "#fca5a5" }}>
+                      尚未設定 AI Studio session，套用後請先到下方 AI Studio Fallback 區塊上傳並驗證。
+                    </span>
+                  )}
+                </label>
+
+                <label className="form-field">
+                  <span>Model</span>
+                  <Select
+                    value={currentModelValue}
+                    onChange={(val) =>
+                      setForm({
+                        ...form,
+                        model_id: val,
+                        gemini_model: toLegacyModel(val),
+                      })
+                    }
+                    options={modelOptions}
+                  />
+                </label>
+
+                <button onClick={() => onSave("oauth")} disabled={saving} className="btn-save-bottom">
+                  {saving ? "Saving..." : "Use Selected Provider"}
+                </button>
+              </div>
+
               {pool.length > 0 && (
                 <div className="pool-cards compact">
                   {pool.map((entry) => (
@@ -412,60 +466,6 @@ export default function ProviderSection({
                     {verifyingPool ? "驗證中..." : "驗證全部帳號"}
                   </button>
                 )}
-              </div>
-
-              <div className="oauth-section-subtle">
-                <label className="form-field">
-                  <span>Provider</span>
-                  <Select
-                    value={selectedProviderID}
-                    onChange={(val) => {
-                      const providerID =
-                        val === "google-antigravity" || val === "google-gemini-cli" || val === "aistudio-rpc"
-                          ? val
-                          : "google-antigravity";
-                      const modelID = defaultModelForProvider(providerID);
-                      setForm({
-                        ...form,
-                        provider_id: providerID,
-                        model_id: modelID,
-                        gemini_model: toLegacyModel(modelID),
-                      });
-                    }}
-                    options={[
-                      { value: "google-antigravity", label: "Google Antigravity (OAuth Pool / Recommended)" },
-                      { value: "google-gemini-cli", label: "Google Gemini CLI (Local CLI Runtime)" },
-                      { value: "aistudio-rpc", label: "AI Studio RPC (Direct / Test)" },
-                    ]}
-                  />
-                  <span className="hint">
-                    Antigravity 走 OAuth 帳號池；Gemini CLI 走本機 `gemini`；AI Studio RPC 可強制直連（測試用）。
-                  </span>
-                  {selectedProviderID === "aistudio-rpc" && !aistudioStatus?.configured && (
-                    <span className="hint" style={{ color: "#fca5a5" }}>
-                      尚未設定 AI Studio session，套用後請先到下方 AI Studio Fallback 區塊上傳並驗證。
-                    </span>
-                  )}
-                </label>
-
-                <label className="form-field">
-                  <span>Model</span>
-                  <Select
-                    value={currentModelValue}
-                    onChange={(val) =>
-                      setForm({
-                        ...form,
-                        model_id: val,
-                        gemini_model: toLegacyModel(val),
-                      })
-                    }
-                    options={modelOptions}
-                  />
-                </label>
-
-                <button onClick={() => onSave("oauth")} disabled={saving} className="btn-save-bottom">
-                  {saving ? "Saving..." : "Use Selected Provider"}
-                </button>
               </div>
             </>
           )}
