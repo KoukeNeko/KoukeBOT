@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -171,7 +172,7 @@ func normalizeAIStudioSession(session *AIStudioSession) *AIStudioSession {
 	normalized.XBrowserChannel = strings.TrimSpace(normalized.XBrowserChannel)
 	normalized.XBrowserCopyright = strings.TrimSpace(normalized.XBrowserCopyright)
 	normalized.XBrowserYear = strings.TrimSpace(normalized.XBrowserYear)
-	normalized.TimeZone = strings.TrimSpace(normalized.TimeZone)
+	normalized.TimeZone = normalizeAIStudioTimeZone(normalized.TimeZone)
 
 	if normalized.Endpoint == "" {
 		normalized.Endpoint = defaultAIStudioEndpoint
@@ -206,9 +207,22 @@ func normalizeAIStudioSession(session *AIStudioSession) *AIStudioSession {
 	if normalized.XBrowserYear == "" {
 		normalized.XBrowserYear = defaultAIStudioBrowserYear
 	}
-	if normalized.TimeZone == "" {
-		normalized.TimeZone = "UTC"
-	}
-
 	return &normalized
+}
+
+func normalizeAIStudioTimeZone(value string) string {
+	tz := strings.TrimSpace(value)
+	if tz == "" {
+		return "UTC"
+	}
+	if strings.EqualFold(tz, "UTC") {
+		return "UTC"
+	}
+	if strings.HasPrefix(strings.ToLower(tz), "models/") {
+		return "UTC"
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return "UTC"
+	}
+	return tz
 }

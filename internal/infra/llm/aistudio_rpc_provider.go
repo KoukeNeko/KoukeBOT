@@ -62,16 +62,16 @@ func VerifyAIStudioSession(ctx context.Context, session *AIStudioSession, model 
 		return err
 	}
 	if err := provider.countTokens(ctx, "ping"); err != nil {
-		if isAIStudioCountTokensInvalidArgument(err) {
-			// Some AI Studio backend revisions reject CountTokens payloads
-			// with INVALID_ARGUMENT even when session/auth are valid.
-			// Fall back to a minimal GenerateContent probe.
-			if probeErr := provider.probeGenerateContent(ctx, "ping"); probeErr != nil {
+		// Some AI Studio backend revisions reject CountTokens (invalid argument
+		// or auth mismatch) while GenerateContent still succeeds. Always retry
+		// with a minimal GenerateContent probe before failing verification.
+		if probeErr := provider.probeGenerateContent(ctx, "ping"); probeErr != nil {
+			if isAIStudioCountTokensInvalidArgument(err) {
 				return fmt.Errorf("AI Studio CountTokens invalid argument; GenerateContent probe failed: %w", probeErr)
 			}
-			return nil
+			return fmt.Errorf("AI Studio CountTokens probe failed: %v; GenerateContent probe failed: %w", err, probeErr)
 		}
-		return err
+		return nil
 	}
 	return nil
 }

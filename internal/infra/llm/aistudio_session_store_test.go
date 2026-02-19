@@ -84,6 +84,63 @@ func TestAIStudioSessionStoreDefaultsAPIKeyAndGoogExt(t *testing.T) {
 	if loaded.XGoogExt519733851 != defaultAIStudioGoogExt519733851 {
 		t.Fatalf("XGoogExt519733851 = %q, want default %q", loaded.XGoogExt519733851, defaultAIStudioGoogExt519733851)
 	}
+	if loaded.TimeZone != "UTC" {
+		t.Fatalf("TimeZone = %q, want %q", loaded.TimeZone, "UTC")
+	}
+}
+
+func TestAIStudioSessionStoreNormalizesInvalidTimeZoneToUTC(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aistudio_session.json")
+	session := &AIStudioSession{
+		APIKey:             "api-key",
+		XBrowserValidation: "validation",
+		XClientData:        "client-data",
+		XGoogAuthUser:      "0",
+		UserAgent:          "Mozilla/test",
+		TimeZone:           "models/gemini-3-pro-preview",
+	}
+
+	if err := SaveAIStudioSession(path, session); err != nil {
+		t.Fatalf("SaveAIStudioSession() error = %v", err)
+	}
+
+	loaded, err := LoadAIStudioSession(path)
+	if err != nil {
+		t.Fatalf("LoadAIStudioSession() error = %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("expected loaded session")
+	}
+	if loaded.TimeZone != "UTC" {
+		t.Fatalf("TimeZone = %q, want %q", loaded.TimeZone, "UTC")
+	}
+}
+
+func TestAIStudioSessionStorePreservesValidTimeZone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aistudio_session.json")
+	session := &AIStudioSession{
+		APIKey:             "api-key",
+		XBrowserValidation: "validation",
+		XClientData:        "client-data",
+		XGoogAuthUser:      "0",
+		UserAgent:          "Mozilla/test",
+		TimeZone:           "Asia/Taipei",
+	}
+
+	if err := SaveAIStudioSession(path, session); err != nil {
+		t.Fatalf("SaveAIStudioSession() error = %v", err)
+	}
+
+	loaded, err := LoadAIStudioSession(path)
+	if err != nil {
+		t.Fatalf("LoadAIStudioSession() error = %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("expected loaded session")
+	}
+	if loaded.TimeZone != "Asia/Taipei" {
+		t.Fatalf("TimeZone = %q, want %q", loaded.TimeZone, "Asia/Taipei")
+	}
 }
 
 func TestAIStudioSessionStoreValidatesRequiredFields(t *testing.T) {

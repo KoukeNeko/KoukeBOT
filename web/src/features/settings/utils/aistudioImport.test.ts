@@ -135,6 +135,19 @@ curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkal
     expect(result.warnings.some((item) => item.includes('cookie/authorization'))).toBe(true)
   })
 
+  it('does not mis-detect model path as time zone', () => {
+    const curl = `
+curl 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent' \\
+  -H 'x-browser-validation: validation-token' \\
+  -H 'x-client-data: client-data-token' \\
+  -H 'x-goog-authuser: 0' \\
+  --data-raw $'["models/gemini-3-pro-preview",[]]'
+`
+    const result = parseAIStudioImport(curl)
+    expect(result.model).toBe('gemini-3-pro-preview')
+    expect(result.session.time_zone).toBe('')
+  })
+
   it('throws for malformed JSON', () => {
     expect(() => parseAIStudioImport('{oops')).toThrow('檔案不是有效 JSON 或 cURL。')
   })

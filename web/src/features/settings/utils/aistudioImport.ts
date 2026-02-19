@@ -403,19 +403,41 @@ type ParsedRPCBodyMeta = {
   timeZone: string
 }
 
+function isUpperASCIILetter(ch: string): boolean {
+  if (!ch) return false
+  const code = ch.charCodeAt(0)
+  return code >= 65 && code <= 90
+}
+
 function isLikelyIanaTimeZone(value: string): boolean {
   const text = value.trim()
   if (!text) return false
   if (text === 'UTC') return true
-  if (!text.includes('/')) return false
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i)
-    const isUpper = ch >= 65 && ch <= 90
-    const isLower = ch >= 97 && ch <= 122
-    const isDigit = ch >= 48 && ch <= 57
-    const isAllowedPunct =
-      text[i] === '/' || text[i] === '_' || text[i] === '-' || text[i] === '+'
-    if (!(isUpper || isLower || isDigit || isAllowedPunct)) {
+  const lower = text.toLowerCase()
+  if (lower.startsWith('models/')) return false
+  if (lower.startsWith('http://') || lower.startsWith('https://')) return false
+
+  const parts = text.split('/')
+  if (parts.length < 2 || parts.length > 3) return false
+  if (!isUpperASCIILetter(parts[0][0])) return false
+
+  for (const part of parts) {
+    if (!part || part.length > 40) return false
+    let hasLetter = false
+    for (let i = 0; i < part.length; i++) {
+      const ch = part.charCodeAt(i)
+      const isUpper = ch >= 65 && ch <= 90
+      const isLower = ch >= 97 && ch <= 122
+      const isDigit = ch >= 48 && ch <= 57
+      const isAllowedPunct = part[i] === '_' || part[i] === '-' || part[i] === '+'
+      if (!(isUpper || isLower || isDigit || isAllowedPunct)) {
+        return false
+      }
+      if (isUpper || isLower) {
+        hasLetter = true
+      }
+    }
+    if (!hasLetter) {
       return false
     }
   }
@@ -441,6 +463,26 @@ function findTimeZoneInNode(node: unknown): string {
   return ''
 }
 
+function extractTimeZoneFromRPCPayload(parsed: unknown[]): string {
+  const priorityNodes: unknown[] = []
+  if (parsed.length > 14) {
+    priorityNodes.push(parsed[14])
+  }
+  if (parsed.length > 13) {
+    priorityNodes.push(parsed[13])
+  }
+  for (const node of priorityNodes) {
+    const tz = findTimeZoneInNode(node)
+    if (tz) return tz
+  }
+
+  for (let i = 10; i < parsed.length; i++) {
+    const tz = findTimeZoneInNode(parsed[i])
+    if (tz) return tz
+  }
+  return ''
+}
+
 function extractRPCBodyMetaFromJSONBody(rawBody: string): ParsedRPCBodyMeta {
   const empty: ParsedRPCBodyMeta = { model: '', requestState: '', timeZone: '' }
   const text = rawBody.trim()
@@ -453,13 +495,7 @@ function extractRPCBodyMetaFromJSONBody(rawBody: string): ParsedRPCBodyMeta {
     const first = parsed[0]
     const model = typeof first === 'string' ? normalizeImportedModel(first) : ''
     const requestState = typeof parsed[4] === 'string' ? parsed[4].trim() : ''
-    let timeZone = ''
-    if (parsed.length > 14) {
-      timeZone = findTimeZoneInNode(parsed[14])
-    }
-    if (!timeZone) {
-      timeZone = findTimeZoneInNode(parsed)
-    }
+    const timeZone = extractTimeZoneFromRPCPayload(parsed)
     return { model, requestState, timeZone }
   } catch {
     return empty
