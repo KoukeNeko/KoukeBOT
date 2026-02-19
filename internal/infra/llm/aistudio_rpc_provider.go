@@ -138,8 +138,7 @@ func (g *AIStudioRPCProvider) RegisterTools(tools []domain.Tool) {
 }
 
 func (g *AIStudioRPCProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	payload := g.buildGenerateContentPayload(req)
-	raw, err := g.callRPC(ctx, aiStudioRPCGenerateContentPath, payload)
+	raw, err := g.callGenerateContentWithRetry(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -183,15 +182,36 @@ func (g *AIStudioRPCProvider) countTokens(ctx context.Context, text string) erro
 }
 
 func (g *AIStudioRPCProvider) probeGenerateContent(ctx context.Context, text string) error {
-	payload := g.buildGenerateContentPayload(ChatRequest{
+	_, err := g.callGenerateContentWithRetry(ctx, ChatRequest{
 		Messages: []domain.Message{{Role: domain.RoleUser, Content: text}},
 		ToolMode: ToolModeDisabled,
 	})
-	_, err := g.callRPC(ctx, aiStudioRPCGenerateContentPath, payload)
 	return err
 }
 
-func (g *AIStudioRPCProvider) buildGenerateContentPayload(req ChatRequest) []any {
+func (g *AIStudioRPCProvider) callGenerateContentWithRetry(ctx context.Context, req ChatRequest) ([]byte, error) {
+	initialRequestState := strings.TrimSpace(g.session.RequestState)
+	payload := g.buildGenerateContentPayload(req, initialRequestState)
+	raw, err := g.callRPC(ctx, aiStudioRPCGenerateContentPath, payload)
+	if err == nil {
+		return raw, nil
+	}
+
+	// Imported request_state may be stale or tied to a different prompt shape.
+	// Retry once without request_state before treating the session as invalid.
+	if initialRequestState != "" && isAIStudioGenerateInvalidArgument(err) {
+		retryPayload := g.buildGenerateContentPayload(req, "")
+		retryRaw, retryErr := g.callRPC(ctx, aiStudioRPCGenerateContentPath, retryPayload)
+		if retryErr == nil {
+			return retryRaw, nil
+		}
+		return nil, fmt.Errorf("AI Studio GenerateContent invalid with request_state; retry without request_state failed: %w", retryErr)
+	}
+
+	return nil, err
+}
+
+func (g *AIStudioRPCProvider) buildGenerateContentPayload(req ChatRequest, requestState string) []any {
 	messages := make([]domain.Message, 0, len(req.Messages)+1)
 	if system := strings.TrimSpace(req.SystemPrompt); system != "" {
 		// AI Studio RPC payload has no explicit system field in the observed schema.
@@ -210,7 +230,7 @@ func (g *AIStudioRPCProvider) buildGenerateContentPayload(req ChatRequest) []any
 	if topP <= 0 {
 		topP = 0.95
 	}
-	requestState := strings.TrimSpace(g.session.RequestState)
+	requestState = strings.TrimSpace(requestState)
 	timeZone := strings.TrimSpace(g.session.TimeZone)
 	if timeZone == "" {
 		timeZone = "UTC"
@@ -635,6 +655,20 @@ func isAIStudioCountTokensInvalidArgument(err error) bool {
 	}
 	lower := strings.ToLower(err.Error())
 	if !strings.Contains(lower, strings.ToLower(aiStudioRPCCountTokensPath)) {
+		return false
+	}
+	if !strings.Contains(lower, "http 400") {
+		return false
+	}
+	return strings.Contains(lower, "invalid argument") || strings.Contains(lower, "[3,")
+}
+
+func isAIStudioGenerateInvalidArgument(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, strings.ToLower(aiStudioRPCGenerateContentPath)) {
 		return false
 	}
 	if !strings.Contains(lower, "http 400") {

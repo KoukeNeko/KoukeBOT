@@ -350,7 +350,7 @@ func TestAIStudioRPCProviderBuildGenerateContentPayloadMatchesExpectedShape(t *t
 		Messages: []domain.Message{
 			{Role: domain.RoleUser, Content: "hello"},
 		},
-	})
+	}, provider.session.RequestState)
 
 	if len(payload) < 14 {
 		t.Fatalf("payload length = %d, want >= 14", len(payload))
@@ -383,5 +383,71 @@ func TestAIStudioRPCProviderBuildGenerateContentPayloadMatchesExpectedShape(t *t
 	}
 	if got, _ := firstTZNode[2].(string); got != "Asia/Taipei" {
 		t.Fatalf("payload timezone = %q, want %q", got, "Asia/Taipei")
+	}
+}
+
+func TestAIStudioRPCProviderChatRetriesWithoutRequestStateOnInvalidArgument(t *testing.T) {
+	var generateCalls int
+	var firstRequestState string
+	var secondRequestState string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != aiStudioRPCGenerateContentPath {
+			t.Fatalf("path = %q, want %q", r.URL.Path, aiStudioRPCGenerateContentPath)
+		}
+		generateCalls++
+
+		var payload []any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		state := ""
+		if len(payload) > 4 {
+			if s, ok := payload[4].(string); ok {
+				state = s
+			}
+		}
+		if generateCalls == 1 {
+			firstRequestState = state
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`[3,"Request contains an invalid argument."]`))
+			return
+		}
+		secondRequestState = state
+		w.Header().Set("Content-Type", "application/json+protobuf")
+		_, _ = w.Write([]byte(`[[[[null,"OK"]],"model"]]`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAIStudioRPCProvider(&AIStudioSession{
+		Endpoint:           server.URL,
+		APIKey:             "api-key",
+		XBrowserValidation: "validation",
+		XClientData:        "client-data",
+		XGoogAuthUser:      "0",
+		UserAgent:          "Mozilla/test",
+		RequestState:       "!stale-state",
+	}, "gemini-3-pro-preview")
+	if err != nil {
+		t.Fatalf("NewAIStudioRPCProvider() error = %v", err)
+	}
+
+	resp, err := provider.Chat(context.Background(), ChatRequest{
+		Messages: []domain.Message{{Role: domain.RoleUser, Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if strings.TrimSpace(resp.Content) != "OK" {
+		t.Fatalf("chat content = %q, want %q", resp.Content, "OK")
+	}
+	if generateCalls != 2 {
+		t.Fatalf("generate calls = %d, want 2", generateCalls)
+	}
+	if firstRequestState != "!stale-state" {
+		t.Fatalf("first request_state = %q, want %q", firstRequestState, "!stale-state")
+	}
+	if secondRequestState != "" {
+		t.Fatalf("second request_state = %q, want empty", secondRequestState)
 	}
 }
