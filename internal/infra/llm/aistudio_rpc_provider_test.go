@@ -330,3 +330,58 @@ func TestNewAIStudioRPCProviderFallsBackToGeminiModelForNonGeminiInput(t *testin
 		t.Fatalf("model = %q, want %q", got, "gemini-3-pro-preview")
 	}
 }
+
+func TestAIStudioRPCProviderBuildGenerateContentPayloadMatchesExpectedShape(t *testing.T) {
+	provider, err := NewAIStudioRPCProvider(&AIStudioSession{
+		Endpoint:           "https://example.com",
+		APIKey:             "api-key",
+		XBrowserValidation: "validation",
+		XClientData:        "client-data",
+		XGoogAuthUser:      "0",
+		UserAgent:          "Mozilla/test",
+		RequestState:       "!request-state",
+		TimeZone:           "Asia/Taipei",
+	}, "gemini-3-pro-preview")
+	if err != nil {
+		t.Fatalf("NewAIStudioRPCProvider() error = %v", err)
+	}
+
+	payload := provider.buildGenerateContentPayload(ChatRequest{
+		Messages: []domain.Message{
+			{Role: domain.RoleUser, Content: "hello"},
+		},
+	})
+
+	if len(payload) < 14 {
+		t.Fatalf("payload length = %d, want >= 14", len(payload))
+	}
+
+	contextHints, ok := payload[2].([]any)
+	if !ok || len(contextHints) != 4 {
+		t.Fatalf("payload[2] context hints malformed: %#v", payload[2])
+	}
+
+	generationConfig, ok := payload[3].([]any)
+	if !ok || len(generationConfig) < 17 {
+		t.Fatalf("payload[3] generation config malformed: %#v", payload[3])
+	}
+	if generationConfig[16] == nil {
+		t.Fatalf("payload[3][16] should contain thinking config")
+	}
+
+	if got, _ := payload[4].(string); got != "!request-state" {
+		t.Fatalf("payload request_state = %q, want %q", got, "!request-state")
+	}
+
+	timeZoneContainer, ok := payload[13].([]any)
+	if !ok || len(timeZoneContainer) == 0 {
+		t.Fatalf("payload[13] timezone container malformed: %#v", payload[13])
+	}
+	firstTZNode, ok := timeZoneContainer[0].([]any)
+	if !ok || len(firstTZNode) < 3 {
+		t.Fatalf("payload[13][0] timezone node malformed: %#v", timeZoneContainer[0])
+	}
+	if got, _ := firstTZNode[2].(string); got != "Asia/Taipei" {
+		t.Fatalf("payload timezone = %q, want %q", got, "Asia/Taipei")
+	}
+}

@@ -215,27 +215,37 @@ func (g *AIStudioRPCProvider) buildGenerateContentPayload(req ChatRequest) []any
 	if timeZone == "" {
 		timeZone = "UTC"
 	}
+	contextHints := []any{
+		[]any{nil, nil, 7, 5},
+		[]any{nil, nil, 8, 5},
+		[]any{nil, nil, 9, 5},
+		[]any{nil, nil, 10, 5},
+	}
+	generationConfig := []any{
+		nil,
+		nil,
+		nil,
+		maxTokens,
+		1,
+		topP,
+		64,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		1,
+		nil,
+		nil,
+		[]any{1, nil, nil, 3},
+	}
 
 	return []any{
 		"models/" + NormalizeGoogleModelAlias(g.model), // model
-		history, // conversation history
-		nil,     // safety/rule config placeholder
-		[]any{
-			nil,
-			nil,
-			nil,
-			maxTokens,
-			1,
-			topP,
-			64,
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-			1,
-		},
+		history,          // conversation history
+		contextHints,     // UI meta hints observed from AI Studio RPC
+		generationConfig, // generation config
 		requestState,
 		nil,
 		[]any{[]any{nil, nil, nil, []any{}}},
