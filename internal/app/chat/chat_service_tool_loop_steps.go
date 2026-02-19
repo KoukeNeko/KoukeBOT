@@ -353,8 +353,15 @@ func (s *ChatService) finalizeToolLoopResponse(
 				state.fullResponse = candidate
 				forcedFinalReady = true
 			} else {
-				state.fallbackCause = "forced_final_invalid_after_repair"
-				logChat.Warnf("%s [FORCED_FINAL] still invalid after repair pass", toolLogPrefixGuard)
+				if synthesized := maybeSynthesizeForcedFinalTriplet(candidate, state.guardSummary, state.promptPolicy); synthesized != "" &&
+					isForcedFinalOutputValid(synthesized, state.promptPolicy) {
+					state.fullResponse = synthesized
+					forcedFinalReady = true
+					logChat.Warnf("%s [FORCED_FINAL] synthesized fallback triplet from invalid output", toolLogPrefixGuard)
+				} else {
+					state.fallbackCause = "forced_final_invalid_after_repair"
+					logChat.Warnf("%s [FORCED_FINAL] still invalid after repair pass", toolLogPrefixGuard)
+				}
 			}
 		}
 		if forcedFinalReady {

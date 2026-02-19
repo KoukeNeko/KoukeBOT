@@ -29,6 +29,31 @@ func shouldRepairForcedFinalOutput(raw string, policy PromptGuardPolicy) bool {
 	return !ok
 }
 
+func maybeSynthesizeForcedFinalTriplet(raw string, summary toolGuardSummary, policy PromptGuardPolicy) string {
+	if !policy.TripletOutputEnabled {
+		return ""
+	}
+	// Keep strict fallback behavior for hard-stop scenarios.
+	if summary.Has(toolGuardKindMaxRounds) || summary.Has(toolGuardKindLimit) {
+		return ""
+	}
+	// Only synthesize for duplicate-only style loops (e.g. repeated session_status).
+	if !summary.Has(toolGuardKindDuplicate) {
+		return ""
+	}
+
+	response := strings.TrimSpace(raw)
+	if response == "" {
+		return ""
+	}
+
+	return strings.TrimSpace(
+		"[Status]: Guarded / Recovered\n" +
+			"[Analysis]: Tool guard blocked repeated tool calls in this turn; continuing with existing context only.\n" +
+			"[Response]: " + response,
+	)
+}
+
 func buildForcedFinalRepairPrompt(previousResponse string) string {
 	var b strings.Builder
 	b.WriteString("[Forced final repair]\n")

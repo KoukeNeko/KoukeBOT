@@ -362,6 +362,64 @@ func TestFinalizeToolLoopResponseFallsBackWhenRepairFails(t *testing.T) {
 	}
 }
 
+func TestFinalizeToolLoopResponseSynthesizesTripletForDuplicateGuard(t *testing.T) {
+	provider := &forcedFinalTestProvider{
+		streamResponses: [][]llm.StreamChunk{
+			{
+				{
+					Content:    "**Internal Analysis**\nI should answer directly.",
+					TokensUsed: 5,
+				},
+				{Done: true},
+			},
+			{
+				{
+					Content:    "Still malformed without required triplet markers.",
+					TokensUsed: 3,
+				},
+				{Done: true},
+			},
+		},
+	}
+	assembler := NewContextAssembler()
+	service := &ChatService{
+		assembler: assembler,
+		provider:  provider,
+	}
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = true
+	state := newToolLoopState(policy, assembler.PromptGuardPolicy())
+	state.hadToolCallAttempt = true
+	state.guardSummary.Add(toolGuardKindDuplicate, "session_status", "session_status_already_called_in_turn", "max_session_status_calls_per_turn=1")
+	outputCh := make(chan llm.StreamChunk, 2)
+	conv := &domain.Conversation{
+		ID:        "conv-dup",
+		ChannelID: "ch",
+		PersonaID: "persona-c",
+	}
+
+	view := service.finalizeToolLoopResponse(context.Background(), conv, forcedFinalTestPersona("persona-c"), outputCh, state)
+	if provider.streamCallCount != 2 {
+		t.Fatalf("stream call count = %d, want 2", provider.streamCallCount)
+	}
+	if !view.Parsed {
+		t.Fatalf("expected synthesized output to parse as triplet")
+	}
+	if strings.Contains(view.Display, "Tool Loop Stopped") {
+		t.Fatalf("should not fall back to tool-loop-stopped response, got: %s", view.Display)
+	}
+	if !strings.Contains(state.fullResponse, "[Status]: Guarded / Recovered") {
+		t.Fatalf("expected synthesized status header, got: %s", state.fullResponse)
+	}
+	if len(outputCh) == 0 {
+		t.Fatalf("expected synthesized chunk to be emitted")
+	}
+	chunk := <-outputCh
+	if !strings.Contains(chunk.Content, "[Status]: Guarded / Recovered") {
+		t.Fatalf("chunk content should include synthesized triplet, got: %s", chunk.Content)
+	}
+}
+
 type forcedFinalTestProvider struct {
 	streamResponses [][]llm.StreamChunk
 	streamCallCount int
