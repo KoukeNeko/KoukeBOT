@@ -93,8 +93,14 @@ func (h *Handlers) persistOAuthProviderSelection(providerID string) {
 	}
 	s.ProviderType = config.ProviderOAuth
 	s.ProviderID = llm.NormalizeGoogleProviderID(providerID)
-	if _, mid := llm.SplitProviderModelID(s.ModelID); mid == "" {
+	if s.ProviderID == "" {
+		s.ProviderID = llm.ProviderGoogleAntigravity
+	}
+
+	modelProviderID, mid := llm.SplitProviderModelID(s.ModelID)
+	if mid == "" || modelProviderID != s.ProviderID {
 		s.ModelID = llm.DefaultProviderModelID(s.ProviderID)
+		s.GeminiModel = ""
 	}
 	_, s.GeminiModel, s.ModelID = llm.ResolveProviderAndModel(s.ProviderID, s.ModelID, s.GeminiModel)
 	_ = h.settingsStore.Save(s)
