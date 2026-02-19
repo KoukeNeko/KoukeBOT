@@ -61,7 +61,19 @@ func VerifyAIStudioSession(ctx context.Context, session *AIStudioSession, model 
 	if err != nil {
 		return err
 	}
-	return provider.countTokens(ctx, "ping")
+	if err := provider.countTokens(ctx, "ping"); err != nil {
+		if isAIStudioCountTokensInvalidArgument(err) {
+			// Some AI Studio backend revisions reject CountTokens payloads
+			// with INVALID_ARGUMENT even when session/auth are valid.
+			// Fall back to a minimal GenerateContent probe.
+			if probeErr := provider.probeGenerateContent(ctx, "ping"); probeErr != nil {
+				return fmt.Errorf("AI Studio CountTokens invalid argument; GenerateContent probe failed: %w", probeErr)
+			}
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // WithModel returns a shallow clone configured for another model.
@@ -167,6 +179,15 @@ func (g *AIStudioRPCProvider) StreamChatMultimodal(context.Context, string, []do
 func (g *AIStudioRPCProvider) countTokens(ctx context.Context, text string) error {
 	payload := g.buildCountTokensPayload(text)
 	_, err := g.callRPC(ctx, aiStudioRPCCountTokensPath, payload)
+	return err
+}
+
+func (g *AIStudioRPCProvider) probeGenerateContent(ctx context.Context, text string) error {
+	payload := g.buildGenerateContentPayload(ChatRequest{
+		Messages: []domain.Message{{Role: domain.RoleUser, Content: text}},
+		ToolMode: ToolModeDisabled,
+	})
+	_, err := g.callRPC(ctx, aiStudioRPCGenerateContentPath, payload)
 	return err
 }
 
@@ -591,6 +612,20 @@ func summarizeAIStudioBody(body []byte, maxLen int) string {
 
 	runes := []rune(text)
 	return string(runes[:maxLen]) + "..."
+}
+
+func isAIStudioCountTokensInvalidArgument(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, strings.ToLower(aiStudioRPCCountTokensPath)) {
+		return false
+	}
+	if !strings.Contains(lower, "http 400") {
+		return false
+	}
+	return strings.Contains(lower, "invalid argument") || strings.Contains(lower, "[3,")
 }
 
 func splitAIStudioText(text string, maxRunes int) []string {

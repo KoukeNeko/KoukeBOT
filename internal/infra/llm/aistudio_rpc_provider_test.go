@@ -141,6 +141,45 @@ func TestVerifyAIStudioSessionUsesCountTokens(t *testing.T) {
 	}
 }
 
+func TestVerifyAIStudioSessionFallsBackToGenerateContentOnCountTokensInvalidArgument(t *testing.T) {
+	var countTokenCalls int
+	var generateCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case aiStudioRPCCountTokensPath:
+			countTokenCalls++
+			w.WriteHeader(http.StatusBadRequest)
+			w.Header().Set("Content-Type", "application/json+protobuf")
+			_, _ = w.Write([]byte(`[3,"Request contains an invalid argument."]`))
+		case aiStudioRPCGenerateContentPath:
+			generateCalls++
+			w.Header().Set("Content-Type", "application/json+protobuf")
+			_, _ = w.Write([]byte(`[[[[null,"OK"]],"model"]]`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	err := VerifyAIStudioSession(context.Background(), &AIStudioSession{
+		Endpoint:           server.URL,
+		APIKey:             "api-key",
+		XBrowserValidation: "validation",
+		XClientData:        "client-data",
+		XGoogAuthUser:      "0",
+		UserAgent:          "Mozilla/test",
+	}, "gemini-3-pro-preview")
+	if err != nil {
+		t.Fatalf("VerifyAIStudioSession() error = %v", err)
+	}
+	if countTokenCalls != 1 {
+		t.Fatalf("CountTokens calls = %d, want 1", countTokenCalls)
+	}
+	if generateCalls != 1 {
+		t.Fatalf("GenerateContent calls = %d, want 1", generateCalls)
+	}
+}
+
 func TestVerifyAIStudioSessionAutoRefreshesAccessToken(t *testing.T) {
 	var tokenCalls int
 	var countTokenCalls int
