@@ -154,6 +154,15 @@ func buildSessionStatusRepeatGuardResult(call domain.ToolCall) domain.ToolResult
 	}
 }
 
+func buildFileAppendRepeatGuardResult(call domain.ToolCall) domain.ToolResult {
+	return domain.ToolResult{
+		ToolCallID: call.ID,
+		Content: "Tool guard: `file_append` can be called at most once per turn. " +
+			"Consolidate updates into a single append and answer directly without calling it again in this turn.",
+		IsError: true,
+	}
+}
+
 func buildToolLimitGuardResult(call domain.ToolCall, limit int) domain.ToolResult {
 	return domain.ToolResult{
 		ToolCallID: call.ID,

@@ -107,6 +107,26 @@ func (s *ChatService) filterExecutableToolCalls(
 			continue
 		}
 
+		// Hard guard: file_append can be called at most once per turn, regardless of ToolGuardEnabled.
+		if call.Name == "file_append" && state.toolCountsByName[call.Name] >= 1 {
+			state.guardSummary.Add(
+				toolGuardKindDuplicate,
+				call.Name,
+				"file_append_already_called_in_turn",
+				"max_file_append_calls_per_turn=1",
+			)
+			s.incrementToolGuardDuplicateBlocked()
+			guardResults = append(guardResults, buildFileAppendRepeatGuardResult(call))
+			logChat.Warnf(
+				"%s [FILE_APPEND_REPEAT] round=%d tool=%s%s",
+				toolLogPrefixGuard,
+				round+1,
+				call.Name,
+				summarizeToolTarget(call, personaID),
+			)
+			continue
+		}
+
 		if !state.toolPolicy.ToolGuardEnabled {
 			signature := toolCallSignature(call)
 			state.toolCallAttempts[signature]++

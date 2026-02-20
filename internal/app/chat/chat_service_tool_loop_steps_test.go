@@ -141,6 +141,32 @@ func TestFilterExecutableToolCallsBlocksRepeatedSessionStatusWhenGuardDisabled(t
 	}
 }
 
+func TestFilterExecutableToolCallsBlocksRepeatedFileAppendWhenGuardDisabled(t *testing.T) {
+	service := &ChatService{}
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = false
+	state := newToolLoopState(policy, PromptGuardPolicy{})
+
+	calls := []domain.ToolCall{
+		{ID: "1", Name: "file_append", Input: map[string]interface{}{"filename": "user.md", "content": "a"}},
+		{ID: "2", Name: "file_append", Input: map[string]interface{}{"filename": "user.md", "content": "b"}},
+	}
+
+	executable, guards := service.filterExecutableToolCalls(calls, "persona", 0, state)
+	if len(executable) != 1 {
+		t.Fatalf("executable calls = %d, want 1", len(executable))
+	}
+	if len(guards) != 1 {
+		t.Fatalf("guard results = %d, want 1", len(guards))
+	}
+	if !state.guardSummary.Has(toolGuardKindDuplicate) {
+		t.Fatalf("expected duplicate guard event for repeated file_append")
+	}
+	if !strings.Contains(guards[0].Content, "file_append") || !strings.Contains(guards[0].Content, "at most once per turn") {
+		t.Fatalf("unexpected guard content: %s", guards[0].Content)
+	}
+}
+
 func TestFinalizeToolLoopResponseBuildsFallback(t *testing.T) {
 	service := &ChatService{
 		assembler: NewContextAssembler(),

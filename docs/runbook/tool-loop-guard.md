@@ -5,6 +5,7 @@ Explain when the system blocks tool calls and how final user responses are produ
 
 ## Guard Rules
 - Duplicate guard: identical tool signature in same user turn is blocked.
+- Hard per-turn guards: `session_status` and `file_append` are each limited to one call per turn, even when duplicate/limit guard is disabled.
 - Web search limit guard: `web_search` calls capped by `max_web_search_calls_per_turn`.
 - Max rounds guard: tool rounds are always capped by `max_tool_rounds` (even when duplicate/limit guard is disabled) to prevent infinite loops.
 
