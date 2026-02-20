@@ -30,7 +30,7 @@ func configureOAuthPoolFromSettings(pool *app.ProviderPool, settings config.Sett
 
 	waitMax := time.Duration(settings.TransientRecoveryWaitMaxSeconds) * time.Second
 	if waitMax <= 0 {
-		waitMax = 5 * time.Second
+		waitMax = time.Duration(config.DefaultTransientRecoveryWaitMax) * time.Second
 	}
 	pool.SetTransientRecoveryWait(settings.TransientRecoveryWaitEnabled, waitMax)
 

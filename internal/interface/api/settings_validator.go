@@ -45,8 +45,8 @@ func validateToolLoopSettings(maxToolRounds, maxWebSearchCallsPerTurn, transient
 	if maxWebSearchCallsPerTurn < 1 || maxWebSearchCallsPerTurn > 4 {
 		return fmt.Errorf("max_web_search_calls_per_turn must be between 1 and 4")
 	}
-	if transientRecoveryWaitMaxSeconds < 1 || transientRecoveryWaitMaxSeconds > 15 {
-		return fmt.Errorf("transient_recovery_wait_max_seconds must be between 1 and 15")
+	if transientRecoveryWaitMaxSeconds < 1 || transientRecoveryWaitMaxSeconds > config.MaxTransientRecoveryWaitMax {
+		return fmt.Errorf("transient_recovery_wait_max_seconds must be between 1 and %d", config.MaxTransientRecoveryWaitMax)
 	}
 	return nil
 }

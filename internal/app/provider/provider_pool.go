@@ -13,6 +13,8 @@ import (
 
 var logPool = logger.New("llm", logger.Yellow)
 
+const defaultTransientRecoveryWait = 60 * time.Second
+
 // poolEntry holds a single provider with its status.
 type poolEntry struct {
 	provider llm.Provider
@@ -130,7 +132,7 @@ func NewProviderPool() *ProviderPool {
 	return &ProviderPool{
 		autoRetryCount:               3,
 		transientRecoveryWaitEnabled: true,
-		transientRecoveryWaitMax:     5 * time.Second,
+		transientRecoveryWaitMax:     defaultTransientRecoveryWait,
 	}
 }
 
@@ -156,7 +158,7 @@ func (pp *ProviderPool) SetTransientRecoveryWait(enabled bool, maxWait time.Dura
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
 	if maxWait <= 0 {
-		maxWait = 5 * time.Second
+		maxWait = defaultTransientRecoveryWait
 	}
 	pp.transientRecoveryWaitEnabled = enabled
 	pp.transientRecoveryWaitMax = maxWait

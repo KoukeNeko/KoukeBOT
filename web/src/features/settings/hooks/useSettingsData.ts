@@ -76,7 +76,7 @@ const defaultSettings: SettingsData = {
   max_web_search_calls_per_turn: 2,
   force_final_answer_after_tool_limit: true,
   transient_recovery_wait_enabled: true,
-  transient_recovery_wait_max_seconds: 5,
+  transient_recovery_wait_max_seconds: 60,
   discord_show_internal_tool_errors: true,
   scheduled_monitor_max_per_user: 3,
   mcp: {

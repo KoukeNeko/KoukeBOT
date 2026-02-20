@@ -31,7 +31,8 @@ const (
 	DefaultToolGuardEnabled           = true
 	DefaultMaxToolRounds              = 5
 	DefaultMaxWebSearchCallsPerTurn   = 2
-	DefaultTransientRecoveryWaitMax   = 5
+	DefaultTransientRecoveryWaitMax   = 60
+	MaxTransientRecoveryWaitMax       = 120
 	DefaultMemoryRecentRounds         = 50
 	MinMemoryRecentRounds             = 20
 	MaxMemoryRecentRounds             = 100
@@ -436,8 +437,8 @@ func normalizeVisibilityAndBooleans(settings Settings) Settings {
 	if settings.TransientRecoveryWaitMaxSeconds < 1 {
 		settings.TransientRecoveryWaitMaxSeconds = DefaultTransientRecoveryWaitMax
 	}
-	if settings.TransientRecoveryWaitMaxSeconds > 15 {
-		settings.TransientRecoveryWaitMaxSeconds = 15
+	if settings.TransientRecoveryWaitMaxSeconds > MaxTransientRecoveryWaitMax {
+		settings.TransientRecoveryWaitMaxSeconds = MaxTransientRecoveryWaitMax
 	}
 	if settings.MemoryRecentRounds < MinMemoryRecentRounds {
 		settings.MemoryRecentRounds = DefaultMemoryRecentRounds
