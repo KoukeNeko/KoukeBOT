@@ -59,6 +59,14 @@ func (h *Handler) loadHistoryCutoff(ctx context.Context, channelID, personaID st
 func (h *Handler) prepareInboundImages(attachments []*discordgo.MessageAttachment, channelID string) []domain.ImageInput {
 	var images []domain.ImageInput
 	for _, attachment := range attachments {
+		if len(images) >= maxCurrentMessageImages {
+			logHandler.Warnf(
+				"inbound images truncated [%s]: max=%d",
+				channelID,
+				maxCurrentMessageImages,
+			)
+			break
+		}
 		if !isImageAttachment(attachment) {
 			continue
 		}

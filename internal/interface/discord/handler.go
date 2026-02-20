@@ -22,6 +22,8 @@ const (
 	llmTimeout               = 300 * time.Second
 	defaultGroupHistoryLimit = 24
 	defaultHistoryTarget     = 12
+	maxCurrentMessageImages  = 3
+	maxReplyReferenceImages  = 2
 	maxHistoryImageScan      = 10
 	maxHistoryImages         = 5
 	historyCharBudget        = 4500

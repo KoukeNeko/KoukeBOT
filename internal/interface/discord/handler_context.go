@@ -59,7 +59,7 @@ func (h *Handler) buildReplyReferenceEntry(s *discordgo.Session, m *discordgo.Me
 
 	var images []domain.ImageInput
 	for _, att := range refMsg.Attachments {
-		if len(images) >= 2 {
+		if len(images) >= maxReplyReferenceImages {
 			break
 		}
 		if !isImageAttachment(att) {

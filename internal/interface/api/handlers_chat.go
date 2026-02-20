@@ -16,6 +16,8 @@ import (
 
 // --- Chat endpoint ---
 
+const maxAPICurrentImages = 3
+
 type ChatRequest struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	ChannelID      string `json:"channel_id"`
@@ -106,6 +108,14 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 		// Parse images
 		if files := r.MultipartForm.File["images"]; len(files) > 0 {
 			for _, fileHeader := range files {
+				if len(images) >= maxAPICurrentImages {
+					logAPI.Warnf(
+						"chat-stream: inbound images truncated max=%d uploaded=%d",
+						maxAPICurrentImages,
+						len(files),
+					)
+					break
+				}
 				file, err := fileHeader.Open()
 				if err != nil {
 					writeError(w, http.StatusBadRequest, "open image file: "+err.Error())
