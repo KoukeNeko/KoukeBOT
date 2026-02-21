@@ -288,3 +288,33 @@ func TestFilterIncomingMessageKeepsTextWhenMentionWithCaption(t *testing.T) {
 		t.Fatalf("expected original text to be preserved, got: %q", content)
 	}
 }
+
+func TestFilterIncomingMessageAcceptsReplyWithoutMention(t *testing.T) {
+	h := &Handler{stripLeadingBotMentionPrefix: true}
+	session := &discordgo.Session{
+		State: &discordgo.State{
+			Ready: discordgo.Ready{
+				User: &discordgo.User{ID: "bot-1"},
+			},
+		},
+	}
+	message := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			GuildID:  "guild-1",
+			Content:  "這是回覆內容",
+			Author:   &discordgo.User{ID: "user-1", Username: "alice"},
+			Mentions: []*discordgo.User{},
+			MessageReference: &discordgo.MessageReference{
+				MessageID: "ref-1",
+			},
+		},
+	}
+
+	content, ok := h.filterIncomingMessage(session, message)
+	if !ok {
+		t.Fatal("expected reply message to be accepted without mention")
+	}
+	if content != "這是回覆內容" {
+		t.Fatalf("unexpected reply content: %q", content)
+	}
+}

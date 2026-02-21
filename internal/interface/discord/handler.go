@@ -20,6 +20,7 @@ var logHandler = logger.New("discord", logger.Magenta)
 const (
 	discordMaxLength         = 2000
 	llmTimeout               = 300 * time.Second
+	defaultMessageQueueSize  = 200
 	defaultGroupHistoryLimit = 24
 	defaultHistoryTarget     = 12
 	maxCurrentMessageImages  = 3
@@ -48,6 +49,9 @@ type Handler struct {
 
 	seenMu  sync.Mutex
 	seenIDs map[string]time.Time
+
+	queueOnce    sync.Once
+	messageQueue chan queuedMessageTask
 }
 
 func NewHandler(
@@ -89,6 +93,7 @@ func (h *Handler) checkAndMarkSeen(messageID string) bool {
 
 // Register attaches the message handler to the Discord session.
 func (h *Handler) Register() {
+	h.startMessageQueueWorker()
 	h.bot.Session().AddHandler(h.onMessageCreate)
 }
 
@@ -143,32 +148,5 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		return
 	}
 
-	personaID := h.bot.PersonaID()
-	ctx, cancel := h.newDiscordRequestContext(m, personaID)
-	defer cancel()
-
-	if h.tryHandleSchedulerStrict(ctx, m, personaID, content) {
-		return
-	}
-
-	historyCutoff, err := h.loadHistoryCutoff(ctx, m.ChannelID, personaID)
-	if err != nil {
-		logHandler.Errorf("conversation state load failed [%s]: %v", m.ChannelID, err)
-		_ = h.bot.SendMessage(m.ChannelID, "❌ 讀取對話狀態失敗，請稍後再試。")
-		return
-	}
-
-	stopTyping := h.keepTyping(ctx, m.ChannelID)
-	defer stopTyping()
-
-	images := h.prepareInboundImages(m.Attachments, m.ChannelID)
-	messageToStore, ephemeralHistory, currentMessage, historyEntries, hasHistoryImages := h.buildInboundContext(s, m, personaID, content, historyCutoff)
-	streamCh, err := h.startMessageStream(ctx, m.ChannelID, personaID, currentMessage, messageToStore, images, historyEntries, ephemeralHistory, hasHistoryImages)
-	if err != nil {
-		logHandler.Errorf("chat error [%s]: %v", m.ChannelID, err)
-		_ = h.bot.SendMessage(m.ChannelID, formatDiscordError(err))
-		return
-	}
-
-	h.streamToDiscord(m.ChannelID, m.ID, streamCh)
+	h.enqueueMessageTask(s, m, content)
 }

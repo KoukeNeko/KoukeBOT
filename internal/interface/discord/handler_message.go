@@ -21,6 +21,14 @@ func isDM(m *discordgo.MessageCreate) bool {
 	return m.GuildID == ""
 }
 
+// isReply checks if the message is a Discord reply.
+func isReply(m *discordgo.MessageCreate) bool {
+	if m == nil || m.MessageReference == nil {
+		return false
+	}
+	return strings.TrimSpace(m.MessageReference.MessageID) != ""
+}
+
 // cleanMention strips only leading bot @mentions and preserves all other tags.
 func cleanMention(s *discordgo.Session, m *discordgo.MessageCreate, stripLeadingBotMentionPrefix bool) string {
 	if m == nil {
