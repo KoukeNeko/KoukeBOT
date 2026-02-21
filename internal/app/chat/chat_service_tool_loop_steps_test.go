@@ -496,6 +496,30 @@ func forcedFinalTestPersona(id string) *domain.PersonaModule {
 	}
 }
 
+func TestFilterExecutableToolCallsAllowsMCPDuplicates(t *testing.T) {
+	service := &ChatService{}
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = true
+	state := newToolLoopState(policy, PromptGuardPolicy{})
+
+	// Two calls to the same MCP tool with identical input must both execute.
+	calls := []domain.ToolCall{
+		{ID: "1", Name: "mcp.myserver.query_data", Input: map[string]interface{}{"id": "42"}},
+		{ID: "2", Name: "mcp.myserver.query_data", Input: map[string]interface{}{"id": "42"}},
+	}
+
+	executable, guards := service.filterExecutableToolCalls(calls, "persona", 0, state)
+	if len(executable) != 2 {
+		t.Fatalf("executable calls = %d, want 2 (MCP tools bypass duplicate guard)", len(executable))
+	}
+	if len(guards) != 0 {
+		t.Fatalf("guard results = %d, want 0", len(guards))
+	}
+	if state.guardSummary.Has(toolGuardKindDuplicate) {
+		t.Fatalf("expected no duplicate guard event for MCP tools")
+	}
+}
+
 func TestFilterExecutableToolCallsAllBlockedReturnsZeroExecutable(t *testing.T) {
 	service := &ChatService{}
 	policy := DefaultToolExecutionPolicy()

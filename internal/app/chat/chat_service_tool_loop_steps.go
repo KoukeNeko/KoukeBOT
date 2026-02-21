@@ -148,6 +148,16 @@ func (s *ChatService) filterExecutableToolCalls(
 			continue
 		}
 
+		// MCP tools are external services that may legitimately return different
+		// results on successive calls with the same input. Skip duplicate-call
+		// guard for them; MaxToolRounds already bounds total execution.
+		if strings.HasPrefix(call.Name, "mcp.") {
+			state.toolCallAttempts[toolCallSignature(call)]++
+			state.toolCountsByName[call.Name]++
+			executableCalls = append(executableCalls, call)
+			continue
+		}
+
 		signature := toolCallSignature(call)
 		if state.toolCallAttempts[signature] >= 1 {
 			state.guardSummary.Add(toolGuardKindDuplicate, call.Name, "duplicate_tool_call_blocked", "")
