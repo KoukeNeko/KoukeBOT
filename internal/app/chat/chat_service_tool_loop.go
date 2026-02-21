@@ -344,9 +344,18 @@ func (s *ChatService) handleToolCallingStream(
 				break
 			}
 
-			nextStream, nextMultimodalHistory, ok := s.continueWithToolResults(
-				ctx, conv, persona, personaID, pendingToolCalls, executableCalls, guardResults, multimodalHistory, outputCh, state, round,
-			)
+			nextStream, nextMultimodalHistory, ok := s.continueWithToolResults(ctx, toolContinuationInput{
+				Conversation:      conv,
+				Persona:           persona,
+				PersonaID:         personaID,
+				PendingToolCalls:  pendingToolCalls,
+				ExecutableCalls:   executableCalls,
+				GuardResults:      guardResults,
+				MultimodalHistory: multimodalHistory,
+				OutputCh:          outputCh,
+				State:             state,
+				Round:             round,
+			})
 			if !ok {
 				return
 			}

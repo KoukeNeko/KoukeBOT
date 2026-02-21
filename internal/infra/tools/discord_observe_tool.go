@@ -634,24 +634,6 @@ func sanitizeJSONError(message string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", " ").Replace(message)
 }
 
-func readString(input map[string]interface{}, key string) string {
-	if input == nil {
-		return ""
-	}
-	v, ok := input[key]
-	if !ok {
-		return ""
-	}
-	switch raw := v.(type) {
-	case string:
-		return strings.TrimSpace(raw)
-	case json.Number:
-		return strings.TrimSpace(raw.String())
-	default:
-		return strings.TrimSpace(fmt.Sprintf("%v", raw))
-	}
-}
-
 func metricLogf(metric string, counter *uint64) {
 	if counter == nil {
 		return

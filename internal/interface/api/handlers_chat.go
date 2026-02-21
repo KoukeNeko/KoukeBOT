@@ -226,7 +226,11 @@ func (h *Handlers) ChatStream(w http.ResponseWriter, r *http.Request) {
 			if chunk.ToolError != "" {
 				toolData["error"] = chunk.ToolError
 			}
-			toolJSON, _ := json.Marshal(toolData)
+			toolJSON, jsonErr := json.Marshal(toolData)
+			if jsonErr != nil {
+				logAPI.Warnf("chat-stream: marshal tool data: %v", jsonErr)
+				continue
+			}
 			fmt.Fprintf(w, "event: tool\ndata: %s\n\n", string(toolJSON))
 			flusher.Flush()
 			continue

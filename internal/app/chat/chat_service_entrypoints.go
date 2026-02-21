@@ -114,16 +114,7 @@ func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
-	// Pre-flight: flush memory and compact history if approaching context limit
-	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.memoryFlushRunner.Flush(ctx, MemoryFlushRequest{
-			Conversation: conv,
-			Persona:      persona,
-			PersonaID:    resolvedPersonaID,
-		}); err != nil {
-			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
-		}
-	}
+	s.maybeFlushMemory(ctx, conv, persona, resolvedPersonaID)
 
 	contextForLLM = s.ensureTOONContextForLLM(ctx, conv.ChannelID, resolvedPersonaID, contextForLLM, messageToStore)
 
@@ -195,17 +186,7 @@ func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx contex
 	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
 	contextForLLM = s.ensureTOONContextForLLM(ctx, conv.ChannelID, resolvedPersonaID, contextForLLM, messageToStore)
-
-	// Pre-flight: flush memory and compact history if approaching context limit
-	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.memoryFlushRunner.Flush(ctx, MemoryFlushRequest{
-			Conversation: conv,
-			Persona:      persona,
-			PersonaID:    resolvedPersonaID,
-		}); err != nil {
-			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
-		}
-	}
+	s.maybeFlushMemory(ctx, conv, persona, resolvedPersonaID)
 
 	// Save only direct attachment images to disk (history-entry images are ephemeral).
 	imageRefs := s.saveDirectAttachmentImages(images)
@@ -242,15 +223,7 @@ func (s *ChatService) HandleMessageStreamWithNativeHistory(
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
-	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.memoryFlushRunner.Flush(ctx, MemoryFlushRequest{
-			Conversation: conv,
-			Persona:      persona,
-			PersonaID:    resolvedPersonaID,
-		}); err != nil {
-			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
-		}
-	}
+	s.maybeFlushMemory(ctx, conv, persona, resolvedPersonaID)
 
 	// Temporarily prepend ephemeral channel history + current message for assembly.
 	// These are NOT persisted — they are removed immediately after Assemble.
@@ -315,15 +288,7 @@ func (s *ChatService) HandleMessageStreamWithNativeHistoryAndImages(
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
-	if s.contextManager != nil && s.contextManager.ShouldFlush(conv) {
-		if err := s.memoryFlushRunner.Flush(ctx, MemoryFlushRequest{
-			Conversation: conv,
-			Persona:      persona,
-			PersonaID:    resolvedPersonaID,
-		}); err != nil {
-			logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
-		}
-	}
+	s.maybeFlushMemory(ctx, conv, persona, resolvedPersonaID)
 
 	// Save only direct attachment images to disk (history-entry images are ephemeral).
 	imageRefs := s.saveDirectAttachmentImages(images)
@@ -332,6 +297,21 @@ func (s *ChatService) HandleMessageStreamWithNativeHistoryAndImages(
 		ctx, conv, persona, resolvedPersonaID,
 		ephemeralHistory, currentMessage, messageToStore,
 		images, historyEntries, imageRefs...)
+}
+
+// maybeFlushMemory triggers a memory flush if the conversation is approaching the context limit.
+// Errors are logged but do not abort the request — losing a flush is less harmful than dropping the message.
+func (s *ChatService) maybeFlushMemory(ctx context.Context, conv *domain.Conversation, persona *domain.PersonaModule, personaID string) {
+	if s.contextManager == nil || !s.contextManager.ShouldFlush(conv) {
+		return
+	}
+	if err := s.memoryFlushRunner.Flush(ctx, MemoryFlushRequest{
+		Conversation: conv,
+		Persona:      persona,
+		PersonaID:    personaID,
+	}); err != nil {
+		logChat.Warnf("memory flush failed: %v (continuing anyway)", err)
+	}
 }
 
 // saveDirectAttachmentImages persists the provided images to disk and returns their storage references.

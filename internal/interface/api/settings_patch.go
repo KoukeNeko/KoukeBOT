@@ -151,13 +151,16 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.RequestQueueTimeoutS != nil {
 		existing.RequestQueueTimeoutS = *req.RequestQueueTimeoutS
 	}
+	// FallbackEnabled and FallbackModelEnabled are synonyms kept in sync.
+	// When both are set in the same request, FallbackModelEnabled wins.
 	if req.FallbackEnabled != nil {
 		existing.FallbackEnabled = *req.FallbackEnabled
 		existing.FallbackModelEnabled = *req.FallbackEnabled
 	}
 	if req.FallbackModelEnabled != nil {
-		existing.FallbackModelEnabled = *req.FallbackModelEnabled
-		existing.FallbackEnabled = *req.FallbackModelEnabled
+		enabled := *req.FallbackModelEnabled
+		existing.FallbackModelEnabled = enabled
+		existing.FallbackEnabled = enabled
 	}
 	if req.FallbackModelID != "" {
 		existing.FallbackModelID = strings.TrimSpace(req.FallbackModelID)

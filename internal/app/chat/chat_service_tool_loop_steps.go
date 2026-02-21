@@ -261,19 +261,35 @@ func (s *ChatService) emitToolErrors(
 	}
 }
 
+// toolContinuationInput groups the parameters for continuing the tool loop
+// after executing tool calls in a single round.
+type toolContinuationInput struct {
+	Conversation      *domain.Conversation
+	Persona           *domain.PersonaModule
+	PersonaID         string
+	PendingToolCalls  []domain.ToolCall
+	ExecutableCalls   []domain.ToolCall
+	GuardResults      []domain.ToolResult
+	MultimodalHistory []domain.MultimodalMessage
+	OutputCh          chan<- llm.StreamChunk
+	State             *toolLoopState
+	Round             int
+}
+
 func (s *ChatService) continueWithToolResults(
 	ctx context.Context,
-	conv *domain.Conversation,
-	persona *domain.PersonaModule,
-	personaID string,
-	pendingToolCalls []domain.ToolCall,
-	executableCalls []domain.ToolCall,
-	guardResults []domain.ToolResult,
-	multimodalHistory []domain.MultimodalMessage,
-	outputCh chan<- llm.StreamChunk,
-	state *toolLoopState,
-	round int,
+	in toolContinuationInput,
 ) (<-chan llm.StreamChunk, []domain.MultimodalMessage, bool) {
+	conv := in.Conversation
+	persona := in.Persona
+	personaID := in.PersonaID
+	pendingToolCalls := in.PendingToolCalls
+	executableCalls := in.ExecutableCalls
+	guardResults := in.GuardResults
+	multimodalHistory := in.MultimodalHistory
+	outputCh := in.OutputCh
+	state := in.State
+	round := in.Round
 	toolResults := append([]domain.ToolResult(nil), guardResults...)
 	if len(executableCalls) > 0 {
 		executed := s.executeTools(ctx, executableCalls, personaID)
@@ -336,6 +352,91 @@ func (s *ChatService) continueWithToolResults(
 	return nextStream, multimodalHistory, true
 }
 
+// tryForcedFinalAnswer attempts to generate a final answer without tools when
+// the guard summary indicates the tool loop should stop. Returns true if a
+// valid forced response was produced and stored in state.fullResponse.
+func (s *ChatService) tryForcedFinalAnswer(
+	ctx context.Context,
+	conv *domain.Conversation,
+	persona *domain.PersonaModule,
+	state *toolLoopState,
+) bool {
+	state.guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
+	forcedResponse, forcedTokens, forcedRawInput, forcedRawInputHuman, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, state.guardSummary, state.promptPolicy)
+	state.totalTokens += forcedTokens
+	if strings.TrimSpace(forcedRawInput) != "" {
+		state.lastRawLLMInput = forcedRawInput
+		state.lastRawLLMInputHuman = forcedRawInputHuman
+	}
+
+	if err != nil {
+		state.fallbackCause = fmt.Sprintf("forced_final_error=%v", err)
+		logChat.Warnf("%s [FORCED_FINAL] failed: %v", toolLogPrefixGuard, err)
+		return false
+	}
+	if strings.TrimSpace(forcedResponse) == "" {
+		state.fallbackCause = "forced_final_empty_output"
+		logChat.Warnf("%s [FORCED_FINAL] returned empty output", toolLogPrefixGuard)
+		return false
+	}
+
+	candidate := strings.TrimSpace(forcedResponse)
+	candidate = s.maybeRepairForcedFinalCandidate(ctx, conv, persona, state, candidate)
+
+	if isForcedFinalOutputValid(candidate, state.promptPolicy) {
+		state.fullResponse = candidate
+		return true
+	}
+
+	synthesized := maybeSynthesizeForcedFinalTriplet(candidate, state.guardSummary, state.promptPolicy)
+	if synthesized != "" && isForcedFinalOutputValid(synthesized, state.promptPolicy) {
+		state.fullResponse = synthesized
+		logChat.Warnf("%s [FORCED_FINAL] synthesized fallback triplet from invalid output", toolLogPrefixGuard)
+		return true
+	}
+
+	state.fallbackCause = "forced_final_invalid_after_repair"
+	logChat.Warnf("%s [FORCED_FINAL] still invalid after repair pass", toolLogPrefixGuard)
+	return false
+}
+
+// maybeRepairForcedFinalCandidate attempts a single repair pass on a malformed
+// forced final output. Returns the repaired candidate or the original if repair
+// fails or is not needed.
+func (s *ChatService) maybeRepairForcedFinalCandidate(
+	ctx context.Context,
+	conv *domain.Conversation,
+	persona *domain.PersonaModule,
+	state *toolLoopState,
+	candidate string,
+) string {
+	if !shouldRepairForcedFinalOutput(candidate, state.promptPolicy) {
+		return candidate
+	}
+
+	logChat.Warnf("%s [FORCED_FINAL] output malformed; attempting one repair pass", toolLogPrefixGuard)
+	repairedResponse, repairedTokens, repairedRawInput, repairedRawInputHuman, repairErr := s.regenerateForcedFinalOnceWithoutTools(ctx, conv, persona, candidate)
+	state.totalTokens += repairedTokens
+	if strings.TrimSpace(repairedRawInput) != "" {
+		state.lastRawLLMInput = repairedRawInput
+		state.lastRawLLMInputHuman = repairedRawInputHuman
+	}
+
+	if repairErr != nil {
+		state.fallbackCause = fmt.Sprintf("forced_final_repair_error=%v", repairErr)
+		logChat.Warnf("%s [FORCED_FINAL] repair failed: %v", toolLogPrefixGuard, repairErr)
+		return candidate
+	}
+	if strings.TrimSpace(repairedResponse) == "" {
+		state.fallbackCause = "forced_final_repair_empty_output"
+		logChat.Warnf("%s [FORCED_FINAL] repair returned empty output", toolLogPrefixGuard)
+		return candidate
+	}
+
+	logChat.Logf("%s [FORCED_FINAL] repair pass completed", toolLogPrefixGuard)
+	return strings.TrimSpace(repairedResponse)
+}
+
 func (s *ChatService) finalizeToolLoopResponse(
 	ctx context.Context,
 	conv *domain.Conversation,
@@ -344,57 +445,7 @@ func (s *ChatService) finalizeToolLoopResponse(
 	state *toolLoopState,
 ) assistantOutputView {
 	if strings.TrimSpace(state.fullResponse) == "" && state.hadToolCallAttempt && state.guardSummary.shouldForceFinalAnswer(state.toolPolicy) {
-		state.guardSummary.Add(toolGuardKindForcedFinal, "", "tool_guard_forced_final_answer", "")
-		forcedResponse, forcedTokens, forcedRawInput, forcedRawInputHuman, err := s.forceFinalAnswerWithoutTools(ctx, conv, persona, state.guardSummary, state.promptPolicy)
-		state.totalTokens += forcedTokens
-		if strings.TrimSpace(forcedRawInput) != "" {
-			state.lastRawLLMInput = forcedRawInput
-			state.lastRawLLMInputHuman = forcedRawInputHuman
-		}
-		forcedFinalReady := false
-		if err != nil {
-			state.fallbackCause = fmt.Sprintf("forced_final_error=%v", err)
-			logChat.Warnf("%s [FORCED_FINAL] failed: %v", toolLogPrefixGuard, err)
-		} else if strings.TrimSpace(forcedResponse) == "" {
-			state.fallbackCause = "forced_final_empty_output"
-			logChat.Warnf("%s [FORCED_FINAL] returned empty output", toolLogPrefixGuard)
-		} else {
-			candidate := strings.TrimSpace(forcedResponse)
-			if shouldRepairForcedFinalOutput(candidate, state.promptPolicy) {
-				logChat.Warnf("%s [FORCED_FINAL] output malformed; attempting one repair pass", toolLogPrefixGuard)
-				repairedResponse, repairedTokens, repairedRawInput, repairedRawInputHuman, repairErr := s.regenerateForcedFinalOnceWithoutTools(ctx, conv, persona, candidate)
-				state.totalTokens += repairedTokens
-				if strings.TrimSpace(repairedRawInput) != "" {
-					state.lastRawLLMInput = repairedRawInput
-					state.lastRawLLMInputHuman = repairedRawInputHuman
-				}
-				if repairErr != nil {
-					state.fallbackCause = fmt.Sprintf("forced_final_repair_error=%v", repairErr)
-					logChat.Warnf("%s [FORCED_FINAL] repair failed: %v", toolLogPrefixGuard, repairErr)
-				} else if strings.TrimSpace(repairedResponse) == "" {
-					state.fallbackCause = "forced_final_repair_empty_output"
-					logChat.Warnf("%s [FORCED_FINAL] repair returned empty output", toolLogPrefixGuard)
-				} else {
-					candidate = strings.TrimSpace(repairedResponse)
-					logChat.Logf("%s [FORCED_FINAL] repair pass completed", toolLogPrefixGuard)
-				}
-			}
-			if isForcedFinalOutputValid(candidate, state.promptPolicy) {
-				state.fullResponse = candidate
-				forcedFinalReady = true
-			} else {
-				if synthesized := maybeSynthesizeForcedFinalTriplet(candidate, state.guardSummary, state.promptPolicy); synthesized != "" &&
-					isForcedFinalOutputValid(synthesized, state.promptPolicy) {
-					state.fullResponse = synthesized
-					forcedFinalReady = true
-					logChat.Warnf("%s [FORCED_FINAL] synthesized fallback triplet from invalid output", toolLogPrefixGuard)
-				} else {
-					state.fallbackCause = "forced_final_invalid_after_repair"
-					logChat.Warnf("%s [FORCED_FINAL] still invalid after repair pass", toolLogPrefixGuard)
-				}
-			}
-		}
-		if forcedFinalReady {
+		if s.tryForcedFinalAnswer(ctx, conv, persona, state) {
 			s.incrementToolForcedFinalSuccess()
 			logChat.Logf("%s [FORCED_FINAL] generated after %d tool call(s)", toolLogPrefixGuard, len(state.executedToolCalls))
 		} else {

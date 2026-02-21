@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,34 +31,34 @@ type oauthHTTPDoer interface {
 
 var oauthHTTPClient oauthHTTPDoer = http.DefaultClient
 
-// generatePKCE generates a PKCE verifier and S256 challenge pair.
-func generatePKCE() (verifier, challenge string) {
-	buf := make([]byte, 32)
+// generateRandomHex generates a cryptographically random hex string of the given byte length.
+func generateRandomHex(byteLen int) (string, error) {
+	buf := make([]byte, byteLen)
 	if _, err := rand.Read(buf); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("crypto/rand read: %w", err)
 	}
-	verifier = hex.EncodeToString(buf)
+	return hex.EncodeToString(buf), nil
+}
+
+// generatePKCE generates a PKCE verifier and S256 challenge pair.
+func generatePKCE() (verifier, challenge string, err error) {
+	verifier, err = generateRandomHex(32)
+	if err != nil {
+		return "", "", fmt.Errorf("generate PKCE verifier: %w", err)
+	}
 	hash := sha256.Sum256([]byte(verifier))
 	challenge = base64.RawURLEncoding.EncodeToString(hash[:])
-	return
+	return verifier, challenge, nil
 }
 
 // generateState generates a random OAuth state parameter to prevent CSRF.
-func generateState() string {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		panic("crypto/rand failed: " + err.Error())
-	}
-	return hex.EncodeToString(buf)
+func generateState() (string, error) {
+	return generateRandomHex(16)
 }
 
 // generateFlowID generates a unique identifier for an OAuth flow session.
-func generateFlowID() string {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		panic("crypto/rand failed: " + err.Error())
-	}
-	return hex.EncodeToString(buf)
+func generateFlowID() (string, error) {
+	return generateRandomHex(16)
 }
 
 // buildAuthURL constructs the Google OAuth2 authorization URL with PKCE parameters.
@@ -112,7 +113,7 @@ func fetchUserEmail(ctx context.Context, accessToken string) (string, error) {
 		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return "", err
+		return "", fmt.Errorf("decode user info response: %w", err)
 	}
 	return info.Email, nil
 }

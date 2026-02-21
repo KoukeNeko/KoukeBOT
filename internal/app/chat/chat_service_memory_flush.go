@@ -95,6 +95,7 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 		// Continue conversation with tool results
 		assembled, err = s.assembler.Assemble(persona, conv, s.provider.ModelInfo())
 		if err != nil {
+			logChat.Warnf("flush assemble failed at round %d: %v", round, err)
 			break
 		}
 		streamCh, err = s.provider.StreamChat(ctx, llm.ChatRequest{
@@ -104,6 +105,7 @@ func (s *ChatService) executeMemoryFlush(ctx context.Context, conv *domain.Conve
 			ToolMode:     llm.ToolModeNormal,
 		})
 		if err != nil {
+			logChat.Warnf("flush stream continuation failed at round %d: %v", round, err)
 			break
 		}
 	}

@@ -235,24 +235,69 @@ func estimateStringSliceTokens(items []string) int {
 	return total
 }
 
+// digestRawData holds intermediate results from message extraction.
+type digestRawData struct {
+	summaryLines []string
+	facts        []string
+	preferences  []string
+	openItems    []string
+	decisions    []string
+	allText      []string
+	styleScores  digestStyleScores
+	styleMarkers map[string]bool
+	signatureHit map[string]bool
+	quotes       []scoredQuote
+}
+
+// digestStyleScores tracks accumulated tone/attitude counters.
+type digestStyleScores struct {
+	critical  int
+	directive int
+	playful   int
+	formal    int
+	cold      int
+	irritated int
+	composed  int
+}
+
+// scoredQuote pairs a quote text with its relevance score.
+type scoredQuote struct {
+	text  string
+	score int
+}
+
+// digestStyleAnalysis holds classified style results ready for digest assembly.
+type digestStyleAnalysis struct {
+	attitude       string
+	emotionalTone  string
+	styleMarkers   []string
+	signatureTerms []string
+	styleQuotes    []string
+}
+
 func (cm *ContextManager) buildDigest(messages []domain.Message, persona *domain.PersonaModule) (domain.ConversationDigest, bool) {
 	if len(messages) == 0 {
 		return domain.ConversationDigest{}, false
 	}
 
-	var summaryLines []string
-	var facts, preferences, openItems, decisions []string
-	allText := make([]string, 0, len(messages))
 	styleLexicon := extractPersonaStyleLexicon(persona)
-	styleMarkersSet := map[string]bool{}
-	signatureSet := map[string]bool{}
-	type scoredQuote struct {
-		text  string
-		score int
+	raw := extractDigestEntries(messages, styleLexicon)
+	if len(raw.summaryLines) == 0 {
+		return domain.ConversationDigest{}, false
 	}
-	var quotes []scoredQuote
-	var criticalScore, directiveScore, playfulScore, formalScore int
-	var coldScore, irritatedScore, composedScore int
+
+	style := classifyConversationStyle(raw)
+	return formatDigestContent(raw, style)
+}
+
+// extractDigestEntries iterates the tail segment of messages and collects
+// facts, preferences, decisions, open items, summary lines, and style signals.
+func extractDigestEntries(messages []domain.Message, styleLexicon []string) digestRawData {
+	raw := digestRawData{
+		styleMarkers: map[string]bool{},
+		signatureHit: map[string]bool{},
+		allText:      make([]string, 0, len(messages)),
+	}
 
 	// Focus on the tail segment of the removed block (most relevant before compaction).
 	const digestTailSegmentSize = 24
@@ -260,114 +305,128 @@ func (cm *ContextManager) buildDigest(messages []domain.Message, persona *domain
 	if len(messages) > digestTailSegmentSize {
 		start = len(messages) - digestTailSegmentSize
 	}
+
 	for _, msg := range messages[start:] {
 		text := normalizeText(humanizeConversationTextForDigest(msg.Content))
 		if text == "" {
 			continue
 		}
 		lower := strings.ToLower(text)
-		allText = append(allText, text)
+		raw.allText = append(raw.allText, text)
 
-		if len(summaryLines) < 10 {
+		if len(raw.summaryLines) < 10 {
 			role := "A"
 			if msg.Role == domain.RoleUser {
 				role = "U"
 			}
-			summaryLines = append(summaryLines, fmt.Sprintf("- [%s] %s", role, truncate(text, 220)))
+			raw.summaryLines = append(raw.summaryLines, fmt.Sprintf("- [%s] %s", role, truncate(text, 220)))
 		}
 
 		if msg.Role == domain.RoleUser {
-			switch {
-			case containsAny(lower, "我喜歡", "我偏好", "prefer", "like", "通常", "習慣"):
-				preferences = appendUnique(preferences, truncate(text, 180), 8)
-			case containsAny(lower, "我叫", "我是", "i am", "my name", "我在", "我用"):
-				facts = appendUnique(facts, truncate(text, 180), 8)
-			}
-
-			if containsAny(lower, "待辦", "todo", "要做", "需要", "幫我", "請你", "follow up") {
-				openItems = appendUnique(openItems, truncate(text, 180), 10)
-			}
-			if containsAny(lower, "決定", "改成", "選擇", "we will", "let's", "採用") {
-				decisions = appendUnique(decisions, truncate(text, 180), 10)
-			}
+			extractUserEntries(&raw, lower, text)
 			continue
 		}
 
-		// Assistant-side style extraction (stylized digest).
-		score := 0
-		if containsAny(lower, "請", "必須", "應該", "務必", "must", "should") {
-			directiveScore += 2
-			styleMarkersSet["directive"] = true
-			score += 2
+		// Assistant-side style extraction.
+		extractAssistantStyleSignals(&raw, lower, text, styleLexicon)
+	}
+
+	return raw
+}
+
+// extractUserEntries classifies a single user message into facts, preferences,
+// open items, and decisions.
+func extractUserEntries(raw *digestRawData, lower, text string) {
+	switch {
+	case containsAny(lower, "我喜歡", "我偏好", "prefer", "like", "通常", "習慣"):
+		raw.preferences = appendUnique(raw.preferences, truncate(text, 180), 8)
+	case containsAny(lower, "我叫", "我是", "i am", "my name", "我在", "我用"):
+		raw.facts = appendUnique(raw.facts, truncate(text, 180), 8)
+	}
+
+	if containsAny(lower, "待辦", "todo", "要做", "需要", "幫我", "請你", "follow up") {
+		raw.openItems = appendUnique(raw.openItems, truncate(text, 180), 10)
+	}
+	if containsAny(lower, "決定", "改成", "選擇", "we will", "let's", "採用") {
+		raw.decisions = appendUnique(raw.decisions, truncate(text, 180), 10)
+	}
+}
+
+// extractAssistantStyleSignals scores an assistant message for tone markers,
+// signature terms, and collects high-scoring quotes.
+func extractAssistantStyleSignals(raw *digestRawData, lower, text string, styleLexicon []string) {
+	score := 0
+	if containsAny(lower, "請", "必須", "應該", "務必", "must", "should") {
+		raw.styleScores.directive += 2
+		raw.styleMarkers["directive"] = true
+		score += 2
+	}
+	if containsAny(lower, "愚", "蠢", "廢", "垃圾", "trash", "idiot", "stupid", "useless", "白痴", "笨") {
+		raw.styleScores.critical += 3
+		raw.styleScores.irritated += 2
+		raw.styleMarkers["abrasive"] = true
+		score += 3
+	}
+	if containsAny(lower, "呵", "哈", "ma chérie", "呵呵", "哼") {
+		raw.styleScores.playful += 2
+		raw.styleMarkers["sarcastic"] = true
+		score += 2
+	}
+	if containsAny(lower, "因此", "所以", "故", "therefore", "hence", "請注意", "綜上") {
+		raw.styleScores.formal += 2
+		raw.styleScores.composed += 2
+		raw.styleMarkers["formal-logic"] = true
+		score += 2
+	}
+	if punctuationPattern.MatchString(text) {
+		raw.styleScores.critical++
+		raw.styleScores.irritated++
+		raw.styleMarkers["emphatic-punctuation"] = true
+		score++
+	}
+	for _, term := range styleLexicon {
+		if term == "" {
+			continue
 		}
-		if containsAny(lower, "愚", "蠢", "廢", "垃圾", "trash", "idiot", "stupid", "useless", "白痴", "笨") {
-			criticalScore += 3
-			irritatedScore += 2
-			styleMarkersSet["abrasive"] = true
+		if strings.Contains(lower, strings.ToLower(term)) {
+			raw.signatureHit[term] = true
 			score += 3
 		}
-		if containsAny(lower, "呵", "哈", "ma chérie", "呵呵", "哼") {
-			playfulScore += 2
-			styleMarkersSet["sarcastic"] = true
-			score += 2
-		}
-		if containsAny(lower, "因此", "所以", "故", "therefore", "hence", "請注意", "綜上") {
-			formalScore += 2
-			composedScore += 2
-			styleMarkersSet["formal-logic"] = true
-			score += 2
-		}
-		if punctuationPattern.MatchString(text) {
-			criticalScore++
-			irritatedScore++
-			styleMarkersSet["emphatic-punctuation"] = true
-			score++
-		}
-		for _, term := range styleLexicon {
-			if term == "" {
-				continue
-			}
-			if strings.Contains(lower, strings.ToLower(term)) {
-				signatureSet[term] = true
-				score += 3
-			}
-		}
-		if containsAny(lower, "冷靜", "計算", "理性", "analysis", "calculating", "logic") {
-			composedScore += 2
-			coldScore++
-		}
-		if containsAny(lower, "命令", "立刻", "現在", "馬上") {
-			directiveScore++
-			coldScore++
-		}
-		if containsAny(lower, "煩", "受不了", "氣死", "崩潰") {
-			irritatedScore += 2
-		}
-		if containsAny(lower, "冷淡", "無聊", "毫無意義", "浪費時間") {
-			coldScore += 2
-		}
-
-		if score > 0 {
-			quotes = append(quotes, scoredQuote{
-				text:  truncate(text, 220),
-				score: score,
-			})
-		}
+	}
+	if containsAny(lower, "冷靜", "計算", "理性", "analysis", "calculating", "logic") {
+		raw.styleScores.composed += 2
+		raw.styleScores.cold++
+	}
+	if containsAny(lower, "命令", "立刻", "現在", "馬上") {
+		raw.styleScores.directive++
+		raw.styleScores.cold++
+	}
+	if containsAny(lower, "煩", "受不了", "氣死", "崩潰") {
+		raw.styleScores.irritated += 2
+	}
+	if containsAny(lower, "冷淡", "無聊", "毫無意義", "浪費時間") {
+		raw.styleScores.cold += 2
 	}
 
-	if len(summaryLines) == 0 {
-		return domain.ConversationDigest{}, false
+	if score > 0 {
+		raw.quotes = append(raw.quotes, scoredQuote{
+			text:  truncate(text, 220),
+			score: score,
+		})
 	}
+}
 
-	keywords := extractTopKeywords(strings.Join(allText, "\n"), 16)
-	styleMarkers := make([]string, 0, len(styleMarkersSet))
-	for marker := range styleMarkersSet {
+// classifyConversationStyle processes raw style data into sorted markers,
+// ranked signature terms, top quotes, and classified attitude/tone.
+func classifyConversationStyle(raw digestRawData) digestStyleAnalysis {
+	styleMarkers := make([]string, 0, len(raw.styleMarkers))
+	for marker := range raw.styleMarkers {
 		styleMarkers = append(styleMarkers, marker)
 	}
 	sort.Strings(styleMarkers)
 
-	signatureTerms := make([]string, 0, len(signatureSet))
-	for term := range signatureSet {
+	signatureTerms := make([]string, 0, len(raw.signatureHit))
+	for term := range raw.signatureHit {
 		signatureTerms = append(signatureTerms, term)
 	}
 	sort.Slice(signatureTerms, func(i, j int) bool {
@@ -377,57 +436,76 @@ func (cm *ContextManager) buildDigest(messages []domain.Message, persona *domain
 		signatureTerms = signatureTerms[:8]
 	}
 
-	sort.Slice(quotes, func(i, j int) bool {
-		if quotes[i].score == quotes[j].score {
-			return len(quotes[i].text) > len(quotes[j].text)
+	sort.Slice(raw.quotes, func(i, j int) bool {
+		if raw.quotes[i].score == raw.quotes[j].score {
+			return len(raw.quotes[i].text) > len(raw.quotes[j].text)
 		}
-		return quotes[i].score > quotes[j].score
+		return raw.quotes[i].score > raw.quotes[j].score
 	})
 	styleQuotes := make([]string, 0, 3)
-	for _, q := range quotes {
+	for _, q := range raw.quotes {
 		styleQuotes = appendUnique(styleQuotes, q.text, 3)
 		if len(styleQuotes) >= 3 {
 			break
 		}
 	}
 
-	attitude := classifyAttitude(criticalScore, directiveScore, playfulScore, formalScore)
-	emotionalTone := classifyEmotionalTone(coldScore, irritatedScore, composedScore)
-	if attitude != "" || emotionalTone != "" {
-		prefix := "Style continuity:"
-		if attitude != "" && emotionalTone != "" {
-			prefix = fmt.Sprintf("Style continuity: %s / %s.", attitude, emotionalTone)
-		} else if attitude != "" {
-			prefix = fmt.Sprintf("Style continuity: %s.", attitude)
-		} else if emotionalTone != "" {
-			prefix = fmt.Sprintf("Style continuity: %s.", emotionalTone)
+	scores := raw.styleScores
+	return digestStyleAnalysis{
+		attitude:       classifyAttitude(scores.critical, scores.directive, scores.playful, scores.formal),
+		emotionalTone:  classifyEmotionalTone(scores.cold, scores.irritated, scores.composed),
+		styleMarkers:   styleMarkers,
+		signatureTerms: signatureTerms,
+		styleQuotes:    styleQuotes,
+	}
+}
+
+// formatDigestContent assembles extracted data and style analysis into the
+// final ConversationDigest, including metrics logging.
+func formatDigestContent(raw digestRawData, style digestStyleAnalysis) (domain.ConversationDigest, bool) {
+	summaryLines := raw.summaryLines
+
+	// Prepend style continuity note when attitude or emotional tone is detected.
+	if style.attitude != "" || style.emotionalTone != "" {
+		var prefix string
+		switch {
+		case style.attitude != "" && style.emotionalTone != "":
+			prefix = fmt.Sprintf("Style continuity: %s / %s.", style.attitude, style.emotionalTone)
+		case style.attitude != "":
+			prefix = fmt.Sprintf("Style continuity: %s.", style.attitude)
+		default:
+			prefix = fmt.Sprintf("Style continuity: %s.", style.emotionalTone)
 		}
 		summaryLines = append([]string{prefix + " Preserve tone and persona-specific stance."}, summaryLines...)
 	}
 
+	keywords := extractTopKeywords(strings.Join(raw.allText, "\n"), 16)
+
 	digest := domain.ConversationDigest{
 		ID:             fmt.Sprintf("digest-%d", time.Now().UnixNano()),
 		Summary:        strings.Join(summaryLines, "\n"),
-		Facts:          facts,
-		Preferences:    preferences,
-		OpenItems:      openItems,
-		Decisions:      decisions,
+		Facts:          raw.facts,
+		Preferences:    raw.preferences,
+		OpenItems:      raw.openItems,
+		Decisions:      raw.decisions,
 		Keywords:       keywords,
-		Attitude:       attitude,
-		EmotionalTone:  emotionalTone,
-		StyleMarkers:   styleMarkers,
-		SignatureTerms: signatureTerms,
-		StyleQuotes:    styleQuotes,
+		Attitude:       style.attitude,
+		EmotionalTone:  style.emotionalTone,
+		StyleMarkers:   style.styleMarkers,
+		SignatureTerms: style.signatureTerms,
+		StyleQuotes:    style.styleQuotes,
 		CreatedAt:      time.Now(),
 	}
-	if attitude != "" || emotionalTone != "" || len(styleMarkers) > 0 || len(signatureTerms) > 0 || len(styleQuotes) > 0 {
+
+	if style.attitude != "" || style.emotionalTone != "" || len(style.styleMarkers) > 0 || len(style.signatureTerms) > 0 || len(style.styleQuotes) > 0 {
 		count := atomic.AddUint64(&digestStyleFieldCount, 1)
 		logCtx.Logf("metric digest.style_fields_populated=%d", count)
 	}
-	if len(styleQuotes) > 0 {
-		count := atomic.AddUint64(&digestStyleQuoteCount, uint64(len(styleQuotes)))
+	if len(style.styleQuotes) > 0 {
+		count := atomic.AddUint64(&digestStyleQuoteCount, uint64(len(style.styleQuotes)))
 		logCtx.Logf("metric digest.style_quotes_count=%d", count)
 	}
+
 	return digest, true
 }
 

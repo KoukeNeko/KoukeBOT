@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -399,101 +398,6 @@ func scheduleToolResult(payload map[string]interface{}, isError bool) domain.Too
 	}
 }
 
-func readBool(input map[string]interface{}, key string) bool {
-	if input == nil {
-		return false
-	}
-	raw, ok := input[key]
-	if !ok {
-		return false
-	}
-	switch v := raw.(type) {
-	case bool:
-		return v
-	case string:
-		return strings.EqualFold(strings.TrimSpace(v), "true")
-	default:
-		return false
-	}
-}
-
-func readInt64(input map[string]interface{}, key string) (int64, error) {
-	if input == nil {
-		return 0, fmt.Errorf("missing key")
-	}
-	raw, ok := input[key]
-	if !ok {
-		return 0, fmt.Errorf("missing key")
-	}
-	switch v := raw.(type) {
-	case int:
-		return int64(v), nil
-	case int32:
-		return int64(v), nil
-	case int64:
-		return v, nil
-	case float64:
-		return int64(v), nil
-	case json.Number:
-		n, err := v.Int64()
-		if err != nil {
-			return 0, err
-		}
-		return n, nil
-	case string:
-		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-		if err != nil {
-			return 0, err
-		}
-		return n, nil
-	default:
-		return 0, fmt.Errorf("invalid number type")
-	}
-}
-
-func parseStringSlice(raw interface{}) []string {
-	switch v := raw.(type) {
-	case []string:
-		return uniqueNonEmptyStrings(v)
-	case []interface{}:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			out = append(out, strings.TrimSpace(fmt.Sprintf("%v", item)))
-		}
-		return uniqueNonEmptyStrings(out)
-	default:
-		return nil
-	}
-}
-
-func uniqueNonEmptyStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
 func actionName(name string) string {
 	return strings.TrimSpace(name)
-}
-
-func readMapString(m map[string]interface{}, key string) string {
-	if m == nil {
-		return ""
-	}
-	raw, ok := m[key]
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprintf("%v", raw))
 }

@@ -297,6 +297,34 @@ func derivePublicBaseURL(r *http.Request) string {
 	return strings.TrimSuffix(fmt.Sprintf("%s://%s", proto, host), "/")
 }
 
+
+// finalizeTokenImport resolves the model from settings, creates the OAuth
+// provider, adds it to the pool, and persists the provider selection.
+// Both OAuthImportPastedToken and OAuthImportCLIToken call this after
+// their unique import logic resolves providerID and sets tokenData.ProviderID.
+func (h *Handlers) finalizeTokenImport(tokenData *llm.OAuthTokenData, providerID string) error {
+	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
+	loadedSettings := h.loadSettingsOrDefault()
+	endpointPolicy := llm.ResolveEndpointPolicy(loadedSettings.EndpointPolicy)
+	if loadedSettings.ProviderID != "" {
+		settingProviderID, settingModel, _ := llm.ResolveProviderAndModel(loadedSettings.ProviderID, loadedSettings.ModelID, loadedSettings.GeminiModel)
+		if settingProviderID == providerID && settingModel != "" {
+			model = settingModel
+		}
+	}
+
+	provider, err := llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
+	if err != nil {
+		return fmt.Errorf("provider creation: %w", err)
+	}
+
+	pool := h.ensureOAuthPool(loadedSettings, providerID, model)
+	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
+
+	h.persistOAuthProviderSelection(providerID)
+	return nil
+}
+
 // OAuthImportPastedToken accepts raw oauth_creds.json content pasted by the user.
 // This supports PaaS deployments where SSH is not available — user runs `gemini` locally
 // and pastes the token JSON.
@@ -330,29 +358,12 @@ func (h *Handlers) OAuthImportPastedToken(w http.ResponseWriter, r *http.Request
 	}
 	tokenData.ProviderID = providerID
 
-	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
-	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
-	loadedSettings := h.loadSettingsOrDefault()
-	endpointPolicy = llm.ResolveEndpointPolicy(loadedSettings.EndpointPolicy)
-	if loadedSettings.ProviderID != "" {
-		spid, smodel, _ := llm.ResolveProviderAndModel(loadedSettings.ProviderID, loadedSettings.ModelID, loadedSettings.GeminiModel)
-		if spid == providerID && smodel != "" {
-			model = smodel
-		}
-	}
-
-	provider, err := llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "provider creation: "+err.Error())
+	if err := h.finalizeTokenImport(tokenData, providerID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	pool := h.ensureOAuthPool(loadedSettings, providerID, model)
-	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
-	logAPI.Logf("Imported pasted token for %s (project: %s, pool size: %d)",
-		tokenData.Email, tokenData.ProjectID, pool.Size())
-
-	h.persistOAuthProviderSelection(providerID)
+	logAPI.Logf("Imported pasted token for %s (project: %s)", tokenData.Email, tokenData.ProjectID)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"email":         tokenData.Email,
@@ -381,29 +392,12 @@ func (h *Handlers) OAuthImportCLIToken(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenData.ProviderID = providerID
 
-	_, model := llm.SplitProviderModelID(llm.DefaultProviderModelID(providerID))
-	endpointPolicy := llm.EndpointPolicyPrimaryThenSandbox
-	loadedSettings := h.loadSettingsOrDefault()
-	endpointPolicy = llm.ResolveEndpointPolicy(loadedSettings.EndpointPolicy)
-	if loadedSettings.ProviderID != "" {
-		spid, smodel, _ := llm.ResolveProviderAndModel(loadedSettings.ProviderID, loadedSettings.ModelID, loadedSettings.GeminiModel)
-		if spid == providerID && smodel != "" {
-			model = smodel
-		}
-	}
-
-	provider, err := llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "provider creation: "+err.Error())
+	if err := h.finalizeTokenImport(tokenData, providerID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	pool := h.ensureOAuthPool(loadedSettings, providerID, model)
-	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
-	logAPI.Logf("Imported Gemini CLI token for %s (project: %s, pool size: %d)",
-		tokenData.Email, tokenData.ProjectID, pool.Size())
-
-	h.persistOAuthProviderSelection(providerID)
+	logAPI.Logf("Imported Gemini CLI token for %s (project: %s)", tokenData.Email, tokenData.ProjectID)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"email":         tokenData.Email,

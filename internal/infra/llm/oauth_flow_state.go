@@ -76,9 +76,18 @@ func (f *GeminiOAuthFlow) StartFlowWithProvider(clientID, clientSecret, mode, re
 		redir = strings.TrimSpace(redirectURL)
 	}
 
-	flowID := generateFlowID()
-	state := generateState()
-	verifier, _ := generatePKCE()
+	flowID, err := generateFlowID()
+	if err != nil {
+		return nil, fmt.Errorf("generate flow ID: %w", err)
+	}
+	state, err := generateState()
+	if err != nil {
+		return nil, fmt.Errorf("generate state: %w", err)
+	}
+	verifier, _, err := generatePKCE()
+	if err != nil {
+		return nil, fmt.Errorf("generate PKCE: %w", err)
+	}
 	now := time.Now()
 	flow := &oauthFlowState{
 		FlowID:       flowID,
