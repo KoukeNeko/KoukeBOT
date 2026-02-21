@@ -494,6 +494,9 @@ func (s *ChatService) persistToolLoopConversation(
 	outputCh chan<- llm.StreamChunk,
 	state *toolLoopState,
 ) {
+	reqCtx, _ := llm.GetRequestContext(ctx)
+	senderID := reqCtx.UserID
+
 	userContent := s.encodeUserMessageForStorage(ctx, conv.ChannelID, personaID, messageToStore, contextForLLM)
 	userDisplay := strings.TrimSpace(messageToStore)
 	if userDisplay == "" {
@@ -527,6 +530,7 @@ func (s *ChatService) persistToolLoopConversation(
 		} else {
 			conv.AppendUserMessageWithDisplay(userContent, userDisplay)
 		}
+		conv.SetLastMessageSenderID(senderID)
 		conv.AppendAssistantMessageWithDisplayAndRawViews(
 			assistantContent,
 			finalResponseWithAnnotation,
@@ -552,6 +556,7 @@ func (s *ChatService) persistToolLoopConversation(
 	} else {
 		conv.AppendUserMessageWithDisplay(userContent, userDisplay)
 	}
+	conv.SetLastMessageSenderID(senderID)
 	conv.AppendAssistantMessageWithDisplayAndRawViews(
 		assistantContent,
 		finalView.Display,

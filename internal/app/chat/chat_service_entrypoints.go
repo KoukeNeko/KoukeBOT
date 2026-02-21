@@ -44,6 +44,9 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	}
 	conv.CumulativeTokens = EstimateConversationContextTokensWithRecentCap(conv, keepRecentUserTurns)
 
+	reqCtx, _ := llm.GetRequestContext(ctx)
+	senderID := reqCtx.UserID
+
 	contextForLLM := s.encodeUserMessageForLLM(ctx, conv.ChannelID, resolvedPersonaID, userMessage)
 	conv.AppendUserMessage(contextForLLM)
 
@@ -77,6 +80,7 @@ func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, pers
 	userContent := s.encodeUserMessageForStorage(ctx, conv.ChannelID, resolvedPersonaID, userMessage, contextForLLM)
 	assistantContent := s.encodeAssistantMessageForStorage(ctx, conv.ChannelID, persona, resolvedPersonaID, view.Content)
 	conv.AppendUserMessageWithDisplay(userContent, userMessage)
+	conv.SetLastMessageSenderID(senderID)
 	conv.AppendAssistantMessageWithDisplayAndRawViews(assistantContent, view.Display, rawInput, rawInputHuman, view.RawOutput)
 	s.applyTokenAccounting(conv, resp.TokensUsed)
 

@@ -21,6 +21,7 @@ type ImageRef struct {
 // Message is a single turn in a conversation.
 type Message struct {
 	Role             Role       `json:"role"`
+	SenderID         string     `json:"sender_id,omitempty"`           // Discord user ID of the sender (empty for bot/synthetic messages)
 	Content          string     `json:"content"`
 	DisplayText      string     `json:"display_text,omitempty"`        // Full context for UI display (e.g., with channel history)
 	RawLLMInput      string     `json:"raw_llm_input,omitempty"`       // Raw prompt sent to LLM (for debugging/transparency)
@@ -154,6 +155,16 @@ func (c *Conversation) AppendAssistantMessageWithDisplayAndRawViews(content, dis
 		Timestamp:        time.Now(),
 	})
 	c.UpdatedAt = time.Now()
+}
+
+// SetLastMessageSenderID sets the SenderID on the most recently appended message.
+// Call this immediately after an Append*Message method to associate the message
+// with a specific Discord user. No-op if the conversation is empty or senderID is blank.
+func (c *Conversation) SetLastMessageSenderID(senderID string) {
+	if len(c.Messages) == 0 || senderID == "" {
+		return
+	}
+	c.Messages[len(c.Messages)-1].SenderID = senderID
 }
 
 // Context markers for channel history formatting.
