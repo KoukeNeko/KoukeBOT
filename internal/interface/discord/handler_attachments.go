@@ -56,6 +56,43 @@ func buildAttachmentPlaceholder(attachments []*discordgo.MessageAttachment) stri
 	return fmt.Sprintf("%s (%d %s)", tag, count, suffix)
 }
 
+// buildAttachmentNarration builds a user-facing text for attachment-only input
+// so the LLM can clearly identify who sent the image/file.
+func buildAttachmentNarration(author *discordgo.User, attachments []*discordgo.MessageAttachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+
+	sender := strings.TrimSpace(resolveSenderLabel(author))
+	if sender == "" {
+		sender = "使用者"
+	}
+
+	count := len(attachments)
+	allImages := true
+	for _, att := range attachments {
+		if !isImageAttachment(att) {
+			allImages = false
+			break
+		}
+	}
+
+	var action string
+	switch {
+	case allImages && count == 1:
+		action = "傳送了 1 張圖片"
+	case allImages && count > 1:
+		action = fmt.Sprintf("傳送了 %d 張圖片", count)
+	case count == 1:
+		action = "傳送了 1 個附件"
+	default:
+		action = fmt.Sprintf("傳送了 %d 個附件", count)
+	}
+
+	// Keep OpenClaw-style placeholder for compatibility while adding explicit sender narrative.
+	return fmt.Sprintf("%s %s。%s", sender, action, buildAttachmentPlaceholder(attachments))
+}
+
 // downloadImage downloads an image from a URL and returns it as ImageInput.
 func downloadImage(url string) (domain.ImageInput, error) {
 	resp, err := http.Get(url)

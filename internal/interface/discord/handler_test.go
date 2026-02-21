@@ -215,3 +215,76 @@ func TestCleanMentionRebuildsMentionsWhenContentEmpty(t *testing.T) {
 		t.Fatalf("bot mention should not be rebuilt, got: %q", got)
 	}
 }
+
+func TestFilterIncomingMessageInjectsAttachmentNarrationForMentionOnlyImage(t *testing.T) {
+	h := &Handler{stripLeadingBotMentionPrefix: false}
+	session := &discordgo.Session{
+		State: &discordgo.State{
+			Ready: discordgo.Ready{
+				User: &discordgo.User{ID: "bot-1"},
+			},
+		},
+	}
+	message := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			GuildID: "guild-1",
+			Content: "<@bot-1>",
+			Author: &discordgo.User{
+				ID:       "user-1",
+				Username: "alice",
+			},
+			Mentions: []*discordgo.User{
+				{ID: "bot-1"},
+			},
+			Attachments: []*discordgo.MessageAttachment{
+				{Filename: "photo.png", ContentType: "image/png"},
+			},
+		},
+	}
+
+	content, ok := h.filterIncomingMessage(session, message)
+	if !ok {
+		t.Fatal("expected mention-only image message to be accepted")
+	}
+	if !strings.Contains(content, "alice 傳送了 1 張圖片") {
+		t.Fatalf("expected sender narration for image-only input, got: %q", content)
+	}
+	if !strings.Contains(content, "<media:image> (1 image)") {
+		t.Fatalf("expected media placeholder in narration, got: %q", content)
+	}
+}
+
+func TestFilterIncomingMessageKeepsTextWhenMentionWithCaption(t *testing.T) {
+	h := &Handler{stripLeadingBotMentionPrefix: false}
+	session := &discordgo.Session{
+		State: &discordgo.State{
+			Ready: discordgo.Ready{
+				User: &discordgo.User{ID: "bot-1"},
+			},
+		},
+	}
+	message := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			GuildID: "guild-1",
+			Content: "<@bot-1> 這是圖片說明",
+			Author: &discordgo.User{
+				ID:       "user-1",
+				Username: "alice",
+			},
+			Mentions: []*discordgo.User{
+				{ID: "bot-1"},
+			},
+			Attachments: []*discordgo.MessageAttachment{
+				{Filename: "photo.png", ContentType: "image/png"},
+			},
+		},
+	}
+
+	content, ok := h.filterIncomingMessage(session, message)
+	if !ok {
+		t.Fatal("expected mention+caption image message to be accepted")
+	}
+	if content != "<@bot-1> 這是圖片說明" {
+		t.Fatalf("expected original text to be preserved, got: %q", content)
+	}
+}

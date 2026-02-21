@@ -20,8 +20,14 @@ func (h *Handler) filterIncomingMessage(s *discordgo.Session, m *discordgo.Messa
 	}
 
 	content := cleanMention(s, m, h.stripLeadingBotMentionPrefix)
-	if strings.TrimSpace(content) == "" && len(m.Attachments) > 0 {
-		content = buildAttachmentPlaceholder(m.Attachments)
+	if len(m.Attachments) > 0 {
+		// If the message is effectively empty after removing leading bot mentions
+		// (e.g. user only typed @bot and attached image), inject explicit narrative
+		// to avoid blending with prior text turns in LLM context.
+		contentWithoutBotPrefix := cleanMention(s, m, true)
+		if strings.TrimSpace(contentWithoutBotPrefix) == "" {
+			content = buildAttachmentNarration(m.Author, m.Attachments)
+		}
 	}
 	if strings.TrimSpace(content) == "" {
 		return "", false
