@@ -40,39 +40,15 @@
 The project follows a Clean Architecture layered design:
 
 ```mermaid
-block-beta
-  columns 1
-  block:entry["cmd/character/ — 進入點 / Entry point"]
-  end
-  block:boot["bootstrap/ — 依賴注入與組裝 / DI & wiring"]
-  end
-  block:iface["interface/ — 介面層 / Delivery layer"]
-    api["api/\nHTTP REST"]
-    discord_iface["discord/\nBot events"]
-  end
-  block:app["app/ — 應用層 / Application services"]
-    chat["chat/"]
-    persona["persona/"]
-    provider["provider/"]
-    scheduler["scheduler/"]
-    tooling["tooling/"]
-  end
-  block:infra["infra/ — 基礎設施 / Infrastructure"]
-    llm["llm/"]
-    store["store/"]
-    discord_infra["discord/"]
-    search["search/"]
-    mcp["mcp/"]
-    tools["tools/"]
-  end
-  block:dom["domain/ — 領域模型 / Domain models"]
-  end
+graph TD
+  entry["<b>cmd/character/</b><br/>進入點 / Entry point"]
+  boot["<b>bootstrap/</b><br/>依賴注入與組裝 / DI & wiring"]
+  iface["<b>interface/</b><br/>介面層 / Delivery layer<br/><i>api/ · discord/</i>"]
+  app["<b>app/</b><br/>應用層 / Application services<br/><i>chat/ · persona/ · provider/ · scheduler/ · tooling/</i>"]
+  infra["<b>infra/</b><br/>基礎設施 / Infrastructure<br/><i>llm/ · store/ · discord/ · search/ · mcp/ · tools/</i>"]
+  dom["<b>domain/</b><br/>領域模型 / Domain models"]
 
-  entry --> boot
-  boot --> iface
-  iface --> app
-  app --> infra
-  infra --> dom
+  entry --> boot --> iface --> app --> infra --> dom
 ```
 
 **層級規則 / Layer rules**：上層可依賴下層，下層不得反向依賴上層。
@@ -85,23 +61,23 @@ End-to-end flow from user message to assistant response:
 
 ```mermaid
 flowchart TD
-  A["使用者訊息 / User Message\n(API or Discord)"] --> B["解析對話 + 人格\nResolve Conversation + Persona"]
-  B --> C{"需要記憶沖刷？\nMemory flush needed?"}
-  C -- "是 / Yes" --> D["沖刷記憶並壓縮\nFlush & compact memory"]
+  A["使用者訊息 / User Message<br/>(API or Discord)"] --> B["解析對話 + 人格<br/>Resolve Conversation + Persona"]
+  B --> C{"需要記憶沖刷？<br/>Memory flush needed?"}
+  C -- "是 / Yes" --> D["沖刷記憶並壓縮<br/>Flush & compact memory"]
   C -- "否 / No" --> E
-  D --> E["組裝提示詞\nContextAssembler.Assemble"]
-  E --> F["LLM 串流呼叫\nProvider StreamChat"]
-  F --> G{"有工具呼叫？\nTool calls?"}
-  G -- "否 / No" --> H["準備助理輸出\nPrepare assistant output"]
-  G -- "是 / Yes" --> I["工具防護檢查\nTool Guard filter"]
-  I --> J["執行工具\nExecute tools"]
-  J --> K["附加工具結果\nAppend tool results"]
+  D --> E["組裝提示詞<br/>ContextAssembler.Assemble"]
+  E --> F["LLM 串流呼叫<br/>Provider StreamChat"]
+  F --> G{"有工具呼叫？<br/>Tool calls?"}
+  G -- "否 / No" --> H["準備助理輸出<br/>Prepare assistant output"]
+  G -- "是 / Yes" --> I["工具防護檢查<br/>Tool Guard filter"]
+  I --> J["執行工具<br/>Execute tools"]
+  J --> K["附加工具結果<br/>Append tool results"]
   K --> E
-  I --> L{"觸發防護？\nGuard triggered?"}
-  L -- "是 / Yes" --> M["強制最終回應\nForced final answer\n(ToolMode=disabled)"]
+  I --> L{"觸發防護？<br/>Guard triggered?"}
+  L -- "是 / Yes" --> M["強制最終回應<br/>Forced final answer<br/>(ToolMode=disabled)"]
   M --> H
-  H --> N["持久化對話\nPersist conversation"]
-  N --> O["回傳串流完成\nEmit stream done"]
+  H --> N["持久化對話<br/>Persist conversation"]
+  N --> O["回傳串流完成<br/>Emit stream done"]
 ```
 
 ### 供應商容錯 / Provider Fallback
@@ -111,11 +87,11 @@ Automatic failover when the primary model encounters an error:
 
 ```mermaid
 flowchart LR
-  P["主要模型 / Primary Model"] -->|"失敗 / Fail"| F1["備援模型 1\nFallback Model 1"]
-  F1 -->|"失敗 / Fail"| F2["備援模型 2\nFallback Model 2"]
-  F2 -->|"失敗 / Fail"| F3["備援模型 3\nFallback Model 3"]
-  F3 -->|"失敗 / Fail"| ERR["回傳錯誤\nReturn error"]
-  P -->|"成功 / OK"| OK["回應\nResponse"]
+  P["主要模型<br/>Primary Model"] -->|"失敗 / Fail"| F1["備援模型 1<br/>Fallback Model 1"]
+  F1 -->|"失敗 / Fail"| F2["備援模型 2<br/>Fallback Model 2"]
+  F2 -->|"失敗 / Fail"| F3["備援模型 3<br/>Fallback Model 3"]
+  F3 -->|"失敗 / Fail"| ERR["回傳錯誤<br/>Return error"]
+  P -->|"成功 / OK"| OK["回應<br/>Response"]
   F1 -->|"成功 / OK"| OK
   F2 -->|"成功 / OK"| OK
   F3 -->|"成功 / OK"| OK
@@ -401,13 +377,13 @@ Multi-layer guards to prevent infinite tool-calling loops:
 
 ```mermaid
 flowchart TD
-  TC["LLM 請求工具呼叫\nLLM requests tool call"] --> DUP{"重複呼叫？\nDuplicate call?"}
-  DUP -- "是 / Yes" --> BLK1["封鎖（MCP 例外）\nBlock (MCP exempt)"]
-  DUP -- "否 / No" --> LIM{"超過單工具上限？\nPer-tool limit hit?"}
-  LIM -- "是 / Yes" --> BLK2["封鎖\nBlock"]
-  LIM -- "否 / No" --> RND{"超過最大回合數？\nMax rounds reached?"}
-  RND -- "是 / Yes" --> FFA["強制最終回應\nForced final answer"]
-  RND -- "否 / No" --> EXEC["執行工具\nExecute tool"]
+  TC["LLM 請求工具呼叫<br/>LLM requests tool call"] --> DUP{"重複呼叫？<br/>Duplicate call?"}
+  DUP -- "是 / Yes" --> BLK1["封鎖（MCP 例外）<br/>Block (MCP exempt)"]
+  DUP -- "否 / No" --> LIM{"超過單工具上限？<br/>Per-tool limit hit?"}
+  LIM -- "是 / Yes" --> BLK2["封鎖<br/>Block"]
+  LIM -- "否 / No" --> RND{"超過最大回合數？<br/>Max rounds reached?"}
+  RND -- "是 / Yes" --> FFA["強制最終回應<br/>Forced final answer"]
+  RND -- "否 / No" --> EXEC["執行工具<br/>Execute tool"]
 ```
 
 ### MCP 工具 / MCP Tools
