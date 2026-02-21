@@ -29,6 +29,10 @@ func (s *ChatService) HandleMessageByConversationID(ctx context.Context, convers
 	return s.handleMessageInternal(ctx, "", "", conversationID, userMessage)
 }
 
+// handleMessageInternal is the shared implementation for synchronous (non-streaming) chat.
+// It resolves the conversation, assembles the prompt, calls the LLM, and persists the result.
+// Callers choose between channel+persona routing or direct conversation-ID routing
+// by leaving the unused identifiers empty.
 func (s *ChatService) handleMessageInternal(ctx context.Context, channelID, personaID, conversationID, userMessage string) (string, error) {
 	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, conversationID)
 	if err != nil {
@@ -103,6 +107,9 @@ func (s *ChatService) HandleMessageStreamWithContext(ctx context.Context, channe
 	return s.handleMessageStreamWithContextInternal(ctx, channelID, personaID, "", contextForLLM, messageToStore)
 }
 
+// handleMessageStreamWithContextInternal is the shared implementation for text-only streaming chat.
+// It resolves the conversation, runs retention and memory flush preflight, assembles the prompt,
+// opens a streaming LLM call, and hands off to the tool-loop runner for continuation.
 func (s *ChatService) handleMessageStreamWithContextInternal(ctx context.Context, channelID, personaID, conversationID, contextForLLM, messageToStore string) (<-chan llm.StreamChunk, error) {
 	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, conversationID)
 	if err != nil {
@@ -174,6 +181,10 @@ func (s *ChatService) HandleMessageStreamWithImagesAndContext(ctx context.Contex
 	return s.handleMessageStreamWithImagesAndContextInternal(ctx, channelID, personaID, "", contextForLLM, messageToStore, images, historyEntries)
 }
 
+// handleMessageStreamWithImagesAndContextInternal is the shared implementation for multimodal streaming chat.
+// It follows the same resolve → retention → flush → assemble flow as the text-only variant,
+// but additionally persists direct attachment images and delegates to the multimodal runner
+// so that image data is included in the LLM request.
 func (s *ChatService) handleMessageStreamWithImagesAndContextInternal(ctx context.Context, channelID, personaID, conversationID, contextForLLM, messageToStore string, images []domain.ImageInput, historyEntries []domain.ChannelHistoryEntry) (<-chan llm.StreamChunk, error) {
 	conv, persona, resolvedPersonaID, err := s.resolveConversationAndPersona(ctx, channelID, personaID, conversationID)
 	if err != nil {
@@ -335,6 +346,9 @@ func (s *ChatService) saveDirectAttachmentImages(images []domain.ImageInput) []d
 	return refs
 }
 
+// preflightConversationRetention compacts the conversation history before a new LLM call.
+// It removes older turns beyond keepRecentUserTurns, folds them into context digests,
+// and persists the trimmed conversation. Returns nil (no-op) when no compaction is needed.
 func (s *ChatService) preflightConversationRetention(
 	ctx context.Context,
 	conv *domain.Conversation,
