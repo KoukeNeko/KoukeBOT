@@ -7,86 +7,156 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 )
 
-// newMCPTestSSEServer creates a mock MCP server that implements the Legacy SSE
-// transport: GET /sse returns an SSE endpoint event, POST /messages/ handles
-// JSON-RPC requests.
-func newMCPTestSSEServer(t *testing.T, tools []map[string]interface{}) *httptest.Server {
-	t.Helper()
+// sseTestServer simulates a Legacy SSE MCP server:
+//   - GET /sse: persistent SSE stream, first sends "endpoint", then RPC responses
+//   - POST /messages/: receives JSON-RPC, responds 202, pushes response to the SSE stream
+type sseTestServer struct {
+	tools []map[string]interface{}
 
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mu       sync.Mutex
+	// Each SSE client gets its own response channel keyed by session ID.
+	sessions map[string]chan []byte
+}
+
+func newSSETestServer(tools []map[string]interface{}) *sseTestServer {
+	return &sseTestServer{
+		tools:    tools,
+		sessions: make(map[string]chan []byte),
+	}
+}
+
+func (s *sseTestServer) getResponseChan(sessionID string) chan []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.sessions[sessionID]
+	if !ok {
+		ch = make(chan []byte, 32)
+		s.sessions[sessionID] = ch
+	}
+	return ch
+}
+
+func (s *sseTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/sse":
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-store")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "event: endpoint\ndata: /messages/?session_id=test-session\n\n")
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-
+			s.handleSSEStream(w, r)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/messages/"):
-			defer r.Body.Close()
-			var req rpcRequestEnvelope
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			switch req.Method {
-			case "initialize":
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req.ID,
-					"result": map[string]interface{}{
-						"protocolVersion": "2025-06-18",
-						"capabilities": map[string]interface{}{
-							"tools": map[string]interface{}{"listChanged": true},
-						},
-						"serverInfo": map[string]interface{}{
-							"name":    "test-sse-mcp",
-							"version": "0.1.0",
-						},
-					},
-				})
-			case "notifications/initialized":
-				w.WriteHeader(http.StatusAccepted)
-			case "tools/list":
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req.ID,
-					"result": map[string]interface{}{
-						"tools": tools,
-					},
-				})
-			case "tools/call":
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req.ID,
-					"result": map[string]interface{}{
-						"content": []map[string]interface{}{
-							{"type": "text", "text": "tool result ok"},
-						},
-					},
-				})
-			default:
-				http.Error(w, "unknown method", http.StatusBadRequest)
-			}
-
+			s.handleMessage(w, r)
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
-	}))
+	})
 }
 
-func TestSSEHandshakeSuccess(t *testing.T) {
+func (s *sseTestServer) handleSSEStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	sessionID := fmt.Sprintf("test-%d", time.Now().UnixNano())
+	responseChan := s.getResponseChan(sessionID)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+
+	// Send the endpoint event.
+	fmt.Fprintf(w, "event: endpoint\ndata: /messages/?session_id=%s\n\n", sessionID)
+	flusher.Flush()
+
+	// Forward responses from the channel to the SSE stream.
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case data, ok := <-responseChan:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(data))
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *sseTestServer) handleMessage(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	sessionID := r.URL.Query().Get("session_id")
+	responseChan := s.getResponseChan(sessionID)
+
+	var req rpcRequestEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Accept the request with 202.
+	w.WriteHeader(http.StatusAccepted)
+
+	// Build the JSON-RPC response and push it to the SSE stream.
+	var result interface{}
+	switch req.Method {
+	case "initialize":
+		result = map[string]interface{}{
+			"protocolVersion": "2025-06-18",
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{"listChanged": true},
+			},
+			"serverInfo": map[string]interface{}{
+				"name":    "test-sse-mcp",
+				"version": "0.1.0",
+			},
+		}
+	case "notifications/initialized":
+		// No response for notifications.
+		return
+	case "tools/list":
+		result = map[string]interface{}{
+			"tools": s.tools,
+		}
+	case "tools/call":
+		result = map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": "tool result ok"},
+			},
+		}
+	default:
+		errResp, _ := json.Marshal(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      req.ID,
+			"error":   map[string]interface{}{"code": -32601, "message": "method not found"},
+		})
+		responseChan <- errResp
+		return
+	}
+
+	resp, _ := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      req.ID,
+		"result":  result,
+	})
+	responseChan <- resp
+}
+
+func newMCPTestSSEServer(t *testing.T, tools []map[string]interface{}) *httptest.Server {
+	t.Helper()
+	srv := newSSETestServer(tools)
+	return httptest.NewServer(srv.handler())
+}
+
+func TestSSEConnectSuccess(t *testing.T) {
 	server := newMCPTestSSEServer(t, nil)
 	defer server.Close()
 
@@ -94,23 +164,24 @@ func TestSSEHandshakeSuccess(t *testing.T) {
 		ID:  "test-sse",
 		URL: server.URL + "/sse",
 	}, false)
+	defer session.close()
 
-	if err := session.handshake(context.Background()); err != nil {
-		t.Fatalf("handshake failed: %v", err)
+	if err := session.connect(context.Background()); err != nil {
+		t.Fatalf("connect failed: %v", err)
 	}
 
-	expected := server.URL + "/messages/?session_id=test-session"
-	if session.messageURL != expected {
-		t.Fatalf("messageURL = %q, want %q", session.messageURL, expected)
+	if !strings.HasPrefix(session.messageURL, server.URL+"/messages/") {
+		t.Fatalf("messageURL = %q, want prefix %q", session.messageURL, server.URL+"/messages/")
 	}
 }
 
-func TestSSEHandshakeNoEndpointEvent(t *testing.T) {
-	// Server that returns SSE but no "endpoint" event.
+func TestSSEConnectNoEndpointEvent(t *testing.T) {
+	// Server that returns SSE but no "endpoint" event, then closes.
 	noEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "event: ping\ndata: keepalive\n\n")
+		// Close immediately — no endpoint event.
 	}))
 	defer noEndpoint.Close()
 
@@ -118,17 +189,18 @@ func TestSSEHandshakeNoEndpointEvent(t *testing.T) {
 		ID:  "test-no-endpoint",
 		URL: noEndpoint.URL + "/sse",
 	}, false)
+	defer session.close()
 
-	err := session.handshake(context.Background())
+	err := session.connect(context.Background())
 	if err == nil {
-		t.Fatal("expected handshake error, got nil")
+		t.Fatal("expected connect error, got nil")
 	}
 	if !strings.Contains(err.Error(), "no endpoint event") {
 		t.Fatalf("expected 'no endpoint event' error, got: %v", err)
 	}
 }
 
-func TestSSEHandshakeRelativePathResolution(t *testing.T) {
+func TestSSEResolveEndpointURL(t *testing.T) {
 	tests := []struct {
 		baseURL      string
 		endpointPath string
