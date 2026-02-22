@@ -20,6 +20,7 @@ type messageSender interface {
 	SendMessageWithReturn(channelID, content string) (*discordgo.Message, error)
 	SendMessageReply(channelID, content, replyToMessageID string) (*discordgo.Message, error)
 	SendImageEmbed(channelID, imageURL string) error
+	SendImageAttachment(channelID, imageURL string) error
 	EditMessage(channelID, messageID, newContent string) error
 }
 
@@ -429,10 +430,13 @@ func (p *discordStreamPresenter) sendImagePreviewLinks(content string) {
 	for i := 0; i < count; i++ {
 		url := urls[i]
 		if err := p.sender.SendImageEmbed(p.channelID, url); err != nil {
-			logHandler.Warnf("send image embed failed [%s]: idx=%d err=%v (fallback to plain URL)", p.channelID, i, err)
-			// Fallback: send pure URL to at least give Discord unfurl a chance.
-			if sendErr := p.sender.SendMessage(p.channelID, url); sendErr != nil {
-				logHandler.Errorf("send image preview link failed [%s]: idx=%d err=%v", p.channelID, i, sendErr)
+			logHandler.Warnf("send image embed failed [%s]: idx=%d err=%v (fallback to attachment)", p.channelID, i, err)
+			if attachErr := p.sender.SendImageAttachment(p.channelID, url); attachErr != nil {
+				logHandler.Warnf("send image attachment failed [%s]: idx=%d err=%v (fallback to plain URL)", p.channelID, i, attachErr)
+				// Last fallback: pure URL to at least give Discord unfurl a chance.
+				if sendErr := p.sender.SendMessage(p.channelID, url); sendErr != nil {
+					logHandler.Errorf("send image preview link failed [%s]: idx=%d err=%v", p.channelID, i, sendErr)
+				}
 			}
 		}
 	}

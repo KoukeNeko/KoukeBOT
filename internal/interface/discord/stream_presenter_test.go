@@ -195,7 +195,7 @@ func TestDiscordStreamPresenterSendFinalDoesNotSendPreviewWhenNoImageURL(t *test
 	}
 }
 
-func TestDiscordStreamPresenterSendFinalFallsBackToPlainURLWhenEmbedFails(t *testing.T) {
+func TestDiscordStreamPresenterSendFinalFallsBackToAttachmentWhenEmbedFails(t *testing.T) {
 	sender := &fakeMessageSender{embedErr: errors.New("embed failed")}
 	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
 	presenter.fullResponse.WriteString("Generated image:\nhttps://sd_img.koukeneko.cafe/outputs/a.png")
@@ -204,6 +204,33 @@ func TestDiscordStreamPresenterSendFinalFallsBackToPlainURLWhenEmbedFails(t *tes
 
 	if len(sender.imageEmbeds) != 0 {
 		t.Fatalf("preview embeds = %d, want 0", len(sender.imageEmbeds))
+	}
+	if len(sender.imageAttachments) != 1 {
+		t.Fatalf("fallback attachment sends = %d, want 1", len(sender.imageAttachments))
+	}
+	if sender.imageAttachments[0] != "https://sd_img.koukeneko.cafe/outputs/a.png" {
+		t.Fatalf("fallback attachment URL = %q", sender.imageAttachments[0])
+	}
+	if len(sender.sendContents) != 0 {
+		t.Fatalf("fallback plain URL sends = %d, want 0", len(sender.sendContents))
+	}
+}
+
+func TestDiscordStreamPresenterSendFinalFallsBackToPlainURLWhenEmbedAndAttachmentFail(t *testing.T) {
+	sender := &fakeMessageSender{
+		embedErr:  errors.New("embed failed"),
+		attachErr: errors.New("attach failed"),
+	}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+	presenter.fullResponse.WriteString("Generated image:\nhttps://sd_img.koukeneko.cafe/outputs/a.png")
+
+	presenter.sendFinal()
+
+	if len(sender.imageEmbeds) != 0 {
+		t.Fatalf("preview embeds = %d, want 0", len(sender.imageEmbeds))
+	}
+	if len(sender.imageAttachments) != 0 {
+		t.Fatalf("attachment sends = %d, want 0", len(sender.imageAttachments))
 	}
 	if len(sender.sendContents) != 1 {
 		t.Fatalf("fallback plain URL sends = %d, want 1", len(sender.sendContents))
@@ -219,12 +246,14 @@ type fakeMessageSender struct {
 	sendWithReturnErr error
 	replyErr          error
 	embedErr          error
+	attachErr         error
 
 	editCalls              int
 	sendContents           []string
 	sendWithReturnContents []string
 	replyContents          []string
 	imageEmbeds            []string
+	imageAttachments       []string
 	nextID                 int
 }
 
@@ -259,6 +288,14 @@ func (f *fakeMessageSender) SendImageEmbed(_ string, imageURL string) error {
 		return f.embedErr
 	}
 	f.imageEmbeds = append(f.imageEmbeds, imageURL)
+	return nil
+}
+
+func (f *fakeMessageSender) SendImageAttachment(_ string, imageURL string) error {
+	if f.attachErr != nil {
+		return f.attachErr
+	}
+	f.imageAttachments = append(f.imageAttachments, imageURL)
 	return nil
 }
 

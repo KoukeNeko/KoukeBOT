@@ -1,8 +1,14 @@
 package discord
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"net/http"
+	neturl "net/url"
+	"path"
 	"strings"
+	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/bwmarrin/discordgo"
@@ -156,6 +162,60 @@ func (b *Bot) SendImageEmbed(channelID, imageURL string) error {
 		},
 	})
 	return err
+}
+
+// SendImageAttachment downloads an image and uploads it as a Discord attachment.
+// This is used when embed URL validation fails (e.g., non-standard hostnames).
+func (b *Bot) SendImageAttachment(channelID, imageURL string) error {
+	imageURL = strings.TrimSpace(imageURL)
+	if imageURL == "" {
+		return fmt.Errorf("image URL is empty")
+	}
+	if !strings.HasPrefix(strings.ToLower(imageURL), "http://") && !strings.HasPrefix(strings.ToLower(imageURL), "https://") {
+		return fmt.Errorf("image URL must start with http:// or https://")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
+	if err != nil {
+		return fmt.Errorf("build image request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download image: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("download image: status %s", resp.Status)
+	}
+
+	const maxImageBytes = 20 << 20 // 20 MiB
+	limited := io.LimitReader(resp.Body, maxImageBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return fmt.Errorf("read image body: %w", err)
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("download image: empty body")
+	}
+	if len(data) > maxImageBytes {
+		return fmt.Errorf("download image: too large (%d bytes)", len(data))
+	}
+
+	filename := "generated-image.png"
+	if parsed, parseErr := neturl.Parse(imageURL); parseErr == nil {
+		base := strings.TrimSpace(path.Base(parsed.Path))
+		if base != "" && base != "." && base != "/" {
+			filename = base
+		}
+	}
+
+	_, err = b.session.ChannelFileSendWithMessage(channelID, "", filename, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("upload image attachment: %w", err)
+	}
+	return nil
 }
 
 // EditMessage edits an existing message.
