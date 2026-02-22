@@ -231,6 +231,8 @@ func (m *Manager) CallTool(ctx context.Context, serverID, toolName string, input
 		content, isError, err = runStdioCallTool(callCtx, server, toolName, input, verbose)
 	case TransportHTTP:
 		content, isError, err = runHTTPCallTool(callCtx, m.httpClient, server, toolName, input, verbose)
+	case TransportSSE:
+		content, isError, err = runSSECallTool(callCtx, m.httpClient, server, toolName, input, verbose)
 	default:
 		err = fmt.Errorf("unsupported MCP transport: %s", server.Transport)
 	}
@@ -302,6 +304,8 @@ func (m *Manager) discoverWithServer(ctx context.Context, server config.MCPServe
 		return runStdioListTools(ctx, server, verbose)
 	case TransportHTTP:
 		return runHTTPListTools(ctx, m.httpClient, server, verbose)
+	case TransportSSE:
+		return runSSEListTools(ctx, m.httpClient, server, verbose)
 	default:
 		return nil, fmt.Errorf("unsupported MCP transport: %s", server.Transport)
 	}

@@ -155,7 +155,7 @@ type MCPServerSetting struct {
 	ID            string            `json:"id"`
 	Name          string            `json:"name"`
 	Enabled       bool              `json:"enabled"`
-	Transport     string            `json:"transport"` // "stdio" | "http"
+	Transport     string            `json:"transport"` // "stdio" | "http" | "sse"
 	Command       string            `json:"command"`
 	Args          []string          `json:"args"`
 	Env           map[string]string `json:"env"`

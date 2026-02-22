@@ -50,12 +50,12 @@ func validateMCPServerSetting(server config.MCPServerSetting) error {
 		if strings.TrimSpace(server.Command) == "" {
 			return fmt.Errorf("mcp server %s command is required for stdio transport", id)
 		}
-	case mcpTransportHTTP:
+	case mcpTransportHTTP, mcpTransportSSE:
 		if err := validateMCPHTTPURL(server.URL); err != nil {
 			return fmt.Errorf("mcp server %s url: %w", id, err)
 		}
 	default:
-		return fmt.Errorf("mcp server %s transport must be one of: stdio, http", id)
+		return fmt.Errorf("mcp server %s transport must be one of: stdio, http, sse", id)
 	}
 
 	for _, name := range server.ToolAllowlist {
@@ -77,13 +77,13 @@ func validateMCPHTTPURL(raw string) error {
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return fmt.Errorf("scheme must be https or http")
 	}
-	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
-		return fmt.Errorf("http is only allowed for localhost/loopback hosts")
+	if u.Scheme == "http" && !isPrivateOrLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("http is only allowed for localhost, loopback, or private network hosts")
 	}
 	return nil
 }
 
-func isLoopbackHost(host string) bool {
+func isPrivateOrLoopbackHost(host string) bool {
 	h := strings.ToLower(strings.TrimSpace(host))
 	if h == "localhost" {
 		return true
@@ -92,7 +92,10 @@ func isLoopbackHost(host string) bool {
 	if ip == nil {
 		return false
 	}
-	return ip.IsLoopback()
+	if ip.IsLoopback() {
+		return true
+	}
+	return ip.IsPrivate()
 }
 
 func resolveMaskedMCPServerSecrets(incoming *config.MCPServerSetting, existing config.MCPSettings) {
@@ -142,4 +145,5 @@ func mergeMaskedMap(incoming, existing map[string]string) map[string]string {
 const (
 	mcpTransportStdio = "stdio"
 	mcpTransportHTTP  = "http"
+	mcpTransportSSE   = "sse"
 )

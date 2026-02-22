@@ -10,6 +10,7 @@ import (
 const (
 	TransportStdio = "stdio"
 	TransportHTTP  = "http"
+	TransportSSE   = "sse" // Legacy SSE transport (MCP spec pre-2025-03-26)
 )
 
 var sanitizeToolNameRegexp = regexp.MustCompile(`[^a-zA-Z0-9_]`)
