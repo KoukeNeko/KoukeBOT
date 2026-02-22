@@ -62,6 +62,7 @@ function buildForm(mode: SettingsData['web_tool_mode'], serverID: string): Setti
           url: '',
           headers: {},
           tool_allowlist: [],
+          instructions: '',
         },
       ],
     },

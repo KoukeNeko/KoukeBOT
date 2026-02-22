@@ -69,6 +69,7 @@ const settingsFixture: SettingsData = {
         url: 'https://font.emtech.cc/mcp',
         headers: {},
         tool_allowlist: ['list-fonts'],
+        instructions: '',
       },
     ],
   },

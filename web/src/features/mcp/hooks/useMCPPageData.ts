@@ -78,6 +78,7 @@ const managedPlaywrightServer: MCPServerData = {
   url: '',
   headers: {},
   tool_allowlist: [],
+  instructions: '',
 }
 
 function ensureManagedPlaywrightServer(settings: SettingsData): SettingsData {
