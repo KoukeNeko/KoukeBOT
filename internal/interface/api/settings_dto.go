@@ -140,6 +140,7 @@ type MCPServerResponse struct {
 	URL           string            `json:"url"`
 	Headers       map[string]string `json:"headers"`
 	ToolAllowlist []string          `json:"tool_allowlist"`
+	Instructions  string            `json:"instructions"`
 }
 
 type MCPSettingsUpdateRequest struct {
@@ -161,6 +162,7 @@ type MCPServerUpdateRequest struct {
 	URL           string            `json:"url"`
 	Headers       map[string]string `json:"headers"`
 	ToolAllowlist []string          `json:"tool_allowlist"`
+	Instructions  string            `json:"instructions"`
 }
 
 type ProviderStatusResponse struct {
@@ -199,6 +201,7 @@ func toMCPSettingsResponse(settings config.MCPSettings) MCPSettingsResponse {
 			URL:           server.URL,
 			Headers:       maskSecretMap(server.Headers),
 			ToolAllowlist: append([]string(nil), server.ToolAllowlist...),
+			Instructions:  server.Instructions,
 		})
 	}
 	return MCPSettingsResponse{

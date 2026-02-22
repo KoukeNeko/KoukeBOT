@@ -285,6 +285,7 @@ func convertMCPSettingsUpdate(req MCPSettingsUpdateRequest) config.MCPSettings {
 			URL:           server.URL,
 			Headers:       cloneStringMap(server.Headers),
 			ToolAllowlist: append([]string(nil), server.ToolAllowlist...),
+			Instructions:  server.Instructions,
 		})
 	}
 	return config.MCPSettings{
