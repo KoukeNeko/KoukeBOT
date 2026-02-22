@@ -2,6 +2,7 @@ package discord
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/logger"
 	"github.com/bwmarrin/discordgo"
@@ -139,6 +140,22 @@ func (b *Bot) SendMessageReply(channelID, content, replyToMessageID string) (*di
 			ChannelID: channelID,
 		},
 	})
+}
+
+// SendImageEmbed sends a message with an image embed.
+func (b *Bot) SendImageEmbed(channelID, imageURL string) error {
+	imageURL = strings.TrimSpace(imageURL)
+	if imageURL == "" {
+		return fmt.Errorf("image URL is empty")
+	}
+	_, err := b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Embeds: []*discordgo.MessageEmbed{
+			{
+				Image: &discordgo.MessageEmbedImage{URL: imageURL},
+			},
+		},
+	})
+	return err
 }
 
 // EditMessage edits an existing message.

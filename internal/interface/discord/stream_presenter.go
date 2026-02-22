@@ -3,6 +3,7 @@ package discord
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,10 +13,13 @@ import (
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
+var discordImageURLRegex = regexp.MustCompile(`(?i)https?://[^\s<>()"'` + "`" + `]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>()"'` + "`" + `]*)?`)
+
 type messageSender interface {
 	SendMessage(channelID, content string) error
 	SendMessageWithReturn(channelID, content string) (*discordgo.Message, error)
 	SendMessageReply(channelID, content, replyToMessageID string) (*discordgo.Message, error)
+	SendImageEmbed(channelID, imageURL string) error
 	EditMessage(channelID, messageID, newContent string) error
 }
 
@@ -319,6 +323,7 @@ func (p *discordStreamPresenter) sendFinal() {
 			)
 		}
 		p.sendContinuationSegments(segments)
+		p.sendImagePreviewLinks(finalContent)
 		return
 	}
 
@@ -327,6 +332,7 @@ func (p *discordStreamPresenter) sendFinal() {
 		return
 	}
 	p.sendContinuationSegments(segments)
+	p.sendImagePreviewLinks(finalContent)
 }
 
 func (p *discordStreamPresenter) usesReply() bool {
@@ -383,6 +389,53 @@ func normalizeDiscordToolLog(text string) string {
 	text = strings.ReplaceAll(text, "\n", `\n`)
 	text = strings.ReplaceAll(text, "\r", "")
 	return text
+}
+
+func extractDiscordImageURLs(text string) []string {
+	matches := discordImageURLRegex.FindAllString(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, m := range matches {
+		url := strings.TrimSpace(m)
+		if url == "" {
+			continue
+		}
+		if _, ok := seen[url]; ok {
+			continue
+		}
+		seen[url] = struct{}{}
+		out = append(out, url)
+	}
+	return out
+}
+
+func (p *discordStreamPresenter) sendImagePreviewLinks(content string) {
+	if p.sender == nil {
+		return
+	}
+	urls := extractDiscordImageURLs(content)
+	if len(urls) == 0 {
+		return
+	}
+
+	const maxPreviewLinks = 4
+	count := len(urls)
+	if count > maxPreviewLinks {
+		count = maxPreviewLinks
+	}
+	for i := 0; i < count; i++ {
+		url := urls[i]
+		if err := p.sender.SendImageEmbed(p.channelID, url); err != nil {
+			logHandler.Warnf("send image embed failed [%s]: idx=%d err=%v (fallback to plain URL)", p.channelID, i, err)
+			// Fallback: send pure URL to at least give Discord unfurl a chance.
+			if sendErr := p.sender.SendMessage(p.channelID, url); sendErr != nil {
+				logHandler.Errorf("send image preview link failed [%s]: idx=%d err=%v", p.channelID, i, sendErr)
+			}
+		}
+	}
 }
 
 // splitMessage breaks a long message into chunks that fit Discord's character limit.

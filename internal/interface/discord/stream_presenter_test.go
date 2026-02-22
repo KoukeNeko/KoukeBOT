@@ -156,16 +156,75 @@ func TestDiscordStreamPresenterProcessChunkContinuesWhenEditFails(t *testing.T) 
 	}
 }
 
+func TestDiscordStreamPresenterSendFinalSendsPureImageURLPreviewMessage(t *testing.T) {
+	sender := &fakeMessageSender{}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+	presenter.fullResponse.WriteString("Generated image:\nhttps://sd_img.koukeneko.cafe/outputs/a.png")
+
+	presenter.sendFinal()
+
+	if len(sender.sendWithReturnContents) != 1 {
+		t.Fatalf("initial sends = %d, want 1", len(sender.sendWithReturnContents))
+	}
+	if len(sender.imageEmbeds) != 1 {
+		t.Fatalf("preview embeds = %d, want 1", len(sender.imageEmbeds))
+	}
+	if sender.imageEmbeds[0] != "https://sd_img.koukeneko.cafe/outputs/a.png" {
+		t.Fatalf("preview embed URL = %q", sender.imageEmbeds[0])
+	}
+	if len(sender.sendContents) != 0 {
+		t.Fatalf("fallback plain URL sends = %d, want 0", len(sender.sendContents))
+	}
+}
+
+func TestDiscordStreamPresenterSendFinalDoesNotSendPreviewWhenNoImageURL(t *testing.T) {
+	sender := &fakeMessageSender{}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+	presenter.fullResponse.WriteString("No image URL here.")
+
+	presenter.sendFinal()
+
+	if len(sender.sendWithReturnContents) != 1 {
+		t.Fatalf("initial sends = %d, want 1", len(sender.sendWithReturnContents))
+	}
+	if len(sender.imageEmbeds) != 0 {
+		t.Fatalf("preview embeds = %d, want 0", len(sender.imageEmbeds))
+	}
+	if len(sender.sendContents) != 0 {
+		t.Fatalf("preview sends = %d, want 0", len(sender.sendContents))
+	}
+}
+
+func TestDiscordStreamPresenterSendFinalFallsBackToPlainURLWhenEmbedFails(t *testing.T) {
+	sender := &fakeMessageSender{embedErr: errors.New("embed failed")}
+	presenter := newDiscordStreamPresenterWithSender(&Handler{}, "ch", "reply-1", sender)
+	presenter.fullResponse.WriteString("Generated image:\nhttps://sd_img.koukeneko.cafe/outputs/a.png")
+
+	presenter.sendFinal()
+
+	if len(sender.imageEmbeds) != 0 {
+		t.Fatalf("preview embeds = %d, want 0", len(sender.imageEmbeds))
+	}
+	if len(sender.sendContents) != 1 {
+		t.Fatalf("fallback plain URL sends = %d, want 1", len(sender.sendContents))
+	}
+	if sender.sendContents[0] != "https://sd_img.koukeneko.cafe/outputs/a.png" {
+		t.Fatalf("fallback preview URL = %q", sender.sendContents[0])
+	}
+}
+
 type fakeMessageSender struct {
 	editErr           error
 	sendErr           error
 	sendWithReturnErr error
 	replyErr          error
+	embedErr          error
 
 	editCalls              int
 	sendContents           []string
 	sendWithReturnContents []string
 	replyContents          []string
+	imageEmbeds            []string
 	nextID                 int
 }
 
@@ -193,6 +252,14 @@ func (f *fakeMessageSender) SendMessageReply(_ string, content, _ string) (*disc
 	f.replyContents = append(f.replyContents, content)
 	f.nextID++
 	return &discordgo.Message{ID: fmt.Sprintf("reply-%d", f.nextID)}, nil
+}
+
+func (f *fakeMessageSender) SendImageEmbed(_ string, imageURL string) error {
+	if f.embedErr != nil {
+		return f.embedErr
+	}
+	f.imageEmbeds = append(f.imageEmbeds, imageURL)
+	return nil
 }
 
 func (f *fakeMessageSender) EditMessage(_, _, _ string) error {
