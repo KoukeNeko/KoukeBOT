@@ -131,6 +131,8 @@ type ContextAssembler struct {
 	guard             PromptGuardPolicy
 	timezoneMu        sync.RWMutex
 	globalTimezone    string
+	mcpInstructionsMu sync.RWMutex
+	mcpInstructions   []string
 	lockInjectedCount uint64
 }
 
@@ -198,6 +200,28 @@ func (a *ContextAssembler) snapshotGlobalTimezone() string {
 // GetGlobalTimezone returns the currently configured global timezone for external use.
 func (a *ContextAssembler) GetGlobalTimezone() string {
 	return a.snapshotGlobalTimezone()
+}
+
+// UpdateMCPInstructions replaces the per-server MCP usage guidelines that
+// are injected into the system prompt.
+func (a *ContextAssembler) UpdateMCPInstructions(instructions []string) {
+	if a == nil {
+		return
+	}
+	a.mcpInstructionsMu.Lock()
+	a.mcpInstructions = instructions
+	a.mcpInstructionsMu.Unlock()
+}
+
+func (a *ContextAssembler) snapshotMCPInstructions() []string {
+	if a == nil {
+		return nil
+	}
+	a.mcpInstructionsMu.RLock()
+	out := make([]string, len(a.mcpInstructions))
+	copy(out, a.mcpInstructions)
+	a.mcpInstructionsMu.RUnlock()
+	return out
 }
 
 func (a *ContextAssembler) snapshotBudget() ContextBudgetManager {
@@ -294,6 +318,15 @@ func (a *ContextAssembler) renderSystemPrompt(persona *domain.PersonaModule, pol
 	buf.WriteString("Proactively use `file_write` to update user.md or memory/MEMORY.md when learning important information about the user.\n")
 	buf.WriteString("Use `file_append` to add notes to today's daily log throughout the conversation.\n")
 	buf.WriteString("When context approaches limits, you'll be prompted to consolidate memories before compaction.\n")
+
+	// Inject per-server MCP usage guidelines (configured via MCPServerSetting.Instructions).
+	if instructions := a.snapshotMCPInstructions(); len(instructions) > 0 {
+		buf.WriteString("\n### MCP Tool Guidelines\n\n")
+		for _, instr := range instructions {
+			buf.WriteString(instr)
+			buf.WriteString("\n\n")
+		}
+	}
 
 	if policy.TripletOutputEnabled {
 		buf.WriteString("\n")

@@ -162,6 +162,7 @@ type MCPServerSetting struct {
 	URL           string            `json:"url"`
 	Headers       map[string]string `json:"headers"`
 	ToolAllowlist []string          `json:"tool_allowlist"`
+	Instructions  string            `json:"instructions"` // per-server usage guidelines injected into system prompt
 }
 
 // SettingsStore reads and writes settings to a JSON file.
@@ -780,6 +781,7 @@ func normalizeMCPServers(servers []MCPServerSetting) []MCPServerSetting {
 		server.Env = normalizeStringMap(server.Env)
 		server.Headers = normalizeStringMap(server.Headers)
 		server.ToolAllowlist = normalizeStringSlice(server.ToolAllowlist)
+		server.Instructions = strings.TrimSpace(server.Instructions)
 		out = append(out, server)
 	}
 	return out

@@ -18,11 +18,12 @@ import (
 var logMCP = logger.New("MCP", logger.Cyan)
 
 type Manager struct {
-	mu         sync.RWMutex
-	settings   config.MCPSettings
-	servers    map[string]config.MCPServerSetting
-	statuses   map[string]ServerStatus
-	httpClient *http.Client
+	mu              sync.RWMutex
+	settings        config.MCPSettings
+	servers         map[string]config.MCPServerSetting
+	statuses        map[string]ServerStatus
+	mcpInstructions []string // per-server instructions collected during BuildTools
+	httpClient      *http.Client
 }
 
 func NewManager() *Manager {
@@ -60,6 +61,11 @@ func (m *Manager) Configure(settings config.MCPSettings) {
 
 func (m *Manager) BuildTools(ctx context.Context, settings config.MCPSettings) ([]domain.Tool, []string) {
 	m.Configure(settings)
+
+	m.mu.Lock()
+	m.mcpInstructions = nil
+	m.mu.Unlock()
+
 	if !settings.Enabled {
 		m.resetRegistrations()
 		return nil, nil
@@ -139,6 +145,17 @@ func (m *Manager) BuildTools(ctx context.Context, settings config.MCPSettings) (
 				len(registered),
 				autoRegisterAll,
 			)
+		}
+
+		// Collect per-server instructions for system prompt injection.
+		if instr := strings.TrimSpace(server.Instructions); instr != "" && len(registered) > 0 {
+			label := strings.TrimSpace(server.Name)
+			if label == "" {
+				label = server.ID
+			}
+			m.mu.Lock()
+			m.mcpInstructions = append(m.mcpInstructions, fmt.Sprintf("[%s]\n%s", label, instr))
+			m.mu.Unlock()
 		}
 
 		m.updateStatus(server.ID, func(status *ServerStatus) {
@@ -261,6 +278,19 @@ func (m *Manager) CallTool(ctx context.Context, serverID, toolName string, input
 		status.UpdatedAt = time.Now().UTC()
 	})
 	return content, isError, nil
+}
+
+// ServerInstructions returns per-server usage guidelines collected during
+// the most recent BuildTools call. Each entry is formatted as "[ServerName]\n<instructions>".
+func (m *Manager) ServerInstructions() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.mcpInstructions) == 0 {
+		return nil
+	}
+	out := make([]string, len(m.mcpInstructions))
+	copy(out, m.mcpInstructions)
+	return out
 }
 
 func (m *Manager) StatusSnapshot() []ServerStatus {

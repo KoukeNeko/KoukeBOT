@@ -126,6 +126,7 @@ func BuildRuntimeServices(
 		NegativeConstraintEnabled: settings.NegativeConstraintEnabled,
 		NegativeConstraintDefault: settings.NegativeConstraintDefault,
 	})
+	assembler.UpdateMCPInstructions(catalog.MCPInstructions)
 
 	chatService := app.NewChatService(
 		providerManager,

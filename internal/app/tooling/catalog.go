@@ -17,9 +17,10 @@ import (
 )
 
 type BuildCatalogResult struct {
-	Tools    []domain.Tool
-	Names    []string
-	Warnings []string
+	Tools           []domain.Tool
+	Names           []string
+	Warnings        []string
+	MCPInstructions []string // per-server usage guidelines for system prompt injection
 }
 
 func BuildCatalog(
@@ -99,6 +100,7 @@ func BuildCatalog(
 	)
 	names = append(names, "file_read, file_write, file_append (declarations only; runtime persona-bound execution enabled)")
 
+	var mcpInstructions []string
 	if mcpManager != nil {
 		mcpTools, mcpWarnings := mcpManager.BuildTools(ctx, effective.MCP)
 		tools = append(tools, mcpTools...)
@@ -106,6 +108,7 @@ func BuildCatalog(
 		for _, tool := range mcpTools {
 			names = append(names, tool.Name())
 		}
+		mcpInstructions = mcpManager.ServerInstructions()
 	} else if effective.MCP.Enabled {
 		warnings = append(warnings, "MCP is enabled but manager is not configured")
 	}
@@ -115,9 +118,10 @@ func BuildCatalog(
 	}
 
 	return BuildCatalogResult{
-		Tools:    tools,
-		Names:    names,
-		Warnings: warnings,
+		Tools:           tools,
+		Names:           names,
+		Warnings:        warnings,
+		MCPInstructions: mcpInstructions,
 	}
 }
 

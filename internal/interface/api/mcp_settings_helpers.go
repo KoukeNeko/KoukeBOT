@@ -63,6 +63,9 @@ func validateMCPServerSetting(server config.MCPServerSetting) error {
 			return fmt.Errorf("mcp server %s tool_allowlist contains empty name", id)
 		}
 	}
+	if len(server.Instructions) > 2000 {
+		return fmt.Errorf("mcp server %s instructions too long (%d chars, max 2000)", id, len(server.Instructions))
+	}
 	return nil
 }
 

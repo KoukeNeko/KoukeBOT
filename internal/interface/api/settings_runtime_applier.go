@@ -95,6 +95,7 @@ func (a *SettingsRuntimeApplier) SaveAndApply(existing config.Settings) (map[str
 	catalog := tooling.BuildCatalog(h.ctx, existing, fileToolPersonaID, h.discordRuntime, h.schedulerService, h.mcpManager)
 	h.providerManager.RegisterTools(catalog.Tools)
 	h.chatService.UpdateToolRegistry(catalog.Tools)
+	h.chatService.UpdateMCPInstructions(catalog.MCPInstructions)
 	for _, warning := range catalog.Warnings {
 		logAPI.Warnf("settings: tool catalog warning: %s", warning)
 	}

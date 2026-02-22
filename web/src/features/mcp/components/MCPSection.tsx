@@ -98,6 +98,7 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
           url: '',
           headers: {},
           tool_allowlist: [],
+          instructions: '',
         },
       ],
     })
@@ -321,6 +322,16 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                   </label>
                 </>
               )}
+
+              <label className="form-field">
+                <span>Instructions（注入 System Prompt 的使用指南）</span>
+                <textarea
+                  rows={4}
+                  value={server.instructions || ''}
+                  onChange={(e) => updateServer(idx, { ...server, instructions: e.target.value })}
+                  placeholder="使用 txt2img 時：cfg_scale ≤ 6, steps ≥ 28..."
+                />
+              </label>
 
               <div className="mcp-discover-row">
                 <button

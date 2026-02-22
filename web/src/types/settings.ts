@@ -73,6 +73,7 @@ export interface MCPServerData {
   url: string
   headers: Record<string, string>
   tool_allowlist: string[]
+  instructions: string
 }
 
 export interface MCPToolEntry {

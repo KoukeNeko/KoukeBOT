@@ -151,6 +151,14 @@ func (s *ChatService) GetTimezone() string {
 	return s.assembler.GetGlobalTimezone()
 }
 
+// UpdateMCPInstructions hot-swaps per-server MCP usage guidelines for system prompt injection.
+func (s *ChatService) UpdateMCPInstructions(instructions []string) {
+	if s == nil || s.assembler == nil {
+		return
+	}
+	s.assembler.UpdateMCPInstructions(instructions)
+}
+
 // UpdateToolExecutionPolicy hot-swaps tool loop policy without restart.
 func (s *ChatService) UpdateToolExecutionPolicy(policy ToolExecutionPolicy) {
 	if s == nil {
