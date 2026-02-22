@@ -16,6 +16,7 @@ type toolLoopState struct {
 	hideAnalysis bool
 
 	executedToolCalls    []domain.ToolCall
+	generatedImageURLs   []string
 	allToolResultsText   string
 	totalTokens          int
 	toolCallAttempts     map[string]int
@@ -295,6 +296,7 @@ func (s *ChatService) continueWithToolResults(
 		executed := s.executeTools(ctx, executableCalls, personaID)
 		toolResults = append(toolResults, executed...)
 		state.executedToolCalls = append(state.executedToolCalls, executableCalls...)
+		state.generatedImageURLs = appendUniqueStrings(state.generatedImageURLs, collectGeneratedImageURLs(executed))
 	}
 
 	s.emitToolErrors(outputCh, pendingToolCalls, toolResults, state)
@@ -468,6 +470,7 @@ func (s *ChatService) finalizeToolLoopResponse(
 			singleLineToolLog(strings.TrimSpace(details)),
 		)
 	}
+	state.fullResponse = appendGeneratedImageURLs(state.fullResponse, state.generatedImageURLs)
 
 	finalView := s.prepareAssistantOutputForStorage(state.fullResponse)
 	if state.hideAnalysis && finalView.Display != "" {

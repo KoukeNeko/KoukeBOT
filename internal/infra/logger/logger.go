@@ -25,6 +25,11 @@ const (
 // defaultWidth is the fixed padding width for module names (Docker Compose style).
 const defaultWidth = 10
 
+const (
+	discordMaxContentLength = 4000
+	discordTruncateSuffix   = "... [truncated]"
+)
+
 // DiscordSender is an interface for sending messages to Discord.
 type DiscordSender interface {
 	SendMessage(channelID, content string) error
@@ -118,6 +123,7 @@ func (m *Module) sendToDiscord(level, msg string) {
 	}
 
 	discordMsg := fmt.Sprintf("`%s` %s **%s** | %s", timestamp, emoji, m.name, msg)
+	discordMsg = truncateDiscordContent(discordMsg, discordMaxContentLength)
 
 	// Send asynchronously to avoid blocking logs
 	go func() {
@@ -134,4 +140,22 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func truncateDiscordContent(msg string, maxChars int) string {
+	if maxChars <= 0 {
+		return ""
+	}
+	runes := []rune(msg)
+	if len(runes) <= maxChars {
+		return msg
+	}
+
+	suffix := []rune(discordTruncateSuffix)
+	if len(suffix) >= maxChars {
+		return string(runes[:maxChars])
+	}
+
+	keep := maxChars - len(suffix)
+	return string(runes[:keep]) + discordTruncateSuffix
 }
