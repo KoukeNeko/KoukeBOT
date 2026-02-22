@@ -255,11 +255,12 @@ export default function MCPSection({ form, setForm, statuses, saving, onSave, on
                 <span>Transport</span>
                 <Select
                   value={server.transport}
-                  onChange={(value) => updateServer(idx, { ...server, transport: value as 'stdio' | 'http' })}
+                  onChange={(value) => updateServer(idx, { ...server, transport: value as 'stdio' | 'http' | 'sse' })}
                   disabled={isManagedServer(server)}
                   options={[
                     { value: 'stdio', label: 'stdio' },
                     { value: 'http', label: 'http (streamable)' },
+                    { value: 'sse', label: 'sse (legacy)' },
                   ]}
                 />
               </label>

@@ -66,7 +66,7 @@ export interface MCPServerData {
   id: string
   name: string
   enabled: boolean
-  transport: 'stdio' | 'http'
+  transport: 'stdio' | 'http' | 'sse'
   command: string
   args: string[]
   env: Record<string, string>
