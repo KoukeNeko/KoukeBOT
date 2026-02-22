@@ -10,6 +10,11 @@ import (
 	tooncodec "github.com/KoukeNeko/KoukeBOT/internal/infra/toon"
 )
 
+func isSingleExecutionMCPImageTool(name string) bool {
+	trimmed := strings.TrimSpace(name)
+	return trimmed == "mcp.sd.txt2img" || trimmed == "mcp.sd.img2img"
+}
+
 type toolLoopState struct {
 	toolPolicy   ToolExecutionPolicy
 	promptPolicy PromptGuardPolicy
@@ -120,6 +125,27 @@ func (s *ChatService) filterExecutableToolCalls(
 			guardResults = append(guardResults, buildFileAppendRepeatGuardResult(call))
 			logChat.Warnf(
 				"%s [FILE_APPEND_REPEAT] round=%d tool=%s%s",
+				toolLogPrefixGuard,
+				round+1,
+				call.Name,
+				summarizeToolTarget(call, personaID),
+			)
+			continue
+		}
+
+		// Hard guard: Stable Diffusion generation calls are expensive and loop-prone.
+		// Allow at most once per turn regardless of ToolGuardEnabled.
+		if isSingleExecutionMCPImageTool(call.Name) && state.toolCountsByName[call.Name] >= 1 {
+			state.guardSummary.Add(
+				toolGuardKindDuplicate,
+				call.Name,
+				"mcp_image_tool_already_called_in_turn",
+				"max_calls_per_turn=1",
+			)
+			s.incrementToolGuardDuplicateBlocked()
+			guardResults = append(guardResults, buildMCPImageRepeatGuardResult(call))
+			logChat.Warnf(
+				"%s [MCP_IMAGE_REPEAT] round=%d tool=%s%s",
 				toolLogPrefixGuard,
 				round+1,
 				call.Name,

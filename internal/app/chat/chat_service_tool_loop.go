@@ -163,6 +163,22 @@ func buildFileAppendRepeatGuardResult(call domain.ToolCall) domain.ToolResult {
 	}
 }
 
+func buildMCPImageRepeatGuardResult(call domain.ToolCall) domain.ToolResult {
+	name := strings.TrimSpace(call.Name)
+	if name == "" {
+		name = "mcp.sd.txt2img"
+	}
+	return domain.ToolResult{
+		ToolCallID: call.ID,
+		Content: fmt.Sprintf(
+			"Tool guard: `%s` can be called at most once per turn. "+
+				"Reuse the existing generated image result in this turn and answer directly without calling it again.",
+			name,
+		),
+		IsError: true,
+	}
+}
+
 func buildToolLimitGuardResult(call domain.ToolCall, limit int) domain.ToolResult {
 	return domain.ToolResult{
 		ToolCallID: call.ID,

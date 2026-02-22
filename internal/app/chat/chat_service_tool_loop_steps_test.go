@@ -548,6 +548,32 @@ func TestFilterExecutableToolCallsAllBlockedReturnsZeroExecutable(t *testing.T) 
 	}
 }
 
+func TestFilterExecutableToolCallsBlocksRepeatedMCPImageToolEvenWhenGuardDisabled(t *testing.T) {
+	service := &ChatService{}
+	policy := DefaultToolExecutionPolicy()
+	policy.ToolGuardEnabled = false
+	state := newToolLoopState(policy, PromptGuardPolicy{})
+
+	calls := []domain.ToolCall{
+		{ID: "1", Name: "mcp.sd.txt2img", Input: map[string]interface{}{"prompt": "ribs"}},
+		{ID: "2", Name: "mcp.sd.txt2img", Input: map[string]interface{}{"prompt": "ribs"}},
+	}
+
+	executable, guards := service.filterExecutableToolCalls(calls, "persona", 0, state)
+	if len(executable) != 1 {
+		t.Fatalf("executable calls = %d, want 1", len(executable))
+	}
+	if len(guards) != 1 {
+		t.Fatalf("guard results = %d, want 1", len(guards))
+	}
+	if !state.guardSummary.Has(toolGuardKindDuplicate) {
+		t.Fatalf("expected duplicate guard event for repeated mcp.sd.txt2img")
+	}
+	if !strings.Contains(guards[0].Content, "at most once per turn") {
+		t.Fatalf("unexpected guard content: %s", guards[0].Content)
+	}
+}
+
 func TestBuildForcedFinalAnswerPromptIncludesTripletWhenEnabled(t *testing.T) {
 	summary := toolGuardSummary{}
 	summary.Add(toolGuardKindDuplicate, "session_status", "session_status_already_called_in_turn", "max_session_status_calls_per_turn=1")
