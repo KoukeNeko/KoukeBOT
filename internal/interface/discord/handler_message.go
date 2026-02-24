@@ -21,12 +21,40 @@ func isDM(m *discordgo.MessageCreate) bool {
 	return m.GuildID == ""
 }
 
-// isReply checks if the message is a Discord reply.
-func isReply(m *discordgo.MessageCreate) bool {
-	if m == nil || m.MessageReference == nil {
+// isReplyToBot checks if the message is a Discord reply targeting this bot.
+func isReplyToBot(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+	if s == nil || s.State == nil || s.State.User == nil || m == nil || m.MessageReference == nil {
 		return false
 	}
-	return strings.TrimSpace(m.MessageReference.MessageID) != ""
+	if strings.TrimSpace(m.MessageReference.MessageID) == "" {
+		return false
+	}
+
+	botID := strings.TrimSpace(s.State.User.ID)
+	if botID == "" {
+		return false
+	}
+
+	// Discord often includes the referenced message in gateway payloads.
+	// Use it first to avoid unnecessary API calls.
+	if m.ReferencedMessage != nil && m.ReferencedMessage.Author != nil {
+		return strings.TrimSpace(m.ReferencedMessage.Author.ID) == botID
+	}
+
+	refChannelID := strings.TrimSpace(m.ChannelID)
+	if strings.TrimSpace(m.MessageReference.ChannelID) != "" {
+		refChannelID = strings.TrimSpace(m.MessageReference.ChannelID)
+	}
+	if refChannelID == "" {
+		return false
+	}
+
+	refMsg, err := s.ChannelMessage(refChannelID, m.MessageReference.MessageID)
+	if err != nil {
+		logHandler.Warnf("reply-target fetch failed for trigger [%s/%s]: %v", refChannelID, m.MessageReference.MessageID, err)
+		return false
+	}
+	return refMsg != nil && refMsg.Author != nil && strings.TrimSpace(refMsg.Author.ID) == botID
 }
 
 // cleanMention strips only leading bot @mentions and preserves all other tags.

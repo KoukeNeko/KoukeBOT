@@ -15,7 +15,7 @@ func (h *Handler) filterIncomingMessage(s *discordgo.Session, m *discordgo.Messa
 	if m.Author.ID == s.State.User.ID || m.Author.Bot {
 		return "", false
 	}
-	if !isMentioned(s, m) && !isDM(m) && !isReply(m) {
+	if !isMentioned(s, m) && !isDM(m) && !isReplyToBot(s, m) {
 		return "", false
 	}
 
