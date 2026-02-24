@@ -26,7 +26,8 @@ const (
 const defaultWidth = 10
 
 const (
-	discordMaxContentLength = 4000
+	// Discord message content hard limit is 2000 characters.
+	discordMaxContentLength = 2000
 	discordTruncateSuffix   = "... [truncated]"
 )
 
