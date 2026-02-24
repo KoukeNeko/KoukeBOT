@@ -289,7 +289,7 @@ func TestFilterIncomingMessageKeepsTextWhenMentionWithCaption(t *testing.T) {
 	}
 }
 
-func TestFilterIncomingMessageAcceptsReplyWithoutMention(t *testing.T) {
+func TestFilterIncomingMessageAcceptsReplyToBotWithoutMention(t *testing.T) {
 	h := &Handler{stripLeadingBotMentionPrefix: true}
 	session := &discordgo.Session{
 		State: &discordgo.State{
@@ -307,6 +307,11 @@ func TestFilterIncomingMessageAcceptsReplyWithoutMention(t *testing.T) {
 			MessageReference: &discordgo.MessageReference{
 				MessageID: "ref-1",
 			},
+			ReferencedMessage: &discordgo.Message{
+				ID:      "ref-1",
+				Author:  &discordgo.User{ID: "bot-1", Username: "bot"},
+				Content: "bot message",
+			},
 		},
 	}
 
@@ -316,5 +321,36 @@ func TestFilterIncomingMessageAcceptsReplyWithoutMention(t *testing.T) {
 	}
 	if content != "這是回覆內容" {
 		t.Fatalf("unexpected reply content: %q", content)
+	}
+}
+
+func TestFilterIncomingMessageRejectsReplyToNonBotWithoutMention(t *testing.T) {
+	h := &Handler{stripLeadingBotMentionPrefix: true}
+	session := &discordgo.Session{
+		State: &discordgo.State{
+			Ready: discordgo.Ready{
+				User: &discordgo.User{ID: "bot-1"},
+			},
+		},
+	}
+	message := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			GuildID:  "guild-1",
+			Content:  "這是回覆內容",
+			Author:   &discordgo.User{ID: "user-1", Username: "alice"},
+			Mentions: []*discordgo.User{},
+			MessageReference: &discordgo.MessageReference{
+				MessageID: "ref-2",
+			},
+			ReferencedMessage: &discordgo.Message{
+				ID:      "ref-2",
+				Author:  &discordgo.User{ID: "user-2", Username: "bob"},
+				Content: "other user message",
+			},
+		},
+	}
+
+	if _, ok := h.filterIncomingMessage(session, message); ok {
+		t.Fatal("expected reply to non-bot message to be rejected without mention")
 	}
 }
