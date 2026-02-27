@@ -399,3 +399,39 @@ func TestSelectRecentMessages_PreservesAssociatedToolMessages(t *testing.T) {
 		t.Fatalf("first should be 'user 2', got %q", got[0].Content)
 	}
 }
+
+func TestSelectRecentMessagesBudgetKeepsLatestTurns(t *testing.T) {
+	assembler := NewContextAssembler()
+	msg := strings.Repeat("x", 40) // 10 estimated tokens
+	messages := []domain.Message{
+		{Role: domain.RoleUser, Content: "u1-" + msg},
+		{Role: domain.RoleAssistant, Content: "a1-" + msg},
+		{Role: domain.RoleUser, Content: "u2-" + msg},
+		{Role: domain.RoleAssistant, Content: "a2-" + msg},
+		{Role: domain.RoleUser, Content: "u3-" + msg},
+		{Role: domain.RoleAssistant, Content: "a3-" + msg},
+	}
+
+	got := assembler.selectRecentMessages(messages, 45, 10)
+	if len(got) != 4 {
+		t.Fatalf("expected latest 2 turns (4 msgs), got %d", len(got))
+	}
+	if !strings.HasPrefix(got[0].Content, "u2-") {
+		t.Fatalf("first message = %q, want latest-2 user turn", got[0].Content)
+	}
+	if !strings.HasPrefix(got[3].Content, "a3-") {
+		t.Fatalf("last message = %q, want latest assistant reply", got[3].Content)
+	}
+}
+
+func TestHistoryBudgetClampedByMaxHistoryTokens(t *testing.T) {
+	bm := NewContextBudgetManager()
+	bm.MaxHistoryTokens = 3200
+	got := bm.historyBudget(strings.Repeat("s", 500), llm.ModelCapabilities{
+		ContextWindow:   1_000_000,
+		MaxOutputTokens: 16_384,
+	})
+	if got != 3200 {
+		t.Fatalf("history budget = %d, want 3200", got)
+	}
+}

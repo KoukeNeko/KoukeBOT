@@ -31,40 +31,56 @@ func (a *ContextAssembler) selectRecentMessages(messages []domain.Message, budge
 	candidate := messages[cutoff:]
 
 	// Step 2: Filter out internal tool history and apply truncation + budget.
+	// Iterate from newest to oldest so budget pressure keeps latest turns first.
 	const historyMessageTruncateChars = 4000
-	selected := make([]domain.Message, 0, len(candidate))
+	turnsFromEnd := userTurnDistanceFromEnd(candidate)
+	selectedRev := make([]domain.Message, 0, len(candidate))
 	used := 0
-	userTurnsSeen := 0
-	for _, msg := range candidate {
+	for i := len(candidate) - 1; i >= 0; i-- {
+		msg := candidate[i]
 		if isInternalToolHistoryMessage(msg.Content) {
 			continue
 		}
 		compact := domain.Message{Role: msg.Role, Content: msg.Content}
 
-		// Count user turns for truncation threshold (truncate older turns).
-		if msg.Role == domain.RoleUser {
-			userTurnsSeen++
-		}
 		// Truncate long messages beyond the 4th user turn from the end.
-		turnsFromEnd := userTurnsSeen // approximate
-		if turnsFromEnd > 4 && len(compact.Content) > historyMessageTruncateChars {
+		if turnsFromEnd[i] > 4 && len(compact.Content) > historyMessageTruncateChars {
 			compact.Content = compact.Content[:historyMessageTruncateChars] + "\n...[history truncated for token budget]"
 		}
 
 		cost := estimateTokens(compact.Content)
 		if used+cost > budgetTokens {
-			if len(selected) == 0 {
+			if len(selectedRev) == 0 {
 				// Always keep at least the latest message.
-				selected = append(selected, compact)
+				selectedRev = append(selectedRev, compact)
 			}
 			break
 		}
 
 		used += cost
-		selected = append(selected, compact)
+		selectedRev = append(selectedRev, compact)
 	}
 
+	// Restore chronological order (oldest -> newest).
+	selected := make([]domain.Message, 0, len(selectedRev))
+	for i := len(selectedRev) - 1; i >= 0; i-- {
+		selected = append(selected, selectedRev[i])
+	}
 	return selected
+}
+
+// userTurnDistanceFromEnd returns per-message user-turn distance where
+// 1 = latest user turn, 2 = second latest, ...
+func userTurnDistanceFromEnd(messages []domain.Message) []int {
+	out := make([]int, len(messages))
+	turnsSeen := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		out[i] = turnsSeen + 1
+		if messages[i].Role == domain.RoleUser {
+			turnsSeen++
+		}
+	}
+	return out
 }
 
 // isInternalToolHistoryMessage reports whether a message is an internal tool

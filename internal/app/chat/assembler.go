@@ -27,6 +27,11 @@ const (
 	defaultMaxUserTurns = defaultMemoryRecentRounds
 	minMaxUserTurns     = 20
 	maxMaxUserTurns     = 100
+
+	// Hard cap for history budget to control per-request token cost.
+	defaultMaxHistoryTokens = 6_000
+	minMaxHistoryTokens     = 1_200
+	maxMaxHistoryTokens     = 40_000
 )
 
 var logPrompt = logger.New("prompt", logger.Yellow)
@@ -90,6 +95,7 @@ type ContextBudgetManager struct {
 	MaxRecentUserTurns int     // hard cap for user turns (each turn includes associated assistant/tool messages)
 	MaxDigests         int     // max digest blocks to include
 	DigestBudgetRatio  float64 // % of history budget reserved for digest blocks
+	MaxHistoryTokens   int     // hard cap for history tokens to control per-request cost
 }
 
 func NewContextBudgetManager() *ContextBudgetManager {
@@ -97,6 +103,7 @@ func NewContextBudgetManager() *ContextBudgetManager {
 		MaxRecentUserTurns: defaultMaxUserTurns,
 		MaxDigests:         4,
 		DigestBudgetRatio:  0.30,
+		MaxHistoryTokens:   defaultMaxHistoryTokens,
 	}
 }
 
@@ -118,6 +125,12 @@ func (bm *ContextBudgetManager) historyBudget(systemPrompt string, caps llm.Mode
 	budget := window - reserve - systemTokens
 	if budget < 1200 {
 		budget = 1200
+	}
+	// Even when models support very large context windows, keep an upper bound on
+	// history tokens to avoid excessive per-turn cost.
+	maxHistoryTokens := normalizeMaxHistoryTokens(bm.MaxHistoryTokens)
+	if budget > maxHistoryTokens {
+		budget = maxHistoryTokens
 	}
 	return budget
 }
@@ -183,6 +196,25 @@ func (a *ContextAssembler) MaxUserTurns() int {
 	return normalizeMaxUserTurns(v)
 }
 
+func (a *ContextAssembler) UpdateMaxHistoryTokens(maxHistoryTokens int) {
+	if a == nil {
+		return
+	}
+	a.budgetMu.Lock()
+	a.budget.MaxHistoryTokens = normalizeMaxHistoryTokens(maxHistoryTokens)
+	a.budgetMu.Unlock()
+}
+
+func (a *ContextAssembler) MaxHistoryTokens() int {
+	if a == nil {
+		return defaultMaxHistoryTokens
+	}
+	a.budgetMu.RLock()
+	v := a.budget.MaxHistoryTokens
+	a.budgetMu.RUnlock()
+	return normalizeMaxHistoryTokens(v)
+}
+
 func (a *ContextAssembler) snapshotPromptGuardPolicy() PromptGuardPolicy {
 	return a.PromptGuardPolicy()
 }
@@ -235,6 +267,7 @@ func (a *ContextAssembler) snapshotBudget() ContextBudgetManager {
 	if budget.DigestBudgetRatio <= 0 || budget.DigestBudgetRatio >= 1 {
 		budget.DigestBudgetRatio = 0.30
 	}
+	budget.MaxHistoryTokens = normalizeMaxHistoryTokens(budget.MaxHistoryTokens)
 	return budget
 }
 
@@ -404,7 +437,12 @@ func (a *ContextAssembler) assembleThinkingModel(
 	}
 
 	// Prune old tool results before selecting recent messages to free token space.
-	charWindow := caps.ContextWindow * estimatedCharsPerToken
+	// Use the effective history budget window rather than the model's full context
+	// window, otherwise large-window models barely prune anything.
+	charWindow := budgetTokens * estimatedCharsPerToken
+	if charWindow <= 0 {
+		charWindow = caps.ContextWindow * estimatedCharsPerToken
+	}
 	prunedMessages := pruneToolResults(conv.Messages, DefaultContextPruningSettings(), charWindow)
 
 	recent := a.selectRecentMessages(prunedMessages, recentBudget, budget.MaxRecentUserTurns)
@@ -514,6 +552,16 @@ func normalizeMaxUserTurns(v int) int {
 	}
 	if v > maxMaxUserTurns {
 		return maxMaxUserTurns
+	}
+	return v
+}
+
+func normalizeMaxHistoryTokens(v int) int {
+	if v < minMaxHistoryTokens {
+		return defaultMaxHistoryTokens
+	}
+	if v > maxMaxHistoryTokens {
+		return maxMaxHistoryTokens
 	}
 	return v
 }
