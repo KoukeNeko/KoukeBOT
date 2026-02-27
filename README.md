@@ -230,7 +230,7 @@ All settings are stored in `data/settings.json`, configurable via Web UI or API:
 | 設定項 / Setting | 說明 / Description |
 |---|---|
 | `provider_type` | 供應商類型：`api-key` 或 `oauth` / Provider type |
-| `provider_id` | 供應商 ID（`gemini-api-key`, `google-gemini-cli`, `google-antigravity`, `aistudio-rpc`） |
+| `provider_id` | 供應商 ID（`gemini-api-key`, `openai-api-key`, `google-gemini-cli`, `google-antigravity`, `aistudio-rpc`） |
 | `model_id` | 模型 ID / Model identifier |
 | `gemini_api_key` | Gemini API 金鑰 / Gemini API key |
 | `discord_token` | Discord 機器人權杖 / Discord bot token |
@@ -265,6 +265,10 @@ configs/personas/{persona-id}/
 | `GIN_MODE` | `release` | 伺服器模式 / Server mode |
 | `TZ` | `Asia/Tokyo` | 時區 / Timezone |
 | `PLAYWRIGHT_BROWSERS_PATH` | `/ms-playwright` | Playwright 瀏覽器路徑 / Browser path |
+| `GEMINI_API_KEY` | - | Gemini API 金鑰（API key 模式）/ Gemini API key (API-key mode) |
+| `GEMINI_MODEL` | - | Gemini 模型覆寫 / Gemini model override |
+| `OPENAI_API_KEY` | - | OpenAI API 金鑰（API key 模式）/ OpenAI API key (API-key mode) |
+| `OPENAI_MODEL` | - | OpenAI 模型覆寫 / OpenAI model override |
 
 ---
 
@@ -345,6 +349,7 @@ Supported provider modes:
 
 | 供應商 ID / Provider ID | 認證方式 / Auth | 說明 / Description |
 |---|---|---|
+| `openai-api-key` | API Key | OpenAI 官方 API Key 認證 / OpenAI official API key auth |
 | `gemini-api-key` | API Key | 標準 Gemini API 金鑰認證 / Standard API key auth |
 | `google-gemini-cli` | OAuth | Gemini CLI OAuth 認證 / Gemini CLI OAuth |
 | `google-antigravity` | OAuth | Google Cloud Code Assist 認證 / Cloud Code Assist OAuth |

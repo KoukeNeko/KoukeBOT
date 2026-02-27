@@ -58,7 +58,7 @@ type Settings struct {
 	GeminiModel      string `json:"gemini_model"`
 	DiscordToken     string `json:"discord_token"`
 	ProviderType     string `json:"provider_type"`      // "api-key", "oauth", or "" (auto)
-	ProviderID       string `json:"provider_id"`        // "google-gemini-cli" | "google-antigravity" | "gemini-api-key" | "aistudio-rpc"
+	ProviderID       string `json:"provider_id"`        // "google-gemini-cli" | "google-antigravity" | "gemini-api-key" | "openai-api-key" | "aistudio-rpc"
 	ModelID          string `json:"model_id"`           // "provider/model"
 	FallbackEnabled  bool   `json:"fallback_enabled"`   // OpenClaw-style fallback switch
 	FallbackModelID  string `json:"fallback_model_id"`  // "provider/model"
@@ -516,6 +516,8 @@ func resolveProviderModelForSettings(providerID, modelID, providerType, legacyMo
 		switch pid {
 		case "google-antigravity":
 			normalizedLegacyModel = "claude-opus-4-6-thinking"
+		case "openai-api-key":
+			normalizedLegacyModel = "gpt-5"
 		default:
 			normalizedLegacyModel = "gemini-3-pro-preview"
 		}
@@ -673,6 +675,8 @@ func normalizeGoogleProviderIDForSettings(providerID string) string {
 		return "aistudio-rpc"
 	case "gemini-api-key":
 		return "gemini-api-key"
+	case "openai-api-key":
+		return "openai-api-key"
 	default:
 		return strings.TrimSpace(strings.ToLower(providerID))
 	}
@@ -718,7 +722,11 @@ func buildProviderModelIDForSettings(providerID, model string) string {
 		pid = "google-gemini-cli"
 	}
 	if mid == "" {
-		mid = "gemini-3-pro-preview"
+		if pid == "openai-api-key" {
+			mid = "gpt-5"
+		} else {
+			mid = "gemini-3-pro-preview"
+		}
 	}
 	return pid + "/" + mid
 }
@@ -726,6 +734,8 @@ func buildProviderModelIDForSettings(providerID, model string) string {
 func syncLegacyProviderTypeForSettings(providerType, providerID, apiKey string) string {
 	switch normalizeGoogleProviderIDForSettings(providerID) {
 	case "gemini-api-key":
+		return ProviderAPIKey
+	case "openai-api-key":
 		return ProviderAPIKey
 	case "google-gemini-cli", "google-antigravity", "aistudio-rpc":
 		return ProviderOAuth

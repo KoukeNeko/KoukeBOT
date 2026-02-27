@@ -56,3 +56,11 @@ func TestDefaultProviderModelIDForAIStudioRPC(t *testing.T) {
 		t.Fatalf("DefaultProviderModelID(%q) = %q, want %q", ProviderAIStudioRPC, got, want)
 	}
 }
+
+func TestDefaultProviderModelIDForOpenAIAPIKey(t *testing.T) {
+	got := DefaultProviderModelID(ProviderOpenAIAPIKey)
+	want := "openai-api-key/gpt-5"
+	if got != want {
+		t.Fatalf("DefaultProviderModelID(%q) = %q, want %q", ProviderOpenAIAPIKey, got, want)
+	}
+}

@@ -75,8 +75,7 @@ func createListingClient(ctx context.Context, apiKey string, oauthToken *OAuthTo
 
 	if apiKey != "" {
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{
-			APIKey:  apiKey,
-			Backend: genai.BackendGeminiAPI,
+			APIKey: apiKey,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create API key client: %w", err)

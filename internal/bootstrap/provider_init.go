@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -48,13 +49,14 @@ func initProvider(
 		logs.LLM.Warnf("OAuth selected but not available — configure at http://localhost:%s/settings", port)
 
 	case config.ProviderAPIKey:
-		if initAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model, logs) {
+		if initAPIKeyProvider(ctx, settings, providerID, pm, model, logs) {
 			return
 		}
 		logs.LLM.Warnf("API key selected but invalid — configure at http://localhost:%s/settings", port)
 
 	default:
-		if settings.GeminiAPIKey != "" && initAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model, logs) {
+		if (settings.GeminiAPIKey != "" || strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "") &&
+			initAPIKeyProvider(ctx, settings, providerID, pm, model, logs) {
 			return
 		}
 		if initOAuthProvider(ctx, settings, pm, providerID, model, paths, logs) {
@@ -89,8 +91,22 @@ func initGeminiCLIProvider(pm *app.ProviderManager, model string, logs Loggers) 
 	return true
 }
 
-func initAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderManager, model string, logs Loggers) bool {
-	if apiKey == "" {
+func initAPIKeyProvider(
+	ctx context.Context,
+	settings config.Settings,
+	providerID string,
+	pm *app.ProviderManager,
+	model string,
+	logs Loggers,
+) bool {
+	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderOpenAIAPIKey {
+		return initOpenAIAPIKeyProvider(strings.TrimSpace(os.Getenv("OPENAI_API_KEY")), pm, model, logs)
+	}
+	return initGeminiAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model, logs)
+}
+
+func initGeminiAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderManager, model string, logs Loggers) bool {
+	if !hasGeminiAPIKeyConfigured(apiKey) {
 		return false
 	}
 	provider, err := llm.NewGeminiAPIProvider(ctx, apiKey, model)
@@ -100,6 +116,30 @@ func initAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderMana
 	}
 	pm.Update(provider)
 	logs.LLM.Logf("%s (model: %s)", provider.ModelInfo().ProviderName, model)
+	return true
+}
+
+func hasGeminiAPIKeyConfigured(apiKey string) bool {
+	if strings.TrimSpace(apiKey) != "" {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("GEMINI_API_KEY")) != "" {
+		return true
+	}
+	return strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")) != ""
+}
+
+func initOpenAIAPIKeyProvider(apiKey string, pm *app.ProviderManager, model string, logs Loggers) bool {
+	if apiKey == "" {
+		return false
+	}
+	provider, err := llm.NewOpenAIAPIProvider(apiKey, model)
+	if err != nil {
+		logs.LLM.Warnf("failed to init OpenAI API provider: %v", err)
+		return false
+	}
+	pm.Update(provider)
+	logs.LLM.Logf("%s (model: %s)", provider.ModelInfo().ProviderName, provider.ModelInfo().Model)
 	return true
 }
 
@@ -215,6 +255,8 @@ func attachAIStudioFallbackProvider(pool *app.ProviderPool, sessionPath, model s
 
 func resolveBootstrapProviderType(settings config.Settings, providerID string) string {
 	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderOpenAIAPIKey:
+		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
 	case llm.ProviderGoogleAntigravity:
@@ -228,7 +270,7 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 	case config.ProviderOAuth, "cli":
 		return config.ProviderOAuth
 	default:
-		if settings.GeminiAPIKey != "" {
+		if settings.GeminiAPIKey != "" || strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" {
 			return config.ProviderAPIKey
 		}
 		return config.ProviderOAuth

@@ -37,10 +37,17 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 		switch normalizeProviderTypeForSelection(req.ProviderType) {
 		case config.ProviderAPIKey:
 			if req.ProviderID == "" {
-				existing.ProviderID = llm.ProviderGeminiAPIKey
+				if llm.NormalizeGoogleProviderID(existing.ProviderID) == llm.ProviderOpenAIAPIKey {
+					existing.ProviderID = llm.ProviderOpenAIAPIKey
+				} else {
+					existing.ProviderID = llm.ProviderGeminiAPIKey
+				}
 			}
 		case config.ProviderOAuth:
-			if req.ProviderID == "" && (existing.ProviderID == "" || existing.ProviderID == llm.ProviderGeminiAPIKey) {
+			if req.ProviderID == "" &&
+				(existing.ProviderID == "" ||
+					existing.ProviderID == llm.ProviderGeminiAPIKey ||
+					existing.ProviderID == llm.ProviderOpenAIAPIKey) {
 				existing.ProviderID = llm.ProviderGoogleAntigravity
 			}
 		}
@@ -323,6 +330,8 @@ func resolveProviderTypeWithLegacyFallback(providerType, providerID, apiKey stri
 		return normalized
 	}
 	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderOpenAIAPIKey:
+		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
 	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
@@ -337,6 +346,8 @@ func resolveProviderTypeWithLegacyFallback(providerType, providerID, apiKey stri
 
 func normalizeProviderTypeFromProviderID(providerType, providerID string) string {
 	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderOpenAIAPIKey:
+		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
 	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:

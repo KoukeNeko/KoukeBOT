@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
@@ -197,6 +198,8 @@ func shouldRunStrictOAuthProbe(settings config.Settings) bool {
 		case llm.ProviderAIStudioRPC:
 			// AI Studio direct provider does not use OAuth pool probes.
 			return false
+		case llm.ProviderOpenAIAPIKey:
+			return false
 		case llm.ProviderGeminiAPIKey:
 			return false
 		}
@@ -209,6 +212,7 @@ func shouldRunStrictOAuthProbe(settings config.Settings) bool {
 		return false
 	default:
 		// Auto mode falls back to OAuth when no API key exists.
-		return strings.TrimSpace(settings.GeminiAPIKey) == ""
+		return strings.TrimSpace(settings.GeminiAPIKey) == "" &&
+			strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == ""
 	}
 }

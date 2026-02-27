@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"os"
+	"strings"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/config"
@@ -22,16 +23,31 @@ func ResolveSettings(settingsStore *config.SettingsStore, logs Loggers) config.S
 		logs.System.Warnf("failed to load settings: %v", err)
 	}
 
-	if envKey := os.Getenv("GEMINI_API_KEY"); envKey != "" {
-		settings.GeminiAPIKey = envKey
+	geminiEnvKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	openAIEnvKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+
+	if geminiEnvKey != "" {
+		settings.GeminiAPIKey = geminiEnvKey
 		settings.ProviderType = config.ProviderAPIKey
 		settings.ProviderID = llm.ProviderGeminiAPIKey
-	}
-	if envModel := os.Getenv("GEMINI_MODEL"); envModel != "" {
-		settings.GeminiModel = llm.NormalizeGoogleModelAlias(envModel)
+		if envModel := strings.TrimSpace(os.Getenv("GEMINI_MODEL")); envModel != "" {
+			settings.GeminiModel = llm.NormalizeGoogleModelAlias(envModel)
+		}
 		settings.ProviderID, settings.GeminiModel, settings.ModelID = llm.ResolveProviderAndModel(
 			settings.ProviderID,
-			settings.ModelID,
+			"",
+			settings.GeminiModel,
+		)
+	}
+	if openAIEnvKey != "" && geminiEnvKey == "" {
+		settings.ProviderType = config.ProviderAPIKey
+		settings.ProviderID = llm.ProviderOpenAIAPIKey
+		if envModel := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); envModel != "" {
+			settings.GeminiModel = llm.NormalizeModelID(envModel)
+		}
+		settings.ProviderID, settings.GeminiModel, settings.ModelID = llm.ResolveProviderAndModel(
+			settings.ProviderID,
+			"",
 			settings.GeminiModel,
 		)
 	}

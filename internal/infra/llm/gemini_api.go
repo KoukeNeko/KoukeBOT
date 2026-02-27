@@ -18,10 +18,12 @@ type GeminiAPIProvider struct {
 
 // NewGeminiAPIProvider creates a provider using a Google AI Studio API key.
 func NewGeminiAPIProvider(ctx context.Context, apiKey, model string) (*GeminiAPIProvider, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
+	var cfg *genai.ClientConfig
+	if key := strings.TrimSpace(apiKey); key != "" {
+		// Keep explicit key support while staying aligned with official SDK usage.
+		cfg = &genai.ClientConfig{APIKey: key}
+	}
+	client, err := genai.NewClient(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create gemini client: %w", err)
 	}

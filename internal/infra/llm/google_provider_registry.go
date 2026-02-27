@@ -6,6 +6,7 @@ const (
 	ProviderGoogleGeminiCLI   = "google-gemini-cli"
 	ProviderGoogleAntigravity = "google-antigravity"
 	ProviderGeminiAPIKey      = "gemini-api-key"
+	ProviderOpenAIAPIKey      = "openai-api-key"
 	ProviderAIStudioRPC       = "aistudio-rpc"
 
 	EndpointPolicyPrimaryThenSandbox = "primary_then_sandbox"
@@ -25,6 +26,17 @@ type GoogleProviderSpec struct {
 
 func googleProviderSpec(providerID string) GoogleProviderSpec {
 	switch NormalizeGoogleProviderID(providerID) {
+	case ProviderOpenAIAPIKey:
+		return GoogleProviderSpec{
+			ID:           ProviderOpenAIAPIKey,
+			Label:        "OpenAI API Key",
+			DefaultModel: "gpt-5",
+			OAuthScopes:  nil,
+			RedirectURI:  "",
+			EndpointCandidates: []string{
+				"https://api.openai.com",
+			},
+		}
 	case ProviderGoogleAntigravity:
 		return GoogleProviderSpec{
 			ID:           ProviderGoogleAntigravity,
@@ -76,6 +88,8 @@ func googleProviderSpec(providerID string) GoogleProviderSpec {
 func NormalizeGoogleProviderID(providerID string) string {
 	normalized := strings.TrimSpace(strings.ToLower(providerID))
 	switch normalized {
+	case ProviderOpenAIAPIKey:
+		return ProviderOpenAIAPIKey
 	case ProviderGoogleAntigravity:
 		return ProviderGoogleAntigravity
 	case ProviderAIStudioRPC, "aistudio", "ai-studio":

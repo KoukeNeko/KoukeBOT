@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -177,26 +178,48 @@ func (h *Handlers) buildProviderForSettings(s config.Settings, strictOAuthProbe 
 		return h.buildOAuthPoolProvider(s, providerID, model, strictOAuthProbe)
 
 	case config.ProviderAPIKey:
-		if s.GeminiAPIKey == "" {
-			return nil, fmt.Errorf("no API key configured")
-		}
-		provider, err := llm.NewGeminiAPIProvider(h.ctx, s.GeminiAPIKey, model)
-		if err != nil {
-			return nil, fmt.Errorf("invalid API key: %w", err)
-		}
-		return provider, nil
+		return h.buildAPIKeyProvider(s, normalizedProviderID, model)
 
 	default:
-		if s.GeminiAPIKey != "" {
-			provider, err := llm.NewGeminiAPIProvider(h.ctx, s.GeminiAPIKey, model)
-			if err != nil {
-				return nil, fmt.Errorf("invalid API key: %w", err)
-			}
-			return provider, nil
+		if normalizedProviderID == llm.ProviderOpenAIAPIKey || s.GeminiAPIKey != "" {
+			return h.buildAPIKeyProvider(s, normalizedProviderID, model)
 		}
 		// Auto mode without API key falls back to OAuth credentials.
 		return h.buildOAuthPoolProvider(s, providerID, model, strictOAuthProbe)
 	}
+}
+
+func (h *Handlers) buildAPIKeyProvider(s config.Settings, providerID, model string) (llm.Provider, error) {
+	switch providerID {
+	case llm.ProviderOpenAIAPIKey:
+		if strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == "" {
+			return nil, fmt.Errorf("no OpenAI API key configured")
+		}
+		provider, err := llm.NewOpenAIAPIProvider("", model)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OpenAI API key: %w", err)
+		}
+		return provider, nil
+	default:
+		if !hasGeminiAPIKeyForSettings(s.GeminiAPIKey) {
+			return nil, fmt.Errorf("no Gemini API key configured")
+		}
+		provider, err := llm.NewGeminiAPIProvider(h.ctx, s.GeminiAPIKey, model)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Gemini API key: %w", err)
+		}
+		return provider, nil
+	}
+}
+
+func hasGeminiAPIKeyForSettings(apiKey string) bool {
+	if strings.TrimSpace(apiKey) != "" {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("GEMINI_API_KEY")) != "" {
+		return true
+	}
+	return strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")) != ""
 }
 
 func (h *Handlers) buildGeminiCLIProvider(model string) (llm.Provider, error) {
@@ -266,6 +289,10 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		providerID = settings.ProviderType
 	}
 	providerID = llm.NormalizeGoogleProviderID(providerID)
+	if providerID == llm.ProviderOpenAIAPIKey {
+		writeJSON(w, http.StatusOK, llm.ListOpenAIModels())
+		return
+	}
 
 	var oauthToken *llm.OAuthTokenData
 	// Prefer provider-matched pool token (has ProjectID) for dynamic discovery.
@@ -543,6 +570,8 @@ func richContext(ctx context.Context) context.Context {
 
 func resolveProviderTypeForSettings(settings config.Settings, providerID string) string {
 	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderOpenAIAPIKey:
+		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
 	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
@@ -555,7 +584,7 @@ func resolveProviderTypeForSettings(settings config.Settings, providerID string)
 	case config.ProviderOAuth:
 		return config.ProviderOAuth
 	default:
-		if strings.TrimSpace(settings.GeminiAPIKey) != "" {
+		if strings.TrimSpace(settings.GeminiAPIKey) != "" || strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" {
 			return config.ProviderAPIKey
 		}
 		return config.ProviderOAuth
