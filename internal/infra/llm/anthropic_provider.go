@@ -3,7 +3,9 @@ package llm
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -162,11 +164,11 @@ func newAnthropicProvider(setupToken, apiKey, model, providerID string) *Anthrop
 }
 
 func (a *AnthropicProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	resp, err := a.requestMessages(ctx, req.SystemPrompt, req.Messages, req.Generation, req.ToolMode, false)
+	resp, toolNameAliases, err := a.requestMessages(ctx, req.SystemPrompt, req.Messages, req.Generation, req.ToolMode, false)
 	if err != nil {
 		return nil, err
 	}
-	text, toolCalls := anthropicResponseToResult(resp)
+	text, toolCalls := anthropicResponseToResult(resp, toolNameAliases)
 	if len(toolCalls) > 0 {
 		return &ChatResponse{
 			Content:    "",
@@ -184,12 +186,12 @@ func (a *AnthropicProvider) StreamChat(ctx context.Context, req ChatRequest) (<-
 	ch := make(chan StreamChunk, 16)
 	go func() {
 		defer close(ch)
-		resp, err := a.requestMessages(ctx, req.SystemPrompt, req.Messages, req.Generation, req.ToolMode, false)
+		resp, toolNameAliases, err := a.requestMessages(ctx, req.SystemPrompt, req.Messages, req.Generation, req.ToolMode, false)
 		if err != nil {
 			ch <- StreamChunk{Error: err, Done: true}
 			return
 		}
-		text, toolCalls := anthropicResponseToResult(resp)
+		text, toolCalls := anthropicResponseToResult(resp, toolNameAliases)
 		tokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
 		if len(toolCalls) > 0 {
 			ch <- StreamChunk{
@@ -222,7 +224,7 @@ func (a *AnthropicProvider) StreamChatMultimodal(
 			ch <- StreamChunk{Error: err, Done: true}
 			return
 		}
-		text, toolCalls := anthropicResponseToResult(resp)
+		text, toolCalls := anthropicResponseToResult(resp, nil)
 		tokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
 		if len(toolCalls) > 0 {
 			ch <- StreamChunk{
@@ -286,7 +288,7 @@ func (a *AnthropicProvider) requestMessages(
 	generation domain.GenerationConfig,
 	toolMode ToolMode,
 	stream bool,
-) (*anthropicMessagesResponse, error) {
+) (*anthropicMessagesResponse, map[string]string, error) {
 	parsedSystem, parsedMessages := buildAnthropicMessages(systemPrompt, messages)
 	reqBody := anthropicMessagesRequest{
 		Model:     a.model,
@@ -295,6 +297,7 @@ func (a *AnthropicProvider) requestMessages(
 		Messages:  parsedMessages,
 		Stream:    stream,
 	}
+	var toolNameAliases map[string]string
 	if generation.Temperature > 0 {
 		reqBody.Temperature = &generation.Temperature
 	}
@@ -302,10 +305,14 @@ func (a *AnthropicProvider) requestMessages(
 		reqBody.TopP = &generation.TopP
 	}
 	if toolMode != ToolModeDisabled && len(a.tools) > 0 {
-		reqBody.Tools = buildAnthropicTools(a.tools)
+		reqBody.Tools, toolNameAliases = buildAnthropicTools(a.tools)
 		reqBody.ToolChoice = &anthropicToolChoiceAny{Type: "auto"}
 	}
-	return a.postAnthropic(ctx, reqBody)
+	resp, err := a.postAnthropic(ctx, reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp, toolNameAliases, nil
 }
 
 func (a *AnthropicProvider) requestMessagesMultimodal(
@@ -464,12 +471,20 @@ func buildAnthropicMultimodalMessages(messages []domain.MultimodalMessage) []ant
 	return out
 }
 
-func buildAnthropicTools(tools []domain.Tool) []anthropicToolDef {
+func buildAnthropicTools(tools []domain.Tool) ([]anthropicToolDef, map[string]string) {
 	if len(tools) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]anthropicToolDef, 0, len(tools))
+	aliases := make(map[string]string, len(tools))
+	used := make(map[string]string, len(tools))
 	for _, tool := range tools {
+		originalName := strings.TrimSpace(tool.Name())
+		if originalName == "" {
+			continue
+		}
+		anthropicName := makeUniqueAnthropicToolName(originalName, used)
+		aliases[anthropicName] = originalName
 		schema := map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -478,15 +493,101 @@ func buildAnthropicTools(tools []domain.Tool) []anthropicToolDef {
 			schema = raw
 		}
 		out = append(out, anthropicToolDef{
-			Name:        tool.Name(),
+			Name:        anthropicName,
 			Description: tool.Description(),
 			InputSchema: schema,
 		})
 	}
-	return out
+	return out, aliases
 }
 
-func anthropicResponseToResult(resp *anthropicMessagesResponse) (string, []domain.ToolCall) {
+func makeUniqueAnthropicToolName(original string, used map[string]string) string {
+	base := sanitizeAnthropicToolName(original)
+	if existing, ok := used[base]; !ok || existing == original {
+		used[base] = original
+		return base
+	}
+
+	hash := shortAnthropicNameHash(original)
+	candidate := withAnthropicNameSuffix(base, "-"+hash)
+	if existing, ok := used[candidate]; !ok || existing == original {
+		used[candidate] = original
+		return candidate
+	}
+
+	for i := 2; i < 1000; i++ {
+		candidate = withAnthropicNameSuffix(base, fmt.Sprintf("-%s-%d", hash, i))
+		if existing, ok := used[candidate]; !ok || existing == original {
+			used[candidate] = original
+			return candidate
+		}
+	}
+	// Defensive fallback: this should never happen in practice.
+	used[base] = original
+	return base
+}
+
+func sanitizeAnthropicToolName(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "tool"
+	}
+	buf := make([]byte, 0, len(trimmed))
+	dashed := false
+	for i := 0; i < len(trimmed); i++ {
+		ch := trimmed[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			buf = append(buf, ch)
+			dashed = false
+			continue
+		}
+		if !dashed {
+			buf = append(buf, '-')
+			dashed = true
+		}
+	}
+	name := strings.Trim(string(buf), "-")
+	if name == "" {
+		name = "tool"
+	}
+	if len(name) > 128 {
+		name = strings.Trim(name[:128], "-")
+		if name == "" {
+			name = "tool"
+		}
+	}
+	return name
+}
+
+func withAnthropicNameSuffix(base, suffix string) string {
+	base = sanitizeAnthropicToolName(base)
+	maxBaseLen := 128 - len(suffix)
+	if maxBaseLen < 1 {
+		maxBaseLen = 1
+	}
+	if len(base) > maxBaseLen {
+		base = strings.Trim(base[:maxBaseLen], "-")
+		if base == "" {
+			base = "tool"
+		}
+	}
+	name := base + suffix
+	if len(name) > 128 {
+		name = name[:128]
+	}
+	name = strings.Trim(name, "-")
+	if name == "" {
+		return "tool"
+	}
+	return name
+}
+
+func shortAnthropicNameHash(raw string) string {
+	sum := sha1.Sum([]byte(raw))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+func anthropicResponseToResult(resp *anthropicMessagesResponse, aliases map[string]string) (string, []domain.ToolCall) {
 	if resp == nil {
 		return "", nil
 	}
@@ -502,6 +603,9 @@ func anthropicResponseToResult(resp *anthropicMessagesResponse) (string, []domai
 			name := strings.TrimSpace(block.Name)
 			if name == "" {
 				continue
+			}
+			if original, ok := aliases[name]; ok && strings.TrimSpace(original) != "" {
+				name = strings.TrimSpace(original)
 			}
 			callID := strings.TrimSpace(block.ID)
 			if callID == "" {

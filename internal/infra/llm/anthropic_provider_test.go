@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -144,7 +145,7 @@ func TestAnthropicResponseToResultParsesToolUse(t *testing.T) {
 			{Type: "tool_use", ID: "call_1", Name: "web_search", Input: map[string]interface{}{"q": "taipei"}},
 		},
 	}
-	text, calls := anthropicResponseToResult(resp)
+	text, calls := anthropicResponseToResult(resp, nil)
 	if text != "hello" {
 		t.Fatalf("text = %q, want %q", text, "hello")
 	}
@@ -154,4 +155,63 @@ func TestAnthropicResponseToResultParsesToolUse(t *testing.T) {
 	if calls[0].Name != "web_search" {
 		t.Fatalf("tool call name = %q, want %q", calls[0].Name, "web_search")
 	}
+}
+
+func TestBuildAnthropicToolsSanitizesToolNames(t *testing.T) {
+	tools, aliases := buildAnthropicTools([]domain.Tool{
+		anthropicTestTool{name: "web_search"},
+		anthropicTestTool{name: "mcp.server.echo"},
+	})
+	if len(tools) != 2 {
+		t.Fatalf("tool count = %d, want 2", len(tools))
+	}
+	if tools[0].Name != "web-search" {
+		t.Fatalf("tool[0].name = %q, want %q", tools[0].Name, "web-search")
+	}
+	if tools[1].Name != "mcp-server-echo" {
+		t.Fatalf("tool[1].name = %q, want %q", tools[1].Name, "mcp-server-echo")
+	}
+	if aliases["web-search"] != "web_search" {
+		t.Fatalf("aliases[web-search] = %q, want %q", aliases["web-search"], "web_search")
+	}
+	if aliases["mcp-server-echo"] != "mcp.server.echo" {
+		t.Fatalf("aliases[mcp-server-echo] = %q, want %q", aliases["mcp-server-echo"], "mcp.server.echo")
+	}
+}
+
+func TestAnthropicResponseToResultRestoresOriginalToolName(t *testing.T) {
+	resp := &anthropicMessagesResponse{
+		Content: []anthropicContentPart{
+			{Type: "tool_use", ID: "call_1", Name: "web-search", Input: map[string]interface{}{"q": "taipei"}},
+		},
+	}
+	_, calls := anthropicResponseToResult(resp, map[string]string{"web-search": "web_search"})
+	if len(calls) != 1 {
+		t.Fatalf("tool call count = %d, want 1", len(calls))
+	}
+	if calls[0].Name != "web_search" {
+		t.Fatalf("tool call name = %q, want %q", calls[0].Name, "web_search")
+	}
+}
+
+type anthropicTestTool struct {
+	name string
+}
+
+func (t anthropicTestTool) Name() string {
+	return t.name
+}
+
+func (t anthropicTestTool) Description() string {
+	return "test tool"
+}
+
+func (t anthropicTestTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+	}
+}
+
+func (t anthropicTestTool) Execute(context.Context, map[string]interface{}) (domain.ToolResult, error) {
+	return domain.ToolResult{}, errors.New("not implemented")
 }
