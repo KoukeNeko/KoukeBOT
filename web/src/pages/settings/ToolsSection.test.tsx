@@ -8,6 +8,7 @@ import ToolsSection from './ToolsSection'
 function buildForm(mode: SettingsData['web_tool_mode']): SettingsData {
   return {
     gemini_api_key: '',
+    anthropic_api_key: '',
     gemini_model: 'gemini-2.5-pro',
     discord_token: '',
     provider_type: 'api-key',

@@ -1,5 +1,6 @@
 export interface SettingsData {
   gemini_api_key: string
+  anthropic_api_key: string
   gemini_model: string
   discord_token: string
   provider_type: string

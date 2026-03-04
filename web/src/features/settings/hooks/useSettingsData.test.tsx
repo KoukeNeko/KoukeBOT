@@ -43,6 +43,7 @@ vi.mock('./useAIStudioActions', () => ({
 
 const settingsFixture: SettingsData = {
   gemini_api_key: '',
+  anthropic_api_key: '',
   gemini_model: 'gemini-2.5-pro',
   discord_token: '',
   provider_type: 'api-key',
@@ -256,6 +257,45 @@ describe('useSettingsData', () => {
       fallback_second_model: 'gemini-2.0-flash',
       fallback_third_model_id: 'gemini-api-key/gemini-2.5-flash',
       fallback_third_model: 'gemini-2.5-flash',
+    })
+  })
+
+  it('keeps anthropic-api-key provider and sends anthropic_api_key', async () => {
+    vi.mocked(api.getSettings).mockResolvedValueOnce({
+      ...settingsFixture,
+      provider_type: 'api-key',
+      provider_id: 'anthropic-api-key',
+      model_id: 'anthropic-api-key/claude-sonnet-4-6',
+      gemini_model: 'claude-sonnet-4-6',
+      anthropic_api_key: 'sk-ant-api-123',
+    })
+    vi.mocked(api.listModels).mockResolvedValue([
+      {
+        id: 'anthropic-api-key/claude-sonnet-4-6',
+        display_name: 'Anthropic / Claude Sonnet 4.6',
+        provider_id: 'anthropic-api-key',
+        supports_text: true,
+        supports_multimodal: true,
+        supports_tools: true,
+        reasoning: true,
+      },
+    ])
+
+    const { result } = renderHook(() => useSettingsData())
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleSave('api-key')
+    })
+
+    const lastCall = vi.mocked(api.updateSettings).mock.calls.at(-1)
+    expect(lastCall?.[0]).toMatchObject({
+      provider_type: 'api-key',
+      provider_id: 'anthropic-api-key',
+      anthropic_api_key: 'sk-ant-api-123',
     })
   })
 })

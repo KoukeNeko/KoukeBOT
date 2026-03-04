@@ -16,6 +16,7 @@ const (
 	ErrorKindModelCapacity
 	ErrorKindCircuitOpen
 	ErrorKindQueueFull
+	ErrorKindQueueTimeout
 )
 
 type ParsedError struct {
@@ -45,6 +46,10 @@ func ParseLLMError(err error) ParsedError {
 	}
 	if strings.Contains(lower, "request queue full") {
 		out.Kind = ErrorKindQueueFull
+		return out
+	}
+	if strings.Contains(lower, "request timed out waiting in queue") {
+		out.Kind = ErrorKindQueueTimeout
 		return out
 	}
 

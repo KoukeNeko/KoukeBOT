@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/KoukeNeko/KoukeBOT/internal/app"
+	"github.com/KoukeNeko/KoukeBOT/internal/domain"
 	"github.com/KoukeNeko/KoukeBOT/internal/infra/llm"
 )
 
@@ -24,6 +27,8 @@ type OAuthDetectResponse struct {
 	ClientSecret string `json:"client_secret,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
+
+const anthropicMessagesEndpoint = "https://api.anthropic.com/v1/messages"
 
 func (h *Handlers) OAuthDetect(w http.ResponseWriter, r *http.Request) {
 	creds, err := llm.DetectGeminiCLI()
@@ -297,7 +302,6 @@ func derivePublicBaseURL(r *http.Request) string {
 	return strings.TrimSuffix(fmt.Sprintf("%s://%s", proto, host), "/")
 }
 
-
 // finalizeTokenImport resolves the model from settings, creates the OAuth
 // provider, adds it to the pool, and persists the provider selection.
 // Both OAuthImportPastedToken and OAuthImportCLIToken call this after
@@ -313,7 +317,15 @@ func (h *Handlers) finalizeTokenImport(tokenData *llm.OAuthTokenData, providerID
 		}
 	}
 
-	provider, err := llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
+	var (
+		provider llm.Provider
+		err      error
+	)
+	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderAnthropicSetupToken {
+		provider, err = llm.NewAnthropicSetupTokenProvider(tokenData.AccessToken, model)
+	} else {
+		provider, err = llm.NewGeminiOAuthProviderWithProvider(h.ctx, tokenData, providerID, model, endpointPolicy)
+	}
 	if err != nil {
 		return fmt.Errorf("provider creation: %w", err)
 	}
@@ -322,6 +334,163 @@ func (h *Handlers) finalizeTokenImport(tokenData *llm.OAuthTokenData, providerID
 	pool.AddOrReplaceWithUsage(provider, tokenData.Email, tokenData.UsageStats)
 
 	h.persistOAuthProviderSelection(providerID)
+	return nil
+}
+
+func (h *Handlers) OAuthAnthropicImportToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SetupToken string `json:"setup_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	token := strings.TrimSpace(req.SetupToken)
+	if err := llm.ValidateAnthropicSetupToken(token); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tokenData := newAnthropicSetupTokenData(token)
+	if err := h.persistAnthropicSetupToken(tokenData); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"email":       tokenData.Email,
+		"provider_id": tokenData.ProviderID,
+		"status":      "ok",
+	})
+}
+
+func (h *Handlers) OAuthAnthropicImportEnv(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(os.Getenv("CLAUDE_SETUP_TOKEN"))
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("ANTHROPIC_SETUP_TOKEN"))
+	}
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "missing CLAUDE_SETUP_TOKEN or ANTHROPIC_SETUP_TOKEN")
+		return
+	}
+	if err := llm.ValidateAnthropicSetupToken(token); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tokenData := newAnthropicSetupTokenData(token)
+	if err := h.persistAnthropicSetupToken(tokenData); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"email":       tokenData.Email,
+		"provider_id": tokenData.ProviderID,
+		"status":      "ok",
+	})
+}
+
+func (h *Handlers) OAuthAnthropicStatus(w http.ResponseWriter, r *http.Request) {
+	resp := OAuthStatusResponse{ProviderID: llm.ProviderAnthropicSetupToken}
+	if h.oauthFlow == nil || strings.TrimSpace(h.oauthFlow.PoolPath()) == "" {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	tokens, err := llm.LoadOAuthPool(h.oauthFlow.PoolPath())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load OAuth pool: "+err.Error())
+		return
+	}
+
+	anthropicEmails := make(map[string]struct{})
+	for _, token := range tokens {
+		if token == nil {
+			continue
+		}
+		if llm.NormalizeGoogleProviderID(token.ProviderID) != llm.ProviderAnthropicSetupToken {
+			continue
+		}
+		email := strings.TrimSpace(token.Email)
+		if email == "" {
+			continue
+		}
+		anthropicEmails[email] = struct{}{}
+	}
+
+	if len(anthropicEmails) == 0 {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	filtered := make([]app.PoolStatus, 0, len(anthropicEmails))
+	if pool := h.providerManager.GetPool(); pool != nil {
+		for _, entry := range pool.Entries() {
+			if _, ok := anthropicEmails[strings.TrimSpace(entry.Email)]; ok {
+				filtered = append(filtered, entry)
+			}
+		}
+	}
+
+	resp.Pool = filtered
+	resp.PoolSize = len(filtered)
+	if len(filtered) > 0 {
+		resp.Authenticated = true
+		resp.Email = filtered[0].Email
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	for _, token := range tokens {
+		if token == nil {
+			continue
+		}
+		if llm.NormalizeGoogleProviderID(token.ProviderID) != llm.ProviderAnthropicSetupToken {
+			continue
+		}
+		resp.Authenticated = true
+		resp.Email = strings.TrimSpace(token.Email)
+		break
+	}
+	resp.PoolSize = len(anthropicEmails)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func newAnthropicSetupTokenData(setupToken string) *llm.OAuthTokenData {
+	email := summarizeAnthropicSetupToken(setupToken)
+	return &llm.OAuthTokenData{
+		AccessToken: strings.TrimSpace(setupToken),
+		TokenType:   "Bearer",
+		Expiry:      time.Now().Add(365 * 24 * time.Hour),
+		Email:       email,
+		ProviderID:  llm.ProviderAnthropicSetupToken,
+	}
+}
+
+func summarizeAnthropicSetupToken(setupToken string) string {
+	token := strings.TrimSpace(setupToken)
+	if token == "" {
+		return "anthropic:setup_token_unknown"
+	}
+	sum := sha256.Sum256([]byte(token))
+	return "anthropic:setup_token_" + hex.EncodeToString(sum[:4])
+}
+
+func (h *Handlers) persistAnthropicSetupToken(tokenData *llm.OAuthTokenData) error {
+	if tokenData == nil {
+		return fmt.Errorf("token data is required")
+	}
+	if h.oauthFlow == nil || strings.TrimSpace(h.oauthFlow.PoolPath()) == "" {
+		return fmt.Errorf("OAuth pool path is not configured")
+	}
+	if err := llm.AddToOAuthPool(h.oauthFlow.PoolPath(), tokenData); err != nil {
+		return fmt.Errorf("persist token: %w", err)
+	}
+	if err := h.finalizeTokenImport(tokenData, llm.ProviderAnthropicSetupToken); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -540,6 +709,24 @@ func (h *Handlers) OAuthPoolVerify(w http.ResponseWriter, r *http.Request) {
 			tokens = []*llm.OAuthTokenData{token}
 		}
 	}
+	if providerID != "" {
+		filtered := make([]*llm.OAuthTokenData, 0, len(tokens))
+		for _, token := range tokens {
+			if token == nil {
+				continue
+			}
+			tokenProviderID := llm.NormalizeGoogleProviderID(token.ProviderID)
+			if providerID == llm.ProviderAnthropicSetupToken {
+				if tokenProviderID != llm.ProviderAnthropicSetupToken {
+					continue
+				}
+			} else if tokenProviderID != "" && tokenProviderID != providerID {
+				continue
+			}
+			filtered = append(filtered, token)
+		}
+		tokens = filtered
+	}
 	if targetEmail != "" {
 		filtered := make([]*llm.OAuthTokenData, 0, len(tokens))
 		for _, token := range tokens {
@@ -576,50 +763,84 @@ func (h *Handlers) OAuthPoolVerify(w http.ResponseWriter, r *http.Request) {
 			CheckedAt:    checkedAt,
 		}
 
-		verifyCtx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
-		probe, verifyErr := llm.VerifyOAuthAccountWithProvider(
-			verifyCtx,
-			tokenData,
-			result.ProviderID,
-			model,
-			endpointPolicy,
+		var (
+			provider llm.Provider
+			probeErr error
 		)
-		cancel()
-		if verifyErr != nil {
+		if providerID == llm.ProviderAnthropicSetupToken {
+			started := time.Now()
+			if err := llm.ValidateAnthropicSetupToken(tokenData.AccessToken); err != nil {
+				result.Verified = false
+				result.Error = err.Error()
+				results = append(results, result)
+				continue
+			}
+			provider, probeErr = llm.NewAnthropicSetupTokenProvider(tokenData.AccessToken, model)
+			if probeErr == nil {
+				verifyCtx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
+				chatResp, chatErr := provider.Chat(verifyCtx, llm.ChatRequest{
+					Messages: []domain.Message{
+						{Role: domain.RoleUser, Content: "ping"},
+					},
+					ToolMode: llm.ToolModeDisabled,
+				})
+				cancel()
+				if chatErr != nil {
+					probeErr = chatErr
+				} else {
+					result.Preview = strings.TrimSpace(chatResp.Content)
+					result.LatencyMS = time.Since(started).Milliseconds()
+				}
+			}
+			result.ProviderID = llm.ProviderAnthropicSetupToken
+			result.EndpointUsed = anthropicMessagesEndpoint
+		} else {
+			verifyCtx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
+			probe, verifyErr := llm.VerifyOAuthAccountWithProvider(
+				verifyCtx,
+				tokenData,
+				result.ProviderID,
+				model,
+				endpointPolicy,
+			)
+			cancel()
+			if verifyErr != nil {
+				probeErr = verifyErr
+			} else if probe != nil {
+				result.Email = firstNonEmpty(probe.Email, tokenData.Email, originalEmail, result.Email)
+				result.ProviderID = llm.NormalizeGoogleProviderID(firstNonEmpty(probe.ProviderID, tokenData.ProviderID, result.ProviderID))
+				result.ProjectID = firstNonEmpty(probe.ProjectID, tokenData.ProjectID, result.ProjectID)
+				result.TierID = firstNonEmpty(probe.TierID, tokenData.TierID, result.TierID)
+				result.EndpointUsed = firstNonEmpty(probe.EndpointUsed, tokenData.EndpointUsed, result.EndpointUsed)
+				result.Preview = strings.TrimSpace(probe.Preview)
+				result.LatencyMS = probe.Latency.Milliseconds()
+			}
+			if probeErr == nil {
+				provider, probeErr = llm.NewGeminiOAuthProviderWithProvider(
+					h.ctx,
+					tokenData,
+					result.ProviderID,
+					model,
+					endpointPolicy,
+				)
+			}
+		}
+
+		if probeErr != nil {
 			result.Verified = false
-			result.Error = verifyErr.Error()
+			result.Error = probeErr.Error()
 			emailForPool := firstNonEmpty(strings.TrimSpace(tokenData.Email), originalEmail, result.Email)
 			if emailForPool != "" {
 				result.Email = emailForPool
-				pool.MarkTransientFailure(emailForPool, verifyErr, 45*time.Second)
+				pool.MarkTransientFailure(emailForPool, probeErr, 45*time.Second)
 			}
 			results = append(results, result)
 			continue
 		}
 
-		if probe != nil {
-			result.Email = firstNonEmpty(probe.Email, tokenData.Email, originalEmail, result.Email)
-			result.ProviderID = llm.NormalizeGoogleProviderID(firstNonEmpty(probe.ProviderID, tokenData.ProviderID, result.ProviderID))
-			result.ProjectID = firstNonEmpty(probe.ProjectID, tokenData.ProjectID, result.ProjectID)
-			result.TierID = firstNonEmpty(probe.TierID, tokenData.TierID, result.TierID)
-			result.EndpointUsed = firstNonEmpty(probe.EndpointUsed, tokenData.EndpointUsed, result.EndpointUsed)
-			result.Preview = strings.TrimSpace(probe.Preview)
-			result.LatencyMS = probe.Latency.Milliseconds()
-		}
-
-		provider, providerErr := llm.NewGeminiOAuthProviderWithProvider(
-			h.ctx,
-			tokenData,
-			result.ProviderID,
-			model,
-			endpointPolicy,
-		)
-		if providerErr != nil {
+		if provider == nil {
 			result.Verified = false
-			result.Error = "provider creation: " + providerErr.Error()
-			if result.Email != "" {
-				pool.MarkTransientFailure(result.Email, providerErr, 45*time.Second)
-			}
+			result.Error = "provider creation: nil provider"
 			results = append(results, result)
 			continue
 		}
@@ -643,10 +864,15 @@ func (h *Handlers) OAuthPoolVerify(w http.ResponseWriter, r *http.Request) {
 	failedCount := len(results) - verifiedCount
 	logAPI.Logf("OAuth pool verify: checked=%d ok=%d fail=%d provider=%s model=%s", len(results), verifiedCount, failedCount, providerID, model)
 
+	endpoint := "cloudcode-pa.googleapis.com/*:streamGenerateContent?alt=sse"
+	if providerID == llm.ProviderAnthropicSetupToken {
+		endpoint = anthropicMessagesEndpoint
+	}
+
 	writeJSON(w, http.StatusOK, OAuthPoolVerifyResponse{
 		Status:        "ok",
 		Model:         model,
-		Endpoint:      "cloudcode-pa.googleapis.com/*:streamGenerateContent?alt=sse",
+		Endpoint:      endpoint,
 		CheckedAt:     checkedAt,
 		Results:       results,
 		VerifiedCount: verifiedCount,

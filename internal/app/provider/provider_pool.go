@@ -184,7 +184,13 @@ func (pp *ProviderPool) SetFallbackModels(models []string) {
 	seen := map[string]struct{}{}
 	normalized := make([]string, 0, 3)
 	for _, model := range models {
-		trimmed := llm.NormalizeGoogleModelAlias(strings.TrimSpace(model))
+		trimmed := llm.NormalizeModelID(strings.TrimSpace(model))
+		switch trimmed {
+		case "gemini-3-pro":
+			trimmed = "gemini-3-pro-preview"
+		case "gemini-3-flash":
+			trimmed = "gemini-3-flash-preview"
+		}
 		if trimmed == "" {
 			continue
 		}

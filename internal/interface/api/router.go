@@ -103,6 +103,9 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /api/oauth/gemini/status", r.handlers.OAuthStatus)
 	r.mux.HandleFunc("POST /api/oauth/gemini/import-cli", r.handlers.OAuthImportCLIToken)
 	r.mux.HandleFunc("POST /api/oauth/gemini/import-token", r.handlers.OAuthImportPastedToken)
+	r.mux.HandleFunc("POST /api/oauth/anthropic/import-token", r.handlers.OAuthAnthropicImportToken)
+	r.mux.HandleFunc("POST /api/oauth/anthropic/import-env", r.handlers.OAuthAnthropicImportEnv)
+	r.mux.HandleFunc("GET /api/oauth/anthropic/status", r.handlers.OAuthAnthropicStatus)
 
 	// OAuth Pool
 	r.mux.HandleFunc("GET /api/oauth/pool", r.handlers.OAuthPoolList)

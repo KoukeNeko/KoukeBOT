@@ -345,3 +345,59 @@ func TestResolveFallbackModelChainReturnsOrderedUniqueModels(t *testing.T) {
 		t.Fatalf("id_chain[2] = %q, want %q", ids[2], "google-gemini-cli/gemini-2.5-pro")
 	}
 }
+
+func TestNormalizeSettingsSupportsAnthropicAPIKeyProvider(t *testing.T) {
+	in := Settings{
+		ProviderType:    ProviderAPIKey,
+		ProviderID:      "anthropic-api-key",
+		ModelID:         "anthropic-api-key/claude-opus-4-6",
+		GeminiModel:     "claude-opus-4-6",
+		AnthropicAPIKey: "sk-ant-api-1",
+	}
+	raw := map[string]json.RawMessage{
+		"provider_type":     json.RawMessage(`"api-key"`),
+		"provider_id":       json.RawMessage(`"anthropic-api-key"`),
+		"model_id":          json.RawMessage(`"anthropic-api-key/claude-opus-4-6"`),
+		"anthropic_api_key": json.RawMessage(`"sk-ant-api-1"`),
+		"gemini_model":      json.RawMessage(`"claude-opus-4-6"`),
+	}
+
+	got := normalizeSettings(in, raw)
+	if got.ProviderID != "anthropic-api-key" {
+		t.Fatalf("ProviderID = %q, want %q", got.ProviderID, "anthropic-api-key")
+	}
+	if got.ProviderType != ProviderAPIKey {
+		t.Fatalf("ProviderType = %q, want %q", got.ProviderType, ProviderAPIKey)
+	}
+	if got.GeminiModel != "claude-opus-4-6" {
+		t.Fatalf("GeminiModel = %q, want %q", got.GeminiModel, "claude-opus-4-6")
+	}
+	if got.ModelID != "anthropic-api-key/claude-opus-4-6" {
+		t.Fatalf("ModelID = %q, want %q", got.ModelID, "anthropic-api-key/claude-opus-4-6")
+	}
+}
+
+func TestNormalizeSettingsSupportsAnthropicSetupTokenProvider(t *testing.T) {
+	in := Settings{
+		ProviderType: ProviderOAuth,
+		ProviderID:   "anthropic-setup-token",
+		ModelID:      "anthropic-setup-token/claude-sonnet-4-6",
+		GeminiModel:  "claude-sonnet-4-6",
+	}
+	raw := map[string]json.RawMessage{
+		"provider_type": json.RawMessage(`"oauth"`),
+		"provider_id":   json.RawMessage(`"anthropic-setup-token"`),
+		"model_id":      json.RawMessage(`"anthropic-setup-token/claude-sonnet-4-6"`),
+	}
+
+	got := normalizeSettings(in, raw)
+	if got.ProviderID != "anthropic-setup-token" {
+		t.Fatalf("ProviderID = %q, want %q", got.ProviderID, "anthropic-setup-token")
+	}
+	if got.ProviderType != ProviderOAuth {
+		t.Fatalf("ProviderType = %q, want %q", got.ProviderType, ProviderOAuth)
+	}
+	if got.ModelID != "anthropic-setup-token/claude-sonnet-4-6" {
+		t.Fatalf("ModelID = %q, want %q", got.ModelID, "anthropic-setup-token/claude-sonnet-4-6")
+	}
+}

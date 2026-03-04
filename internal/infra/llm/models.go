@@ -34,6 +34,10 @@ func ListGeminiModels(ctx context.Context, apiKey string, oauthToken *OAuthToken
 func ListGeminiModelsForProvider(ctx context.Context, apiKey string, oauthToken *OAuthTokenData, providerType string) ([]ModelEntry, error) {
 	providerID := NormalizeGoogleProviderID(providerType)
 
+	if providerID == ProviderAnthropicAPIKey || providerID == ProviderAnthropicSetupToken {
+		return staticCatalogForProvider(providerID), nil
+	}
+
 	// aistudio-rpc uses reverse-engineered RPC; keep a static catalog.
 	if providerID == ProviderAIStudioRPC {
 		return staticCatalogForProvider(providerID), nil
@@ -251,7 +255,11 @@ func normalizeReturnedModelID(providerID, modelID string) string {
 		return BuildProviderModelID(pid, mid)
 	}
 	mid := NormalizeGoogleModelAlias(modelID)
-	if providerID == ProviderGoogleGeminiCLI || providerID == ProviderGoogleAntigravity || providerID == ProviderAIStudioRPC {
+	if providerID == ProviderGoogleGeminiCLI ||
+		providerID == ProviderGoogleAntigravity ||
+		providerID == ProviderAIStudioRPC ||
+		providerID == ProviderAnthropicAPIKey ||
+		providerID == ProviderAnthropicSetupToken {
 		return BuildProviderModelID(providerID, mid)
 	}
 	return NormalizeModelID(mid)
@@ -266,6 +274,8 @@ func staticCatalogForProvider(providerID string) []ModelEntry {
 		return providerCatalogForGeminiCLI()
 	case ProviderAIStudioRPC:
 		return providerCatalogForAIStudioRPC()
+	case ProviderAnthropicAPIKey, ProviderAnthropicSetupToken:
+		return providerCatalogForAnthropic(providerID)
 	default:
 		return defaultModelsWithCapabilities()
 	}
@@ -447,6 +457,38 @@ func providerCatalogForAIStudioRPC() []ModelEntry {
 			SupportsText:       true,
 			SupportsMultimodal: false,
 			SupportsTools:      false,
+			Reasoning:          false,
+		},
+	})
+}
+
+func providerCatalogForAnthropic(providerID string) []ModelEntry {
+	return normalizeModelEntries([]ModelEntry{
+		{
+			ID:                 BuildProviderModelID(providerID, "claude-sonnet-4-6"),
+			DisplayName:        "Anthropic / Claude Sonnet 4.6",
+			ProviderID:         providerID,
+			SupportsText:       true,
+			SupportsMultimodal: true,
+			SupportsTools:      true,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(providerID, "claude-opus-4-6"),
+			DisplayName:        "Anthropic / Claude Opus 4.6",
+			ProviderID:         providerID,
+			SupportsText:       true,
+			SupportsMultimodal: true,
+			SupportsTools:      true,
+			Reasoning:          true,
+		},
+		{
+			ID:                 BuildProviderModelID(providerID, "claude-sonnet-4-5"),
+			DisplayName:        "Anthropic / Claude Sonnet 4.5",
+			ProviderID:         providerID,
+			SupportsText:       true,
+			SupportsMultimodal: true,
+			SupportsTools:      true,
 			Reasoning:          false,
 		},
 	})

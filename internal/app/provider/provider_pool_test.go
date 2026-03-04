@@ -853,6 +853,118 @@ func TestRequestQueueContextCancellation(t *testing.T) {
 	}
 }
 
+func TestProviderPoolAllBlockedGlobalCooldownQueuesAndRetries(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetTransientRecoveryWait(false, time.Second)
+	pool.SetQueueConfig(true, 10, 2*time.Second)
+	pool.AddOrReplace(&stubProvider{id: "ok"}, "a@example.com")
+
+	blockUntil := time.Now().Add(500 * time.Millisecond)
+	pool.mu.Lock()
+	pool.globalCooldownUntil = blockUntil
+	pool.entries[0].cooldownUntil = blockUntil
+	pool.mu.Unlock()
+
+	type result struct {
+		resp *llm.ChatResponse
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+			SystemPrompt: "x",
+			Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+		})
+		done <- result{resp: resp, err: err}
+	}()
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && pool.QueueDepth() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pool.QueueDepth() == 0 {
+		t.Fatal("expected request to be queued while all accounts are blocked")
+	}
+
+	pool.mu.Lock()
+	pool.globalCooldownUntil = time.Now().Add(-time.Second)
+	pool.entries[0].cooldownUntil = time.Now().Add(-time.Second)
+	pool.mu.Unlock()
+	pool.queue.notifyAll()
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("expected queued retry success, got error: %v", got.err)
+		}
+		if got.resp == nil || got.resp.Content != "ok" {
+			t.Fatalf("unexpected response: %#v", got.resp)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for queued retry result")
+	}
+}
+
+func TestProviderPoolAllBlockedGlobalCooldownQueueTimeoutPreservesExhaustedError(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetTransientRecoveryWait(false, time.Second)
+	pool.SetQueueConfig(true, 10, 50*time.Millisecond)
+	pool.AddOrReplace(&stubProvider{id: "ok"}, "a@example.com")
+
+	blockUntil := time.Now().Add(2 * time.Second)
+	pool.mu.Lock()
+	pool.globalCooldownUntil = blockUntil
+	pool.entries[0].cooldownUntil = blockUntil
+	pool.mu.Unlock()
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected queue timeout error")
+	}
+	if !strings.Contains(err.Error(), "all 1 OAuth account(s) exhausted") {
+		t.Fatalf("expected exhausted semantics, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "queue retry failed") {
+		t.Fatalf("expected queue retry failure context, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "request timed out waiting in queue") {
+		t.Fatalf("expected queue timeout detail, got: %v", err)
+	}
+}
+
+func TestProviderPoolAllBlockedGlobalCooldownWithoutQueueReturnsExhausted(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetTransientRecoveryWait(false, time.Second)
+	pool.SetQueueConfig(false, 0, 0)
+	pool.AddOrReplace(&stubProvider{id: "ok"}, "a@example.com")
+
+	blockUntil := time.Now().Add(2 * time.Second)
+	pool.mu.Lock()
+	pool.globalCooldownUntil = blockUntil
+	pool.entries[0].cooldownUntil = blockUntil
+	pool.mu.Unlock()
+
+	_, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected exhausted error")
+	}
+	if !strings.Contains(err.Error(), "all 1 OAuth account(s) exhausted") {
+		t.Fatalf("expected exhausted semantics, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "queue retry failed") {
+		t.Fatalf("did not expect queue retry context when queue is disabled, got: %v", err)
+	}
+}
+
 func TestCircuitBreakerStateMachine(t *testing.T) {
 	cb := newCircuitBreaker(3, 50*time.Millisecond)
 

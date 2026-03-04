@@ -4,6 +4,7 @@ import "github.com/KoukeNeko/KoukeBOT/internal/infra/config"
 
 type SettingsResponse struct {
 	GeminiAPIKey                    string              `json:"gemini_api_key"`
+	AnthropicAPIKey                 string              `json:"anthropic_api_key"`
 	GeminiModel                     string              `json:"gemini_model"`
 	DiscordToken                    string              `json:"discord_token"`
 	ProviderType                    string              `json:"provider_type"`
@@ -64,6 +65,7 @@ type SettingsResponse struct {
 
 type SettingsUpdateRequest struct {
 	GeminiAPIKey                    string                    `json:"gemini_api_key"`
+	AnthropicAPIKey                 string                    `json:"anthropic_api_key"`
 	GeminiModel                     string                    `json:"gemini_model"`
 	DiscordToken                    string                    `json:"discord_token"`
 	ProviderType                    string                    `json:"provider_type"`

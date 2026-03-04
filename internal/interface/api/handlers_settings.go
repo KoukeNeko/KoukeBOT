@@ -37,6 +37,7 @@ func (h *Handlers) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, SettingsResponse{
 		GeminiAPIKey:                    maskKey(settings.GeminiAPIKey),
+		AnthropicAPIKey:                 maskKey(settings.AnthropicAPIKey),
 		GeminiModel:                     model,
 		DiscordToken:                    maskKey(settings.DiscordToken),
 		ProviderType:                    resolveProviderTypeForSettings(settings, providerID),
@@ -200,6 +201,15 @@ func (h *Handlers) buildAPIKeyProvider(s config.Settings, providerID, model stri
 			return nil, fmt.Errorf("invalid OpenAI API key: %w", err)
 		}
 		return provider, nil
+	case llm.ProviderAnthropicAPIKey:
+		if !hasAnthropicAPIKeyForSettings(s.AnthropicAPIKey) {
+			return nil, fmt.Errorf("no Anthropic API key configured")
+		}
+		provider, err := llm.NewAnthropicAPIProvider(s.AnthropicAPIKey, model)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Anthropic API key: %w", err)
+		}
+		return provider, nil
 	default:
 		if !hasGeminiAPIKeyForSettings(s.GeminiAPIKey) {
 			return nil, fmt.Errorf("no Gemini API key configured")
@@ -222,6 +232,13 @@ func hasGeminiAPIKeyForSettings(apiKey string) bool {
 	return strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")) != ""
 }
 
+func hasAnthropicAPIKeyForSettings(apiKey string) bool {
+	if strings.TrimSpace(apiKey) != "" {
+		return true
+	}
+	return strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != ""
+}
+
 func (h *Handlers) buildGeminiCLIProvider(model string) (llm.Provider, error) {
 	provider, err := llm.NewGeminiCLIProvider(model)
 	if err != nil {
@@ -239,7 +256,7 @@ func (h *Handlers) GetProviderStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	activeProviderID, activeModel, activeModelID := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
-	effectiveModel := llm.NormalizeGoogleModelAlias(info.Model)
+	effectiveModel := llm.NormalizeModelAliasForProvider(activeProviderID, info.Model)
 	if effectiveModel == "" {
 		effectiveModel = activeModel
 	}
@@ -293,6 +310,15 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, llm.ListOpenAIModels())
 		return
 	}
+	if providerID == llm.ProviderAnthropicAPIKey || providerID == llm.ProviderAnthropicSetupToken {
+		models, err := llm.ListGeminiModelsForProvider(r.Context(), "", nil, providerID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "list models: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, models)
+		return
+	}
 
 	var oauthToken *llm.OAuthTokenData
 	// Prefer provider-matched pool token (has ProjectID) for dynamic discovery.
@@ -339,33 +365,44 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 	probeNotFound := false
 	for _, tokenData := range tokens {
 		tokenProviderID := llm.NormalizeGoogleProviderID(tokenData.ProviderID)
-		if tokenProviderID != "" && tokenProviderID != targetProviderID {
+		if targetProviderID == llm.ProviderAnthropicSetupToken {
+			if tokenProviderID != llm.ProviderAnthropicSetupToken {
+				continue
+			}
+		} else if tokenProviderID != "" && tokenProviderID != targetProviderID {
 			continue
 		}
 
-		if err := llm.RefreshIfNeeded(h.ctx, tokenData, ""); err != nil {
-			logAPI.Warnf("build-provider: token refresh failed for %s: %v", tokenData.Email, err)
-			continue
-		}
-		if poolPath != "" && tokenData.Email != "" {
-			if err := llm.UpdateOAuthPoolToken(poolPath, tokenData.Email, tokenData); err != nil {
-				logAPI.Warnf("build-provider: persist refreshed token failed for %s: %v", tokenData.Email, err)
+		if targetProviderID != llm.ProviderAnthropicSetupToken {
+			if err := llm.RefreshIfNeeded(h.ctx, tokenData, ""); err != nil {
+				logAPI.Warnf("build-provider: token refresh failed for %s: %v", tokenData.Email, err)
+				continue
+			}
+			if poolPath != "" && tokenData.Email != "" {
+				if err := llm.UpdateOAuthPoolToken(poolPath, tokenData.Email, tokenData); err != nil {
+					logAPI.Warnf("build-provider: persist refreshed token failed for %s: %v", tokenData.Email, err)
+				}
 			}
 		}
-		p, err := llm.NewGeminiOAuthProviderWithProvider(
-			h.ctx,
-			tokenData,
-			providerID,
-			model,
-			s.EndpointPolicy,
-		)
+		var p llm.Provider
+		if targetProviderID == llm.ProviderAnthropicSetupToken {
+			p, err = llm.NewAnthropicSetupTokenProvider(tokenData.AccessToken, model)
+		} else {
+			p, err = llm.NewGeminiOAuthProviderWithProvider(
+				h.ctx,
+				tokenData,
+				providerID,
+				model,
+				s.EndpointPolicy,
+			)
+		}
 		if err != nil {
 			logAPI.Warnf("build-provider: provider init failed for %s: %v", tokenData.Email, err)
 			continue
 		}
 
 		if strictOAuthProbe {
-			if probeErr := h.probeOAuthProviderStrict(richContext(h.ctx), p, model, fallbackModels, fallbackEnabled); probeErr != nil {
+			if probeErr := h.probeOAuthProviderStrict(richContext(h.ctx), p, targetProviderID, model, fallbackModels, fallbackEnabled); probeErr != nil {
 				if isOAuthModelNotFoundError(probeErr) {
 					probeNotFound = true
 					logAPI.Warnf("build-provider: OAuth model probe 404 for %s: %v", tokenData.Email, probeErr)
@@ -415,15 +452,16 @@ func selectOAuthTokenForProvider(tokens []*llm.OAuthTokenData, providerID string
 func (h *Handlers) probeOAuthProviderStrict(
 	ctx context.Context,
 	provider llm.Provider,
+	providerID string,
 	primaryModel string,
 	fallbackModels []string,
 	fallbackEnabled bool,
 ) error {
 	if err := h.probeOAuthTextModel(ctx, provider); err != nil {
-		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModels, fallbackEnabled)
+		return h.handleOAuthProbeErrorWithFallback(ctx, provider, providerID, err, primaryModel, fallbackModels, fallbackEnabled)
 	}
 	if err := h.probeOAuthMultimodalModel(ctx, provider); err != nil {
-		return h.handleOAuthProbeErrorWithFallback(ctx, provider, err, primaryModel, fallbackModels, fallbackEnabled)
+		return h.handleOAuthProbeErrorWithFallback(ctx, provider, providerID, err, primaryModel, fallbackModels, fallbackEnabled)
 	}
 	return nil
 }
@@ -431,6 +469,7 @@ func (h *Handlers) probeOAuthProviderStrict(
 func (h *Handlers) handleOAuthProbeErrorWithFallback(
 	ctx context.Context,
 	provider llm.Provider,
+	providerID string,
 	probeErr error,
 	primaryModel string,
 	fallbackModels []string,
@@ -447,9 +486,9 @@ func (h *Handlers) handleOAuthProbeErrorWithFallback(
 		return fmt.Errorf("fallback probe requested but provider does not support model switching: %w", probeErr)
 	}
 
-	primary := llm.NormalizeGoogleModelAlias(primaryModel)
+	primary := llm.NormalizeModelAliasForProvider(providerID, primaryModel)
 	for _, candidate := range fallbackModels {
-		fallbackModel := llm.NormalizeGoogleModelAlias(candidate)
+		fallbackModel := llm.NormalizeModelAliasForProvider(providerID, candidate)
 		if fallbackModel == "" {
 			continue
 		}
@@ -574,6 +613,10 @@ func resolveProviderTypeForSettings(settings config.Settings, providerID string)
 		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
+	case llm.ProviderAnthropicAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderAnthropicSetupToken:
+		return config.ProviderOAuth
 	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	}
@@ -584,7 +627,10 @@ func resolveProviderTypeForSettings(settings config.Settings, providerID string)
 	case config.ProviderOAuth:
 		return config.ProviderOAuth
 	default:
-		if strings.TrimSpace(settings.GeminiAPIKey) != "" || strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" {
+		if strings.TrimSpace(settings.GeminiAPIKey) != "" ||
+			strings.TrimSpace(settings.AnthropicAPIKey) != "" ||
+			strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" ||
+			strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" {
 			return config.ProviderAPIKey
 		}
 		return config.ProviderOAuth
@@ -621,7 +667,7 @@ func (h *Handlers) resolveProviderObservability() (model string, endpoint string
 		return "", "", ""
 	}
 	if modelAware, ok := provider.(interface{ EffectiveModel() string }); ok {
-		model = llm.NormalizeGoogleModelAlias(modelAware.EffectiveModel())
+		model = llm.NormalizeModelID(modelAware.EffectiveModel())
 	}
 	if endpointAware, ok := provider.(interface{ EffectiveEndpoint() string }); ok {
 		endpoint = endpointAware.EffectiveEndpoint()

@@ -132,6 +132,12 @@ export default function SettingsPage({ vm }: Props) {
             onImportPastedToken={vm.oauth.handleImportPastedToken}
             importingCLI={vm.oauth.importingCLI}
             onImportCLIToken={vm.oauth.handleImportCLIToken}
+            anthropicSetupToken={vm.oauth.anthropicSetupToken}
+            setAnthropicSetupToken={vm.oauth.setAnthropicSetupToken}
+            importingAnthropicToken={vm.oauth.importingAnthropicToken}
+            importingAnthropicEnv={vm.oauth.importingAnthropicEnv}
+            onImportAnthropicToken={vm.oauth.handleImportAnthropicToken}
+            onImportAnthropicEnv={vm.oauth.handleImportAnthropicEnv}
             aistudioStatus={vm.aistudio.sessionStatus}
             aistudioFileName={vm.aistudio.selectedFileName}
             aistudioPastedInput={vm.aistudio.pastedInput}

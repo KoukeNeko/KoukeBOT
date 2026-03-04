@@ -55,7 +55,10 @@ func initProvider(
 		logs.LLM.Warnf("API key selected but invalid — configure at http://localhost:%s/settings", port)
 
 	default:
-		if (settings.GeminiAPIKey != "" || strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "") &&
+		if (settings.GeminiAPIKey != "" ||
+			settings.AnthropicAPIKey != "" ||
+			strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" ||
+			strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "") &&
 			initAPIKeyProvider(ctx, settings, providerID, pm, model, logs) {
 			return
 		}
@@ -99,10 +102,14 @@ func initAPIKeyProvider(
 	model string,
 	logs Loggers,
 ) bool {
-	if llm.NormalizeGoogleProviderID(providerID) == llm.ProviderOpenAIAPIKey {
+	switch llm.NormalizeGoogleProviderID(providerID) {
+	case llm.ProviderOpenAIAPIKey:
 		return initOpenAIAPIKeyProvider(strings.TrimSpace(os.Getenv("OPENAI_API_KEY")), pm, model, logs)
+	case llm.ProviderAnthropicAPIKey:
+		return initAnthropicAPIKeyProvider(settings.AnthropicAPIKey, pm, model, logs)
+	default:
+		return initGeminiAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model, logs)
 	}
-	return initGeminiAPIKeyProvider(ctx, settings.GeminiAPIKey, pm, model, logs)
 }
 
 func initGeminiAPIKeyProvider(ctx context.Context, apiKey string, pm *app.ProviderManager, model string, logs Loggers) bool {
@@ -143,6 +150,23 @@ func initOpenAIAPIKeyProvider(apiKey string, pm *app.ProviderManager, model stri
 	return true
 }
 
+func initAnthropicAPIKeyProvider(apiKey string, pm *app.ProviderManager, model string, logs Loggers) bool {
+	if strings.TrimSpace(apiKey) == "" {
+		apiKey = strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	}
+	if apiKey == "" {
+		return false
+	}
+	provider, err := llm.NewAnthropicAPIProvider(apiKey, model)
+	if err != nil {
+		logs.LLM.Warnf("failed to init Anthropic API provider: %v", err)
+		return false
+	}
+	pm.Update(provider)
+	logs.LLM.Logf("%s (model: %s)", provider.ModelInfo().ProviderName, provider.ModelInfo().Model)
+	return true
+}
+
 func initOAuthProvider(
 	ctx context.Context,
 	settings config.Settings,
@@ -153,6 +177,10 @@ func initOAuthProvider(
 	logs Loggers,
 ) bool {
 	llm.MigrateSingleTokenToPool(paths.OAuthTokenPath, paths.OAuthPoolPath)
+	targetProviderID := llm.NormalizeGoogleProviderID(providerID)
+	if targetProviderID == "" {
+		targetProviderID = llm.ProviderGoogleGeminiCLI
+	}
 
 	tokens, err := llm.LoadOAuthPool(paths.OAuthPoolPath)
 	if err != nil {
@@ -205,22 +233,40 @@ func initOAuthProvider(
 	attachAIStudioFallbackProvider(pool, paths.AIStudioSessionPath, model, logs)
 
 	for _, tokenData := range tokens {
-		if err := llm.RefreshIfNeeded(ctx, tokenData, ""); err != nil {
-			logs.LLM.Warnf("OAuth token refresh failed for %s: %v", tokenData.Email, err)
+		tokenProviderID := llm.NormalizeGoogleProviderID(tokenData.ProviderID)
+		if targetProviderID == llm.ProviderAnthropicSetupToken {
+			if tokenProviderID != llm.ProviderAnthropicSetupToken {
+				continue
+			}
+		} else if tokenProviderID != "" && tokenProviderID != targetProviderID {
 			continue
 		}
-		if tokenData.Email != "" {
-			if err := llm.UpdateOAuthPoolToken(paths.OAuthPoolPath, tokenData.Email, tokenData); err != nil {
-				logs.LLM.Warnf("failed to persist refreshed pool token for %s: %v", tokenData.Email, err)
+
+		var provider llm.Provider
+		if targetProviderID == llm.ProviderAnthropicSetupToken {
+			if err := llm.ValidateAnthropicSetupToken(tokenData.AccessToken); err != nil {
+				logs.LLM.Warnf("invalid Anthropic setup token for %s: %v", tokenData.Email, err)
+				continue
 			}
+			provider, err = llm.NewAnthropicSetupTokenProvider(tokenData.AccessToken, model)
+		} else {
+			if err := llm.RefreshIfNeeded(ctx, tokenData, ""); err != nil {
+				logs.LLM.Warnf("OAuth token refresh failed for %s: %v", tokenData.Email, err)
+				continue
+			}
+			if tokenData.Email != "" {
+				if err := llm.UpdateOAuthPoolToken(paths.OAuthPoolPath, tokenData.Email, tokenData); err != nil {
+					logs.LLM.Warnf("failed to persist refreshed pool token for %s: %v", tokenData.Email, err)
+				}
+			}
+			provider, err = llm.NewGeminiOAuthProviderWithProvider(
+				ctx,
+				tokenData,
+				providerID,
+				model,
+				settings.EndpointPolicy,
+			)
 		}
-		provider, err := llm.NewGeminiOAuthProviderWithProvider(
-			ctx,
-			tokenData,
-			providerID,
-			model,
-			settings.EndpointPolicy,
-		)
 		if err != nil {
 			logs.LLM.Warnf("failed to init OAuth provider for %s: %v", tokenData.Email, err)
 			continue
@@ -259,6 +305,10 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
+	case llm.ProviderAnthropicAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderAnthropicSetupToken:
+		return config.ProviderOAuth
 	case llm.ProviderGoogleAntigravity:
 		return config.ProviderOAuth
 	case llm.ProviderGoogleGeminiCLI, llm.ProviderAIStudioRPC:
@@ -270,7 +320,10 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 	case config.ProviderOAuth, "cli":
 		return config.ProviderOAuth
 	default:
-		if settings.GeminiAPIKey != "" || strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" {
+		if settings.GeminiAPIKey != "" ||
+			settings.AnthropicAPIKey != "" ||
+			strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" ||
+			strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
 			return config.ProviderAPIKey
 		}
 		return config.ProviderOAuth

@@ -132,6 +132,7 @@ func backfillProviderFieldsFromPrevious(previous, next config.Settings) config.S
 	next.ModelID = previous.ModelID
 	next.GeminiModel = previous.GeminiModel
 	next.GeminiAPIKey = previous.GeminiAPIKey
+	next.AnthropicAPIKey = previous.AnthropicAPIKey
 	next.FallbackEnabled = previous.FallbackEnabled
 	next.FallbackModelEnabled = previous.FallbackModelEnabled
 	next.FallbackModelID = previous.FallbackModelID
@@ -150,6 +151,7 @@ func hasExplicitProviderPayload(settings config.Settings) bool {
 		strings.TrimSpace(settings.ModelID) != "" ||
 		strings.TrimSpace(settings.GeminiModel) != "" ||
 		strings.TrimSpace(settings.GeminiAPIKey) != "" ||
+		strings.TrimSpace(settings.AnthropicAPIKey) != "" ||
 		strings.TrimSpace(settings.FallbackModelID) != "" ||
 		strings.TrimSpace(settings.FallbackModel) != "" ||
 		strings.TrimSpace(settings.FallbackSecondModelID) != "" ||
@@ -180,6 +182,9 @@ func hasProviderRelatedSettingsChange(previous, next config.Settings) bool {
 	if previous.GeminiAPIKey != next.GeminiAPIKey {
 		return true
 	}
+	if previous.AnthropicAPIKey != next.AnthropicAPIKey {
+		return true
+	}
 	// Fallback model and endpoint policy changes do NOT require provider re-validation:
 	// they are applied directly to the runtime pool via configureOAuthPoolFromSettings.
 	// Including them here would trigger an unnecessary OAuth probe (and block the save
@@ -202,6 +207,10 @@ func shouldRunStrictOAuthProbe(settings config.Settings) bool {
 			return false
 		case llm.ProviderGeminiAPIKey:
 			return false
+		case llm.ProviderAnthropicAPIKey:
+			return false
+		case llm.ProviderAnthropicSetupToken:
+			return true
 		}
 	}
 
@@ -213,6 +222,7 @@ func shouldRunStrictOAuthProbe(settings config.Settings) bool {
 	default:
 		// Auto mode falls back to OAuth when no API key exists.
 		return strings.TrimSpace(settings.GeminiAPIKey) == "" &&
+			strings.TrimSpace(settings.AnthropicAPIKey) == "" &&
 			strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == ""
 	}
 }

@@ -26,8 +26,11 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.GeminiAPIKey != "" && !isMasked(req.GeminiAPIKey) {
 		existing.GeminiAPIKey = req.GeminiAPIKey
 	}
+	if req.AnthropicAPIKey != "" && !isMasked(req.AnthropicAPIKey) {
+		existing.AnthropicAPIKey = req.AnthropicAPIKey
+	}
 	if req.GeminiModel != "" {
-		existing.GeminiModel = llm.NormalizeGoogleModelAlias(req.GeminiModel)
+		existing.GeminiModel = strings.TrimSpace(req.GeminiModel)
 	}
 	if req.DiscordToken != "" && !isMasked(req.DiscordToken) {
 		existing.DiscordToken = req.DiscordToken
@@ -39,6 +42,8 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 			if req.ProviderID == "" {
 				if llm.NormalizeGoogleProviderID(existing.ProviderID) == llm.ProviderOpenAIAPIKey {
 					existing.ProviderID = llm.ProviderOpenAIAPIKey
+				} else if llm.NormalizeGoogleProviderID(existing.ProviderID) == llm.ProviderAnthropicAPIKey {
+					existing.ProviderID = llm.ProviderAnthropicAPIKey
 				} else {
 					existing.ProviderID = llm.ProviderGeminiAPIKey
 				}
@@ -47,7 +52,8 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 			if req.ProviderID == "" &&
 				(existing.ProviderID == "" ||
 					existing.ProviderID == llm.ProviderGeminiAPIKey ||
-					existing.ProviderID == llm.ProviderOpenAIAPIKey) {
+					existing.ProviderID == llm.ProviderOpenAIAPIKey ||
+					existing.ProviderID == llm.ProviderAnthropicAPIKey) {
 				existing.ProviderID = llm.ProviderGoogleAntigravity
 			}
 		}
@@ -172,15 +178,15 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 	if req.FallbackModelID != "" {
 		existing.FallbackModelID = strings.TrimSpace(req.FallbackModelID)
 	}
-	existing.FallbackModel = llm.NormalizeGoogleModelAlias(req.FallbackModel)
+	existing.FallbackModel = strings.TrimSpace(req.FallbackModel)
 	if req.FallbackSecondModelID != "" {
 		existing.FallbackSecondModelID = strings.TrimSpace(req.FallbackSecondModelID)
 	}
-	existing.FallbackSecondModel = llm.NormalizeGoogleModelAlias(req.FallbackSecondModel)
+	existing.FallbackSecondModel = strings.TrimSpace(req.FallbackSecondModel)
 	if req.FallbackThirdModelID != "" {
 		existing.FallbackThirdModelID = strings.TrimSpace(req.FallbackThirdModelID)
 	}
-	existing.FallbackThirdModel = llm.NormalizeGoogleModelAlias(req.FallbackThirdModel)
+	existing.FallbackThirdModel = strings.TrimSpace(req.FallbackThirdModel)
 	if req.MCP != nil {
 		prevMCP := existing.MCP
 		existing.MCP = convertMCPSettingsUpdate(*req.MCP)
@@ -201,7 +207,7 @@ func (h *Handlers) applySettingsPatch(existing *config.Settings, req SettingsUpd
 		existing.DiscordPersonaID = req.DiscordPersonaID
 	}
 
-	existing.ProviderType = resolveProviderTypeWithLegacyFallback(existing.ProviderType, existing.ProviderID, existing.GeminiAPIKey)
+	existing.ProviderType = resolveProviderTypeWithLegacyFallback(existing.ProviderType, existing.ProviderID, existing.GeminiAPIKey, existing.AnthropicAPIKey)
 	existing.ProviderID, existing.GeminiModel, existing.ModelID = llm.ResolveProviderAndModel(
 		existing.ProviderID,
 		existing.ModelID,
@@ -324,7 +330,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return out
 }
 
-func resolveProviderTypeWithLegacyFallback(providerType, providerID, apiKey string) string {
+func resolveProviderTypeWithLegacyFallback(providerType, providerID, geminiAPIKey, anthropicAPIKey string) string {
 	normalized := normalizeProviderTypeForSelection(providerType)
 	if normalized != "" {
 		return normalized
@@ -334,10 +340,14 @@ func resolveProviderTypeWithLegacyFallback(providerType, providerID, apiKey stri
 		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
+	case llm.ProviderAnthropicAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderAnthropicSetupToken:
+		return config.ProviderOAuth
 	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	default:
-		if strings.TrimSpace(apiKey) != "" {
+		if strings.TrimSpace(geminiAPIKey) != "" || strings.TrimSpace(anthropicAPIKey) != "" {
 			return config.ProviderAPIKey
 		}
 		return config.ProviderOAuth
@@ -350,6 +360,10 @@ func normalizeProviderTypeFromProviderID(providerType, providerID string) string
 		return config.ProviderAPIKey
 	case llm.ProviderGeminiAPIKey:
 		return config.ProviderAPIKey
+	case llm.ProviderAnthropicAPIKey:
+		return config.ProviderAPIKey
+	case llm.ProviderAnthropicSetupToken:
+		return config.ProviderOAuth
 	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	default:

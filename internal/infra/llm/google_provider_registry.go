@@ -3,11 +3,13 @@ package llm
 import "strings"
 
 const (
-	ProviderGoogleGeminiCLI   = "google-gemini-cli"
-	ProviderGoogleAntigravity = "google-antigravity"
-	ProviderGeminiAPIKey      = "gemini-api-key"
-	ProviderOpenAIAPIKey      = "openai-api-key"
-	ProviderAIStudioRPC       = "aistudio-rpc"
+	ProviderGoogleGeminiCLI     = "google-gemini-cli"
+	ProviderGoogleAntigravity   = "google-antigravity"
+	ProviderGeminiAPIKey        = "gemini-api-key"
+	ProviderOpenAIAPIKey        = "openai-api-key"
+	ProviderAIStudioRPC         = "aistudio-rpc"
+	ProviderAnthropicAPIKey     = "anthropic-api-key"
+	ProviderAnthropicSetupToken = "anthropic-setup-token"
 
 	EndpointPolicyPrimaryThenSandbox = "primary_then_sandbox"
 
@@ -26,6 +28,28 @@ type GoogleProviderSpec struct {
 
 func googleProviderSpec(providerID string) GoogleProviderSpec {
 	switch NormalizeGoogleProviderID(providerID) {
+	case ProviderAnthropicAPIKey:
+		return GoogleProviderSpec{
+			ID:           ProviderAnthropicAPIKey,
+			Label:        "Anthropic API Key",
+			DefaultModel: "claude-sonnet-4-6",
+			OAuthScopes:  nil,
+			RedirectURI:  "",
+			EndpointCandidates: []string{
+				defaultAnthropicEndpoint,
+			},
+		}
+	case ProviderAnthropicSetupToken:
+		return GoogleProviderSpec{
+			ID:           ProviderAnthropicSetupToken,
+			Label:        "Anthropic Setup Token",
+			DefaultModel: "claude-sonnet-4-6",
+			OAuthScopes:  nil,
+			RedirectURI:  "",
+			EndpointCandidates: []string{
+				defaultAnthropicEndpoint,
+			},
+		}
 	case ProviderOpenAIAPIKey:
 		return GoogleProviderSpec{
 			ID:           ProviderOpenAIAPIKey,
@@ -88,6 +112,10 @@ func googleProviderSpec(providerID string) GoogleProviderSpec {
 func NormalizeGoogleProviderID(providerID string) string {
 	normalized := strings.TrimSpace(strings.ToLower(providerID))
 	switch normalized {
+	case ProviderAnthropicAPIKey:
+		return ProviderAnthropicAPIKey
+	case ProviderAnthropicSetupToken:
+		return ProviderAnthropicSetupToken
 	case ProviderOpenAIAPIKey:
 		return ProviderOpenAIAPIKey
 	case ProviderGoogleAntigravity:
@@ -104,6 +132,8 @@ func NormalizeGoogleProviderID(providerID string) string {
 }
 
 func NormalizeGoogleModelAlias(model string) string {
+	// Legacy/global alias normalizer kept for backward compatibility.
+	// New code should prefer NormalizeModelAliasForProvider.
 	normalized := NormalizeModelID(model)
 	switch normalized {
 	case "gemini-3-pro":
@@ -119,9 +149,32 @@ func NormalizeGoogleModelAlias(model string) string {
 	}
 }
 
+func NormalizeModelAliasForProvider(providerID, model string) string {
+	pid := NormalizeGoogleProviderID(providerID)
+	normalized := NormalizeModelID(model)
+	switch normalized {
+	case "gemini-3-pro":
+		normalized = "gemini-3-pro-preview"
+	case "gemini-3-flash":
+		normalized = "gemini-3-flash-preview"
+	}
+
+	switch pid {
+	case ProviderGoogleAntigravity, "":
+		// Keep OpenClaw-compatible aliases for Google Antigravity only.
+		switch normalized {
+		case "claude-opus-4-6":
+			return "claude-opus-4-6-thinking"
+		case "claude-sonnet-4":
+			return "claude-sonnet-4-thinking"
+		}
+	}
+	return normalized
+}
+
 func BuildProviderModelID(providerID, model string) string {
 	pid := NormalizeGoogleProviderID(providerID)
-	mid := NormalizeGoogleModelAlias(model)
+	mid := NormalizeModelAliasForProvider(pid, model)
 	if pid == "" {
 		pid = ProviderGoogleGeminiCLI
 	}
@@ -138,7 +191,7 @@ func SplitProviderModelID(modelID string) (providerID, model string) {
 	}
 	if idx := strings.Index(normalized, "/"); idx > 0 {
 		pid := NormalizeGoogleProviderID(normalized[:idx])
-		mid := NormalizeGoogleModelAlias(normalized[idx+1:])
+		mid := NormalizeModelAliasForProvider(pid, normalized[idx+1:])
 		return pid, mid
 	}
 	return "", NormalizeGoogleModelAlias(normalized)
@@ -153,10 +206,10 @@ func ResolveProviderAndModel(providerID, modelID, legacyModel string) (string, s
 		if pFromModel != "" {
 			pid = pFromModel
 		}
-		mid := NormalizeGoogleModelAlias(mFromModel)
+		mid := NormalizeModelAliasForProvider(pid, mFromModel)
 		return pid, mid, BuildProviderModelID(pid, mid)
 	}
-	if legacy := NormalizeGoogleModelAlias(legacyModel); legacy != "" {
+	if legacy := NormalizeModelAliasForProvider(pid, legacyModel); legacy != "" {
 		return pid, legacy, BuildProviderModelID(pid, legacy)
 	}
 	def := googleProviderSpec(pid).DefaultModel

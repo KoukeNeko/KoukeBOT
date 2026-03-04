@@ -20,6 +20,8 @@ import { useOAuthActions, type StatusMessage } from './useOAuthActions'
 
 const defaultProviderModels: Record<string, string> = {
   'gemini-api-key': 'gemini-api-key/gemini-2.5-pro',
+  'anthropic-api-key': 'anthropic-api-key/claude-sonnet-4-6',
+  'anthropic-setup-token': 'anthropic-setup-token/claude-sonnet-4-6',
   'google-antigravity': 'google-antigravity/claude-opus-4-6-thinking',
   'google-gemini-cli': 'google-gemini-cli/gemini-3-pro-preview',
   'aistudio-rpc': 'aistudio-rpc/gemini-3-pro-preview',
@@ -41,6 +43,7 @@ function defaultModelForProvider(providerID: string): string {
 
 const defaultSettings: SettingsData = {
   gemini_api_key: '',
+  anthropic_api_key: '',
   gemini_model: '',
   discord_token: '',
   provider_type: '',
@@ -154,7 +157,11 @@ export function useSettingsData() {
         oauth.setPool(oauthSnapshot.poolEntries)
         setPersonas(personaList)
 
-        if (settings.provider_id === 'gemini-api-key' || settings.provider_type === 'api-key') {
+        if (
+          settings.provider_id === 'gemini-api-key' ||
+          settings.provider_id === 'anthropic-api-key' ||
+          settings.provider_type === 'api-key'
+        ) {
           oauth.setProviderTab('api-key')
         } else {
           oauth.setProviderTab('oauth')
@@ -201,16 +208,18 @@ export function useSettingsData() {
       if (overrideProviderType) {
         payload.provider_type = overrideProviderType
         if (overrideProviderType === 'api-key') {
-          payload.provider_id = 'gemini-api-key'
-          if (extractProviderFromModelID(payload.model_id) !== 'gemini-api-key') {
-            payload.model_id = defaultModelForProvider('gemini-api-key')
+          const apiProviderID = payload.provider_id === 'anthropic-api-key' ? 'anthropic-api-key' : 'gemini-api-key'
+          payload.provider_id = apiProviderID
+          if (extractProviderFromModelID(payload.model_id) !== apiProviderID) {
+            payload.model_id = defaultModelForProvider(apiProviderID)
           }
           payload.gemini_model = toLegacyModel(payload.model_id || payload.gemini_model)
         } else {
           const oauthProviderID =
             payload.provider_id === 'google-gemini-cli' ||
             payload.provider_id === 'google-antigravity' ||
-            payload.provider_id === 'aistudio-rpc'
+            payload.provider_id === 'aistudio-rpc' ||
+            payload.provider_id === 'anthropic-setup-token'
               ? payload.provider_id
               : 'google-antigravity'
           payload.provider_id = oauthProviderID

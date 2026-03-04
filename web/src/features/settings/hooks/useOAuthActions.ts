@@ -5,6 +5,8 @@ import {
   getOAuthPool,
   getOAuthStatus,
   getProviderStatus,
+  importAnthropicSetupToken,
+  importAnthropicSetupTokenFromEnv,
   importGeminiCLIToken,
   importPastedToken,
   removeOAuthPoolAccount,
@@ -36,6 +38,9 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
   const [importingCLI, setImportingCLI] = useState(false)
   const [pastedTokenJSON, setPastedTokenJSON] = useState('')
   const [importingPasted, setImportingPasted] = useState(false)
+  const [anthropicSetupToken, setAnthropicSetupToken] = useState('')
+  const [importingAnthropicToken, setImportingAnthropicToken] = useState(false)
+  const [importingAnthropicEnv, setImportingAnthropicEnv] = useState(false)
   const [pool, setPool] = useState<PoolEntry[]>([])
   const [removingEmail, setRemovingEmail] = useState<string | null>(null)
   const [verifyingPool, setVerifyingPool] = useState(false)
@@ -203,6 +208,39 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     }
   }, [refreshOAuthSnapshot, setMessage])
 
+  const handleImportAnthropicToken = useCallback(async () => {
+    if (!anthropicSetupToken.trim()) return
+
+    setImportingAnthropicToken(true)
+    setMessage(null)
+    try {
+      const result = await importAnthropicSetupToken(anthropicSetupToken.trim())
+      await refreshOAuthSnapshot()
+      setMessage({ type: 'ok', text: `已匯入 Setup Token：${result.email}` })
+      setAnthropicSetupToken('')
+      setAddAccountOpen(false)
+    } catch (error) {
+      setMessage({ type: 'err', text: error instanceof Error ? error.message : '匯入失敗' })
+    } finally {
+      setImportingAnthropicToken(false)
+    }
+  }, [anthropicSetupToken, refreshOAuthSnapshot, setMessage])
+
+  const handleImportAnthropicEnv = useCallback(async () => {
+    setImportingAnthropicEnv(true)
+    setMessage(null)
+    try {
+      const result = await importAnthropicSetupTokenFromEnv()
+      await refreshOAuthSnapshot()
+      setMessage({ type: 'ok', text: `已從環境變數匯入 Setup Token：${result.email}` })
+      setAddAccountOpen(false)
+    } catch (error) {
+      setMessage({ type: 'err', text: error instanceof Error ? error.message : '匯入失敗' })
+    } finally {
+      setImportingAnthropicEnv(false)
+    }
+  }, [refreshOAuthSnapshot, setMessage])
+
   const handleVerifyPool = useCallback(async (providerID: string) => {
     if (pool.length === 0) {
       setMessage({ type: 'err', text: '目前沒有可驗證的 OAuth 帳號。' })
@@ -247,13 +285,14 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
   const handleOpenAddAccount = useCallback(() => {
     setOAuthFlow(null)
     setOAuthCallbackURL('')
+    setAnthropicSetupToken('')
     setAddAccountOpen(true)
   }, [])
 
   const handleCloseAddAccount = useCallback(() => {
-    if (oauthStarting || oauthCompleting) return
+    if (oauthStarting || oauthCompleting || importingAnthropicToken || importingAnthropicEnv) return
     setAddAccountOpen(false)
-  }, [oauthCompleting, oauthStarting])
+  }, [importingAnthropicEnv, importingAnthropicToken, oauthCompleting, oauthStarting])
 
   return {
     providerTab,
@@ -273,6 +312,10 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     pastedTokenJSON,
     setPastedTokenJSON,
     importingPasted,
+    anthropicSetupToken,
+    setAnthropicSetupToken,
+    importingAnthropicToken,
+    importingAnthropicEnv,
     pool,
     setPool,
     removingEmail,
@@ -283,6 +326,8 @@ export function useOAuthActions({ setMessage, setStatus }: Params) {
     handleCompleteOAuth,
     handleImportCLIToken,
     handleImportPastedToken,
+    handleImportAnthropicToken,
+    handleImportAnthropicEnv,
     handleRemovePoolAccount,
     handleVerifyPool,
     handleOpenAddAccount,

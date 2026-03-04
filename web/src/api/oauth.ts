@@ -65,6 +65,24 @@ export function importPastedToken(tokenJson: string, clientId?: string, clientSe
   })
 }
 
+export function importAnthropicSetupToken(setupToken: string): Promise<{ email: string; provider_id?: string; status: string }> {
+  return fetchJSON(`${BASE}/oauth/anthropic/import-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ setup_token: setupToken }),
+  })
+}
+
+export function importAnthropicSetupTokenFromEnv(): Promise<{ email: string; provider_id?: string; status: string }> {
+  return fetchJSON(`${BASE}/oauth/anthropic/import-env`, {
+    method: 'POST',
+  })
+}
+
+export function getAnthropicOAuthStatus(): Promise<OAuthStatus> {
+  return fetchJSON(`${BASE}/oauth/anthropic/status`)
+}
+
 // OAuth Pool
 export function getOAuthPool(): Promise<PoolEntry[]> {
   return fetchJSON(`${BASE}/oauth/pool`)

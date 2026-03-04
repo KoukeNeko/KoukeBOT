@@ -55,10 +55,11 @@ const (
 // Settings holds the runtime-configurable values.
 type Settings struct {
 	GeminiAPIKey     string `json:"gemini_api_key"`
+	AnthropicAPIKey  string `json:"anthropic_api_key"`
 	GeminiModel      string `json:"gemini_model"`
 	DiscordToken     string `json:"discord_token"`
 	ProviderType     string `json:"provider_type"`      // "api-key", "oauth", or "" (auto)
-	ProviderID       string `json:"provider_id"`        // "google-gemini-cli" | "google-antigravity" | "gemini-api-key" | "openai-api-key" | "aistudio-rpc"
+	ProviderID       string `json:"provider_id"`        // "google-gemini-cli" | "google-antigravity" | "gemini-api-key" | "openai-api-key" | "aistudio-rpc" | "anthropic-api-key" | "anthropic-setup-token"
 	ModelID          string `json:"model_id"`           // "provider/model"
 	FallbackEnabled  bool   `json:"fallback_enabled"`   // OpenClaw-style fallback switch
 	FallbackModelID  string `json:"fallback_model_id"`  // "provider/model"
@@ -271,8 +272,9 @@ func normalizeSettings(settings Settings, raw map[string]json.RawMessage) Settin
 		settings.ProviderType,
 		settings.GeminiModel,
 		settings.GeminiAPIKey,
+		settings.AnthropicAPIKey,
 	)
-	settings.ProviderType = syncLegacyProviderTypeForSettings(settings.ProviderType, settings.ProviderID, settings.GeminiAPIKey)
+	settings.ProviderType = syncLegacyProviderTypeForSettings(settings.ProviderType, settings.ProviderID, settings.GeminiAPIKey, settings.AnthropicAPIKey)
 
 	if settings.FallbackEnabled ||
 		settings.FallbackModelEnabled ||
@@ -486,17 +488,25 @@ func shouldMigrateLegacySettings(raw map[string]json.RawMessage) bool {
 	return hasLegacyProvider || hasLegacyModel
 }
 
-func resolveProviderModelForSettings(providerID, modelID, providerType, legacyModel, apiKey string) (string, string, string) {
+func resolveProviderModelForSettings(providerID, modelID, providerType, legacyModel, geminiAPIKey, anthropicAPIKey string) (string, string, string) {
 	pid := normalizeGoogleProviderIDForSettings(providerID)
 	if pid == "" {
 		switch normalizeProviderType(providerType) {
 		case ProviderAPIKey:
-			pid = "gemini-api-key"
+			if strings.TrimSpace(geminiAPIKey) != "" {
+				pid = "gemini-api-key"
+			} else if strings.TrimSpace(anthropicAPIKey) != "" {
+				pid = "anthropic-api-key"
+			} else {
+				pid = "gemini-api-key"
+			}
 		case ProviderOAuth:
 			pid = "google-gemini-cli"
 		default:
-			if strings.TrimSpace(apiKey) != "" {
+			if strings.TrimSpace(geminiAPIKey) != "" {
 				pid = "gemini-api-key"
+			} else if strings.TrimSpace(anthropicAPIKey) != "" {
+				pid = "anthropic-api-key"
 			} else {
 				pid = "google-gemini-cli"
 			}
@@ -507,15 +517,17 @@ func resolveProviderModelForSettings(providerID, modelID, providerType, legacyMo
 		if mProvider != "" {
 			pid = mProvider
 		}
-		normalized := normalizeGoogleModelAliasForSettings(mModel)
+		normalized := normalizeModelAliasForProviderForSettings(pid, mModel)
 		return pid, buildProviderModelIDForSettings(pid, normalized), normalized
 	}
 
-	normalizedLegacyModel := normalizeGoogleModelAliasForSettings(legacyModel)
+	normalizedLegacyModel := normalizeModelAliasForProviderForSettings(pid, legacyModel)
 	if normalizedLegacyModel == "" {
 		switch pid {
 		case "google-antigravity":
 			normalizedLegacyModel = "claude-opus-4-6-thinking"
+		case "anthropic-api-key", "anthropic-setup-token":
+			normalizedLegacyModel = "claude-sonnet-4-6"
 		case "openai-api-key":
 			normalizedLegacyModel = "gpt-5"
 		default:
@@ -531,10 +543,10 @@ func resolveFallbackModelForSettings(providerID, fallbackModelID, legacyFallback
 		if fp != "" {
 			pid = fp
 		}
-		model := normalizeGoogleModelAliasForSettings(fm)
+		model := normalizeModelAliasForProviderForSettings(pid, fm)
 		return buildProviderModelIDForSettings(pid, model), model
 	}
-	legacy := normalizeGoogleModelAliasForSettings(legacyFallbackModel)
+	legacy := normalizeModelAliasForProviderForSettings(pid, legacyFallbackModel)
 	if legacy == "" {
 		return "", ""
 	}
@@ -579,7 +591,7 @@ func resolveFallbackModelCandidatesForSettings(settings Settings, providerID, pr
 	first := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackModelID, settings.FallbackModel)
 	second := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackSecondModelID, settings.FallbackSecondModel)
 	third := resolveFallbackModelCandidateForSettings(defaultProviderID, settings.FallbackThirdModelID, settings.FallbackThirdModel)
-	return buildFallbackModelChainForSettings(primaryModel, first, second, third)
+	return buildFallbackModelChainForSettings(defaultProviderID, primaryModel, first, second, third)
 }
 
 func resolveFallbackModelCandidateForSettings(defaultProviderID, fallbackModelID, legacyFallbackModel string) fallbackModelCandidate {
@@ -590,10 +602,10 @@ func resolveFallbackModelCandidateForSettings(defaultProviderID, fallbackModelID
 		}
 		return fallbackModelCandidate{
 			providerID: pid,
-			model:      normalizeGoogleModelAliasForSettings(fm),
+			model:      normalizeModelAliasForProviderForSettings(pid, fm),
 		}
 	}
-	legacy := normalizeGoogleModelAliasForSettings(legacyFallbackModel)
+	legacy := normalizeModelAliasForProviderForSettings(pid, legacyFallbackModel)
 	if legacy == "" {
 		return fallbackModelCandidate{}
 	}
@@ -603,13 +615,14 @@ func resolveFallbackModelCandidateForSettings(defaultProviderID, fallbackModelID
 	}
 }
 
-func buildFallbackModelChainForSettings(primaryModel string, candidates ...fallbackModelCandidate) []fallbackModelCandidate {
-	normalizedPrimary := normalizeGoogleModelAliasForSettings(primaryModel)
+func buildFallbackModelChainForSettings(primaryProviderID, primaryModel string, candidates ...fallbackModelCandidate) []fallbackModelCandidate {
+	normalizedPrimary := normalizeModelAliasForProviderForSettings(primaryProviderID, primaryModel)
 	seen := map[string]struct{}{}
 	chain := make([]fallbackModelCandidate, 0, len(candidates))
 
 	for _, candidate := range candidates {
-		model := normalizeGoogleModelAliasForSettings(candidate.model)
+		providerID := normalizeGoogleProviderIDForSettings(candidate.providerID)
+		model := normalizeModelAliasForProviderForSettings(providerID, candidate.model)
 		if model == "" {
 			continue
 		}
@@ -621,7 +634,6 @@ func buildFallbackModelChainForSettings(primaryModel string, candidates ...fallb
 		}
 		seen[model] = struct{}{}
 
-		providerID := normalizeGoogleProviderIDForSettings(candidate.providerID)
 		if providerID == "" {
 			providerID = "google-gemini-cli"
 		}
@@ -677,12 +689,18 @@ func normalizeGoogleProviderIDForSettings(providerID string) string {
 		return "gemini-api-key"
 	case "openai-api-key":
 		return "openai-api-key"
+	case "anthropic-api-key":
+		return "anthropic-api-key"
+	case "anthropic-setup-token":
+		return "anthropic-setup-token"
 	default:
 		return strings.TrimSpace(strings.ToLower(providerID))
 	}
 }
 
 func normalizeGoogleModelAliasForSettings(model string) string {
+	// Legacy/global alias normalizer kept for backward compatibility.
+	// New code should prefer normalizeModelAliasForProviderForSettings.
 	normalized := strings.TrimSpace(model)
 	if strings.HasPrefix(normalized, "models/") {
 		normalized = strings.TrimPrefix(normalized, "models/")
@@ -704,39 +722,74 @@ func normalizeGoogleModelAliasForSettings(model string) string {
 	}
 }
 
+func normalizeModelAliasForProviderForSettings(providerID, model string) string {
+	pid := normalizeGoogleProviderIDForSettings(providerID)
+	normalized := strings.TrimSpace(model)
+	if strings.HasPrefix(normalized, "models/") {
+		normalized = strings.TrimPrefix(normalized, "models/")
+	}
+	if idx := strings.LastIndex(normalized, "/"); idx >= 0 && idx+1 < len(normalized) {
+		normalized = normalized[idx+1:]
+	}
+	switch normalized {
+	case "gemini-3-pro":
+		normalized = "gemini-3-pro-preview"
+	case "gemini-3-flash":
+		normalized = "gemini-3-flash-preview"
+	}
+	switch pid {
+	case "google-antigravity", "":
+		switch normalized {
+		case "claude-opus-4-6":
+			return "claude-opus-4-6-thinking"
+		case "claude-sonnet-4":
+			return "claude-sonnet-4-thinking"
+		}
+	}
+	return strings.TrimSpace(normalized)
+}
+
 func splitProviderModelIDForSettings(modelID string) (string, string) {
 	normalized := strings.TrimSpace(modelID)
 	if normalized == "" {
 		return "", ""
 	}
 	if idx := strings.Index(normalized, "/"); idx > 0 {
-		return normalizeGoogleProviderIDForSettings(normalized[:idx]), normalizeGoogleModelAliasForSettings(normalized[idx+1:])
+		pid := normalizeGoogleProviderIDForSettings(normalized[:idx])
+		return pid, normalizeModelAliasForProviderForSettings(pid, normalized[idx+1:])
 	}
 	return "", normalizeGoogleModelAliasForSettings(normalized)
 }
 
 func buildProviderModelIDForSettings(providerID, model string) string {
 	pid := normalizeGoogleProviderIDForSettings(providerID)
-	mid := normalizeGoogleModelAliasForSettings(model)
+	mid := normalizeModelAliasForProviderForSettings(pid, model)
 	if pid == "" {
 		pid = "google-gemini-cli"
 	}
 	if mid == "" {
-		if pid == "openai-api-key" {
+		switch pid {
+		case "openai-api-key":
 			mid = "gpt-5"
-		} else {
+		case "anthropic-api-key", "anthropic-setup-token":
+			mid = "claude-sonnet-4-6"
+		default:
 			mid = "gemini-3-pro-preview"
 		}
 	}
 	return pid + "/" + mid
 }
 
-func syncLegacyProviderTypeForSettings(providerType, providerID, apiKey string) string {
+func syncLegacyProviderTypeForSettings(providerType, providerID, geminiAPIKey, anthropicAPIKey string) string {
 	switch normalizeGoogleProviderIDForSettings(providerID) {
 	case "gemini-api-key":
 		return ProviderAPIKey
 	case "openai-api-key":
 		return ProviderAPIKey
+	case "anthropic-api-key":
+		return ProviderAPIKey
+	case "anthropic-setup-token":
+		return ProviderOAuth
 	case "google-gemini-cli", "google-antigravity", "aistudio-rpc":
 		return ProviderOAuth
 	}
@@ -744,7 +797,7 @@ func syncLegacyProviderTypeForSettings(providerType, providerID, apiKey string) 
 	if normalized != "" {
 		return normalized
 	}
-	if strings.TrimSpace(apiKey) != "" {
+	if strings.TrimSpace(geminiAPIKey) != "" || strings.TrimSpace(anthropicAPIKey) != "" {
 		return ProviderAPIKey
 	}
 	return ProviderOAuth

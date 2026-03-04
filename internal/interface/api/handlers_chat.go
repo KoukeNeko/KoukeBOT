@@ -294,6 +294,10 @@ func formatUserFriendlyError(err error) string {
 		return "🌐 網路連線失敗\n\n💡 提示：請檢查網路連線或稍後再試"
 	case interfacecommon.ErrorKindRateLimit:
 		return "⚠️ 請求過於頻繁\n\n💡 提示：請稍等片刻後再試"
+	case interfacecommon.ErrorKindQueueFull:
+		return "📋 系統目前請求量過大，等候佇列已滿\n\n💡 提示：請稍後再試"
+	case interfacecommon.ErrorKindQueueTimeout:
+		return "⏱️ 請求已進入自動重試佇列，但等待逾時\n\n💡 提示：模型繁忙時間較長，請稍後再試"
 	}
 
 	// Generic error fallback

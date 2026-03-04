@@ -8,6 +8,7 @@ import ProviderSection from './ProviderSection'
 function buildForm(): SettingsData {
   return {
     gemini_api_key: '',
+    anthropic_api_key: '',
     gemini_model: 'gemini-2.5-pro',
     discord_token: '',
     provider_type: 'api-key',
@@ -105,6 +106,12 @@ function buildProps(overrides: Partial<ComponentProps<typeof ProviderSection>> =
     onImportPastedToken: vi.fn(),
     importingCLI: false,
     onImportCLIToken: vi.fn(),
+    anthropicSetupToken: '',
+    setAnthropicSetupToken: vi.fn(),
+    importingAnthropicToken: false,
+    importingAnthropicEnv: false,
+    onImportAnthropicToken: vi.fn(),
+    onImportAnthropicEnv: vi.fn(),
     aistudioStatus: { configured: false },
     aistudioFileName: '',
     aistudioPastedInput: '',
@@ -176,6 +183,47 @@ describe('ProviderSection', () => {
 
     expect(screen.getByText('AI Studio RPC (Direct / Test)')).toBeTruthy()
     expect(screen.getByText('Use Selected Provider')).toBeTruthy()
+  })
+
+  it('shows Anthropic setup-token provider option in oauth tab', () => {
+    render(
+      <ProviderSection
+        {...buildProps({
+          providerTab: 'oauth',
+          form: {
+            ...buildForm(),
+            provider_type: 'oauth',
+            provider_id: 'anthropic-setup-token',
+            model_id: 'anthropic-setup-token/claude-sonnet-4-6',
+            gemini_model: 'claude-sonnet-4-6',
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByText('Anthropic Setup Token (Claude Subscription)')).toBeTruthy()
+  })
+
+  it('renders Anthropic import UI in add-account modal', () => {
+    render(
+      <ProviderSection
+        {...buildProps({
+          providerTab: 'oauth',
+          addAccountOpen: true,
+          form: {
+            ...buildForm(),
+            provider_type: 'oauth',
+            provider_id: 'anthropic-setup-token',
+            model_id: 'anthropic-setup-token/claude-sonnet-4-6',
+            gemini_model: 'claude-sonnet-4-6',
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByText('新增 Anthropic Setup Token')).toBeTruthy()
+    expect(screen.getByText('Import Setup Token')).toBeTruthy()
+    expect(screen.getByText('Import from Environment')).toBeTruthy()
   })
 
   it('renders second/third fallback selectors', () => {

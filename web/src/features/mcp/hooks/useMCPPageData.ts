@@ -7,6 +7,7 @@ type StatusMessage = { type: 'ok' | 'err'; text: string } | null
 
 const defaultSettings: SettingsData = {
   gemini_api_key: '',
+  anthropic_api_key: '',
   gemini_model: '',
   discord_token: '',
   provider_type: '',

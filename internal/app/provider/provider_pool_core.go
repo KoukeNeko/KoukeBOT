@@ -302,6 +302,12 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 					return zero, fmt.Errorf("%w (AI Studio fallback failed: %s)", selection.err, truncateError(fallbackErr, 220))
 				}
 			}
+			if result, attempted, queueErr := tryQueueRetryOnAllBlocked(ctx, pp, fn, selection.err); attempted {
+				if queueErr == nil {
+					return result, nil
+				}
+				return zero, fmt.Errorf("%w (queue retry failed: %s)", selection.err, truncateError(queueErr, 220))
+			}
 			return zero, selection.err
 		}
 		if selection.retry {
@@ -469,8 +475,54 @@ func tryPool[T any](ctx context.Context, pp *ProviderPool, fn func(llm.Provider)
 			return zero, fmt.Errorf("%w (AI Studio fallback failed: %s)", exhaustedErr, truncateError(fallbackErr, 220))
 		}
 	}
+	if result, attempted, queueErr := tryQueueRetryOnAllBlocked(ctx, pp, fn, exhaustedErr); attempted {
+		if queueErr == nil {
+			return result, nil
+		}
+		return zero, fmt.Errorf("%w (queue retry failed: %s)", exhaustedErr, truncateError(queueErr, 220))
+	}
 
 	return zero, exhaustedErr
+}
+
+func tryQueueRetryOnAllBlocked[T any](
+	ctx context.Context,
+	pp *ProviderPool,
+	fn func(llm.Provider) (T, error),
+	triggerErr error,
+) (T, bool, error) {
+	var zero T
+	if !shouldQueueRetryOnAllBlocked(pp, triggerErr) {
+		return zero, false, nil
+	}
+
+	logPool.Warnf("all OAuth accounts blocked by global cooldown — queueing request for auto retry")
+	result, err := enqueueAndRetry(ctx, pp, fn)
+	if err != nil {
+		return zero, true, err
+	}
+	return result, true, nil
+}
+
+func shouldQueueRetryOnAllBlocked(pp *ProviderPool, err error) bool {
+	if pp == nil || !isOAuthExhaustedError(err) {
+		return false
+	}
+
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+
+	if !pp.queueEnabled || pp.queue == nil {
+		return false
+	}
+	return !pp.globalCooldownUntil.IsZero() && pp.globalCooldownUntil.After(time.Now())
+}
+
+func isOAuthExhaustedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "oauth account(s) exhausted")
 }
 
 // enqueueAndRetry queues the request if the request queue is enabled,

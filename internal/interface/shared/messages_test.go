@@ -25,3 +25,10 @@ func TestParseLLMErrorCaseInsensitiveNetworkMatching(t *testing.T) {
 		t.Fatalf("kind = %v, want %v", parsed.Kind, ErrorKindNetwork)
 	}
 }
+
+func TestParseLLMErrorClassifiesQueueTimeout(t *testing.T) {
+	parsed := ParseLLMError(errors.New("all OAuth account(s) exhausted (queue retry failed: request timed out waiting in queue)"))
+	if parsed.Kind != ErrorKindQueueTimeout {
+		t.Fatalf("kind = %v, want %v", parsed.Kind, ErrorKindQueueTimeout)
+	}
+}

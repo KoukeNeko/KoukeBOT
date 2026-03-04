@@ -7,6 +7,7 @@ import MCPPage from './MCPPage'
 function buildForm(mode: SettingsData['web_tool_mode'], serverID: string): SettingsData {
   return {
     gemini_api_key: '',
+    anthropic_api_key: '',
     gemini_model: '',
     discord_token: '',
     provider_type: '',

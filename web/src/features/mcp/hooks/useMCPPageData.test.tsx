@@ -14,6 +14,7 @@ vi.mock('../../../api', () => ({
 
 const settingsFixture: SettingsData = {
   gemini_api_key: '',
+  anthropic_api_key: '',
   gemini_model: 'gemini-2.5-pro',
   discord_token: '',
   provider_type: 'api-key',

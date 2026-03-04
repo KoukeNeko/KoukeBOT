@@ -54,6 +54,12 @@ type Props = {
   onImportPastedToken: (providerID: string) => void;
   importingCLI: boolean;
   onImportCLIToken: (providerID: string) => void;
+  anthropicSetupToken: string;
+  setAnthropicSetupToken: (value: string) => void;
+  importingAnthropicToken: boolean;
+  importingAnthropicEnv: boolean;
+  onImportAnthropicToken: () => void;
+  onImportAnthropicEnv: () => void;
   aistudioStatus: AIStudioSessionStatus | null;
   aistudioFileName: string;
   aistudioPastedInput: string;
@@ -103,6 +109,12 @@ export default function ProviderSection({
   onImportPastedToken,
   importingCLI,
   onImportCLIToken,
+  anthropicSetupToken,
+  setAnthropicSetupToken,
+  importingAnthropicToken,
+  importingAnthropicEnv,
+  onImportAnthropicToken,
+  onImportAnthropicEnv,
   aistudioStatus,
   aistudioFileName,
   aistudioPastedInput,
@@ -118,20 +130,35 @@ export default function ProviderSection({
   onAIStudioVerifyCurrent,
   onAIStudioDelete,
 }: Props) {
-  const isModalBusy = oauthStarting || oauthCompleting;
+  const isModalBusy = oauthStarting || oauthCompleting || importingAnthropicToken || importingAnthropicEnv;
   const [errorDetailEmail, setErrorDetailEmail] = useState<string | null>(null);
+  const selectedAPIProviderID =
+    form.provider_id === "anthropic-api-key" ? "anthropic-api-key" : "gemini-api-key";
   const selectedOAuthPoolProviderID =
-    form.provider_id === "google-gemini-cli" ? "google-gemini-cli" : "google-antigravity";
+    form.provider_id === "google-gemini-cli"
+      ? "google-gemini-cli"
+      : form.provider_id === "anthropic-setup-token"
+        ? "anthropic-setup-token"
+        : "google-antigravity";
   const selectedProviderID =
     form.provider_id === "google-antigravity" ||
     form.provider_id === "google-gemini-cli" ||
-    form.provider_id === "aistudio-rpc"
+    form.provider_id === "aistudio-rpc" ||
+    form.provider_id === "anthropic-setup-token"
       ? form.provider_id
       : "google-antigravity";
+  const isGoogleOAuthProvider =
+    selectedProviderID === "google-antigravity" || selectedProviderID === "google-gemini-cli";
+  const isAnthropicOAuthProvider = selectedProviderID === "anthropic-setup-token";
+  const canManagePoolAccounts = isGoogleOAuthProvider || isAnthropicOAuthProvider;
   const defaultModelForProvider = (providerID: string) => {
     switch (providerID) {
       case "google-antigravity":
         return "google-antigravity/claude-opus-4-6-thinking";
+      case "anthropic-api-key":
+        return "anthropic-api-key/claude-sonnet-4-6";
+      case "anthropic-setup-token":
+        return "anthropic-setup-token/claude-sonnet-4-6";
       case "aistudio-rpc":
         return "aistudio-rpc/gemini-3-pro-preview";
       default:
@@ -236,14 +263,40 @@ export default function ProviderSection({
           {providerTab === "api-key" && (
             <>
               <label className="form-field">
-                <span>Gemini API Key</span>
+                <span>Provider</span>
+                <Select
+                  value={selectedAPIProviderID}
+                  onChange={(val) => {
+                    const providerID = val === "anthropic-api-key" ? "anthropic-api-key" : "gemini-api-key";
+                    const modelID = defaultModelForProvider(providerID);
+                    setForm({
+                      ...form,
+                      provider_id: providerID,
+                      model_id: modelID,
+                      gemini_model: toLegacyModel(modelID),
+                    });
+                  }}
+                  options={[
+                    { value: "gemini-api-key", label: "Gemini API Key" },
+                    { value: "anthropic-api-key", label: "Anthropic API Key" },
+                  ]}
+                />
+              </label>
+
+              <label className="form-field">
+                <span>{selectedAPIProviderID === "anthropic-api-key" ? "Anthropic API Key" : "Gemini API Key"}</span>
                 <input
                   type="password"
-                  value={form.gemini_api_key}
+                  value={selectedAPIProviderID === "anthropic-api-key" ? form.anthropic_api_key : form.gemini_api_key}
                   onChange={(e) =>
-                    setForm({ ...form, gemini_api_key: e.target.value })
+                    setForm({
+                      ...form,
+                      ...(selectedAPIProviderID === "anthropic-api-key"
+                        ? { anthropic_api_key: e.target.value }
+                        : { gemini_api_key: e.target.value }),
+                    })
                   }
-                  placeholder="Enter your Gemini API key"
+                  placeholder={selectedAPIProviderID === "anthropic-api-key" ? "Enter your Anthropic API key" : "Enter your Gemini API key"}
                 />
               </label>
 
@@ -254,7 +307,7 @@ export default function ProviderSection({
                   onChange={(val) =>
                     setForm({
                       ...form,
-                      provider_id: "gemini-api-key",
+                      provider_id: selectedAPIProviderID,
                       model_id: val,
                       gemini_model: toLegacyModel(val),
                     })
@@ -293,7 +346,10 @@ export default function ProviderSection({
                     value={selectedProviderID}
                     onChange={(val) => {
                       const providerID =
-                        val === "google-antigravity" || val === "google-gemini-cli" || val === "aistudio-rpc"
+                        val === "google-antigravity" ||
+                        val === "google-gemini-cli" ||
+                        val === "aistudio-rpc" ||
+                        val === "anthropic-setup-token"
                           ? val
                           : "google-antigravity";
                       const modelID = defaultModelForProvider(providerID);
@@ -306,12 +362,13 @@ export default function ProviderSection({
                     }}
                     options={[
                       { value: "google-antigravity", label: "Google Antigravity (OAuth Pool / Recommended)" },
+                      { value: "anthropic-setup-token", label: "Anthropic Setup Token (Claude Subscription)" },
                       { value: "google-gemini-cli", label: "Google Gemini CLI (Local CLI Runtime)" },
                       { value: "aistudio-rpc", label: "AI Studio RPC (Direct / Test)" },
                     ]}
                   />
                   <span className="hint">
-                    Antigravity 走 OAuth 帳號池；Gemini CLI 走本機 `gemini`；AI Studio RPC 可強制直連（測試用）。
+                    Antigravity 走 Google OAuth 帳號池；Anthropic Setup Token 走 Claude 訂閱 token pool；Gemini CLI 走本機 `gemini`；AI Studio RPC 可強制直連（測試用）。
                   </span>
                   {selectedProviderID === "aistudio-rpc" && !aistudioStatus?.configured && (
                     <span className="hint" style={{ color: "#fca5a5" }}>
@@ -493,24 +550,30 @@ export default function ProviderSection({
                 </div>
               )}
 
-              <div style={{ display: "flex", gap: "0.5rem", marginTop: pool.length > 0 ? "0.75rem" : 0 }}>
-                <button
-                  className="btn-secondary pool-add-account-button"
-                  onClick={onOpenAddAccount}
-                >
-                  <span style={{ fontSize: "1.1rem" }}>+</span> 新增帳號
-                </button>
-                {pool.length > 0 && (
+              {canManagePoolAccounts ? (
+                <div style={{ display: "flex", gap: "0.5rem", marginTop: pool.length > 0 ? "0.75rem" : 0 }}>
                   <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => { void onVerifyPool(selectedOAuthPoolProviderID); }}
-                    disabled={verifyingPool}
+                    className="btn-secondary pool-add-account-button"
+                    onClick={onOpenAddAccount}
                   >
-                    {verifyingPool ? "驗證中..." : "驗證全部帳號"}
+                    <span style={{ fontSize: "1.1rem" }}>+</span> 新增帳號
                   </button>
-                )}
-              </div>
+                  {pool.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => { void onVerifyPool(selectedOAuthPoolProviderID); }}
+                      disabled={verifyingPool}
+                    >
+                      {verifyingPool ? "驗證中..." : "驗證全部帳號"}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="hint" style={{ marginTop: pool.length > 0 ? "0.75rem" : 0 }}>
+                  AI Studio RPC 為直接 session 模式，不需要 OAuth/token pool 帳號匯入。
+                </p>
+              )}
             </>
           )}
         </div>
@@ -825,11 +888,13 @@ export default function ProviderSection({
         </button>
       </section>
 
-      {addAccountOpen && (
+      {addAccountOpen && canManagePoolAccounts && (
         <div className="modal-overlay" onClick={() => !isModalBusy && onCloseAddAccount()}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">新增 Google 帳號</h3>
+              <h3 className="modal-title">
+                {isAnthropicOAuthProvider ? "新增 Anthropic Setup Token" : "新增 Google 帳號"}
+              </h3>
               <button
                 className="modal-close"
                 onClick={() => !isModalBusy && onCloseAddAccount()}
@@ -846,48 +911,52 @@ export default function ProviderSection({
                 </p>
               )}
 
-              <div className="oauth-detect-block">
-                <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
-                  推薦：直接使用 Google OAuth 授權，會自動加入帳號池。
-                </p>
-                <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                  <button
-                    className={oauthMode === "local" ? "btn-primary" : "btn-secondary"}
-                    type="button"
-                    onClick={() => setOAuthMode("local")}
-                    disabled={isModalBusy}
-                  >
-                    Local 模式
-                  </button>
-                  <button
-                    className={oauthMode === "remote" ? "btn-primary" : "btn-secondary"}
-                    type="button"
-                    onClick={() => setOAuthMode("remote")}
-                    disabled={isModalBusy}
-                  >
-                    Remote 模式
-                  </button>
-                </div>
-                <button
-                  onClick={() => onStartOAuth(selectedOAuthPoolProviderID)}
-                  disabled={isModalBusy}
-                  className="btn-primary"
-                >
-                  {oauthStarting ? "連線中..." : "Connect Google Account"}
-                </button>
-                {oauthFlow && (
-                  <div className="meta oauth-meta" style={{ marginTop: "0.6rem" }}>
-                    <div>
-                      flow_id: <code>{oauthFlow.flow_id}</code>
+              {isGoogleOAuthProvider && (
+                <>
+                  <div className="oauth-detect-block">
+                    <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
+                      推薦：直接使用 Google OAuth 授權，會自動加入帳號池。
+                    </p>
+                    <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+                      <button
+                        className={oauthMode === "local" ? "btn-primary" : "btn-secondary"}
+                        type="button"
+                        onClick={() => setOAuthMode("local")}
+                        disabled={isModalBusy}
+                      >
+                        Local 模式
+                      </button>
+                      <button
+                        className={oauthMode === "remote" ? "btn-primary" : "btn-secondary"}
+                        type="button"
+                        onClick={() => setOAuthMode("remote")}
+                        disabled={isModalBusy}
+                      >
+                        Remote 模式
+                      </button>
                     </div>
-                    <div>
-                      expires: <code>{new Date(oauthFlow.expires_at).toLocaleString("zh-TW")}</code>
-                    </div>
+                    <button
+                      onClick={() => onStartOAuth(selectedOAuthPoolProviderID)}
+                      disabled={isModalBusy}
+                      className="btn-primary"
+                    >
+                      {oauthStarting ? "連線中..." : "Connect Google Account"}
+                    </button>
+                    {oauthFlow && (
+                      <div className="meta oauth-meta" style={{ marginTop: "0.6rem" }}>
+                        <div>
+                          flow_id: <code>{oauthFlow.flow_id}</code>
+                        </div>
+                        <div>
+                          expires: <code>{new Date(oauthFlow.expires_at).toLocaleString("zh-TW")}</code>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
 
-              {(oauthFlow || oauthMode === "remote") && (
+              {isGoogleOAuthProvider && (oauthFlow || oauthMode === "remote") && (
                 <div className="oauth-detect-block">
                   <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
                     若無法自動 callback，請把瀏覽器最終網址（含 <code>code</code> 與 <code>state</code>）貼到這裡：
@@ -910,48 +979,92 @@ export default function ProviderSection({
                 </div>
               )}
 
-              <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
+              {isGoogleOAuthProvider && (
+                <>
+                  <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
 
-              <div className="oauth-detect-block">
-                <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
-                  Fallback：在本地電腦執行 Gemini CLI 登入後，貼上 Token 檔案內容。
-                </p>
-                <ol className="meta oauth-meta" style={{ margin: "0 0 0.75rem 1.2rem", padding: 0, lineHeight: 1.8 }}>
-                  <li>安裝並登入：<code>npx @google/gemini-cli</code></li>
-                  <li>複製 Token：<code>cat ~/.gemini/oauth_creds.json</code></li>
-                  <li>貼到下方，點擊匯入</li>
-                </ol>
-                <textarea
-                  value={pastedTokenJSON}
-                  onChange={(e) => setPastedTokenJSON(e.target.value)}
-                  placeholder='{"access_token":"ya29...","refresh_token":"1//...","token_type":"Bearer","expiry_date":1234567890000}'
-                  rows={3}
-                  style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
-                  disabled={importingPasted}
-                />
-                <button
-                  onClick={() => onImportPastedToken(selectedOAuthPoolProviderID)}
-                  disabled={importingPasted || !pastedTokenJSON.trim()}
-                  className="btn-primary"
-                >
-                  {importingPasted ? "匯入中..." : "Import Token"}
-                </button>
-              </div>
+                  <div className="oauth-detect-block">
+                    <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
+                      Fallback：在本地電腦執行 Gemini CLI 登入後，貼上 Token 檔案內容。
+                    </p>
+                    <ol className="meta oauth-meta" style={{ margin: "0 0 0.75rem 1.2rem", padding: 0, lineHeight: 1.8 }}>
+                      <li>安裝並登入：<code>npx @google/gemini-cli</code></li>
+                      <li>複製 Token：<code>cat ~/.gemini/oauth_creds.json</code></li>
+                      <li>貼到下方，點擊匯入</li>
+                    </ol>
+                    <textarea
+                      value={pastedTokenJSON}
+                      onChange={(e) => setPastedTokenJSON(e.target.value)}
+                      placeholder='{"access_token":"ya29...","refresh_token":"1//...","token_type":"Bearer","expiry_date":1234567890000}'
+                      rows={3}
+                      style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
+                      disabled={importingPasted}
+                    />
+                    <button
+                      onClick={() => onImportPastedToken(selectedOAuthPoolProviderID)}
+                      disabled={importingPasted || !pastedTokenJSON.trim()}
+                      className="btn-primary"
+                    >
+                      {importingPasted ? "匯入中..." : "Import Token"}
+                    </button>
+                  </div>
 
-              <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
+                  <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
 
-              <div className="oauth-detect-block">
-                <button
-                  onClick={() => onImportCLIToken(selectedOAuthPoolProviderID)}
-                  disabled={importingCLI}
-                  className="btn-secondary"
-                >
-                  {importingCLI ? "匯入中..." : "Import from Server"}
-                </button>
-                <p className="meta oauth-meta">
-                  可 SSH 的環境：在伺服器上執行 <code>gemini</code> 登入後，直接讀取 Token
-                </p>
-              </div>
+                  <div className="oauth-detect-block">
+                    <button
+                      onClick={() => onImportCLIToken(selectedOAuthPoolProviderID)}
+                      disabled={importingCLI}
+                      className="btn-secondary"
+                    >
+                      {importingCLI ? "匯入中..." : "Import from Server"}
+                    </button>
+                    <p className="meta oauth-meta">
+                      可 SSH 的環境：在伺服器上執行 <code>gemini</code> 登入後，直接讀取 Token
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {isAnthropicOAuthProvider && (
+                <>
+                  <div className="oauth-detect-block">
+                    <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
+                      貼上 Claude 訂閱 setup-token（以 <code>sk-ant-oat01-</code> 開頭）。
+                    </p>
+                    <textarea
+                      value={anthropicSetupToken}
+                      onChange={(e) => setAnthropicSetupToken(e.target.value)}
+                      placeholder="sk-ant-oat01-..."
+                      rows={3}
+                      style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
+                      disabled={importingAnthropicToken}
+                    />
+                    <button
+                      onClick={onImportAnthropicToken}
+                      disabled={importingAnthropicToken || !anthropicSetupToken.trim()}
+                      className="btn-primary"
+                    >
+                      {importingAnthropicToken ? "匯入中..." : "Import Setup Token"}
+                    </button>
+                  </div>
+
+                  <hr style={{ margin: "1rem 0", borderColor: "var(--color-border)" }} />
+
+                  <div className="oauth-detect-block">
+                    <button
+                      onClick={onImportAnthropicEnv}
+                      disabled={importingAnthropicEnv}
+                      className="btn-secondary"
+                    >
+                      {importingAnthropicEnv ? "匯入中..." : "Import from Environment"}
+                    </button>
+                    <p className="meta oauth-meta">
+                      讀取伺服器環境變數：<code>CLAUDE_SETUP_TOKEN</code>（優先）或 <code>ANTHROPIC_SETUP_TOKEN</code>。
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
