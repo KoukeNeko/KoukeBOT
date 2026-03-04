@@ -630,7 +630,14 @@ func resolveProviderTypeForSettings(settings config.Settings, providerID string)
 		return config.ProviderAPIKey
 	case llm.ProviderAnthropicSetupToken:
 		return config.ProviderOAuth
-	case llm.ProviderGoogleGeminiCLI, llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
+	case llm.ProviderGoogleGeminiCLI:
+		// Explicit oauth keeps OpenClaw-style account-pool path.
+		// Empty mode allows local Gemini CLI runtime.
+		if normalizeProviderTypeForSelection(settings.ProviderType) == config.ProviderOAuth {
+			return config.ProviderOAuth
+		}
+		return ""
+	case llm.ProviderGoogleAntigravity, llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	}
 

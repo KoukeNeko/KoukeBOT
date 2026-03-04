@@ -795,8 +795,15 @@ func syncLegacyProviderTypeForSettings(providerType, providerID, geminiAPIKey, a
 		return ProviderAPIKey
 	case "anthropic-setup-token":
 		return ProviderOAuth
-	case "google-gemini-cli", "google-antigravity", "aistudio-rpc":
+	case "google-antigravity", "aistudio-rpc":
 		return ProviderOAuth
+	case "google-gemini-cli":
+		// Keep explicit OAuth for OpenClaw compatibility, but allow empty mode
+		// so Web can opt into local Gemini CLI runtime.
+		if normalizeProviderType(providerType) == ProviderOAuth {
+			return ProviderOAuth
+		}
+		return ""
 	}
 	normalized := normalizeProviderType(providerType)
 	if normalized != "" {

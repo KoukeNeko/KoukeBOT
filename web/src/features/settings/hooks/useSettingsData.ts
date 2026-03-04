@@ -239,15 +239,16 @@ export function useSettingsData() {
     try {
       const payload = { ...form }
       if (overrideProviderType) {
-        payload.provider_type = overrideProviderType
         if (overrideProviderType === 'api-key') {
+          payload.provider_type = 'api-key'
           const apiProviderID = payload.provider_id === 'anthropic-api-key' ? 'anthropic-api-key' : 'gemini-api-key'
           payload.provider_id = apiProviderID
           if (extractProviderFromModelID(payload.model_id) !== apiProviderID) {
             payload.model_id = defaultModelForProvider(apiProviderID)
           }
           payload.gemini_model = toLegacyModel(payload.model_id || payload.gemini_model)
-        } else {
+        } else if (overrideProviderType === 'oauth') {
+          payload.provider_type = 'oauth'
           const oauthProviderID =
             payload.provider_id === 'google-gemini-cli' ||
             payload.provider_id === 'google-antigravity' ||
@@ -258,6 +259,13 @@ export function useSettingsData() {
           payload.provider_id = oauthProviderID
           if (extractProviderFromModelID(payload.model_id) !== oauthProviderID) {
             payload.model_id = defaultModelForProvider(oauthProviderID)
+          }
+          payload.gemini_model = toLegacyModel(payload.model_id || payload.gemini_model)
+        } else if (overrideProviderType === 'auto') {
+          payload.provider_type = ''
+          payload.provider_id = 'google-gemini-cli'
+          if (extractProviderFromModelID(payload.model_id) !== payload.provider_id) {
+            payload.model_id = defaultModelForProvider(payload.provider_id)
           }
           payload.gemini_model = toLegacyModel(payload.model_id || payload.gemini_model)
         }

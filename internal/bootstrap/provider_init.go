@@ -311,7 +311,12 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 		return config.ProviderOAuth
 	case llm.ProviderGoogleAntigravity:
 		return config.ProviderOAuth
-	case llm.ProviderGoogleGeminiCLI, llm.ProviderAIStudioRPC:
+	case llm.ProviderGoogleGeminiCLI:
+		if strings.EqualFold(strings.TrimSpace(settings.ProviderType), config.ProviderOAuth) {
+			return config.ProviderOAuth
+		}
+		return ""
+	case llm.ProviderAIStudioRPC:
 		return config.ProviderOAuth
 	}
 	switch settings.ProviderType {

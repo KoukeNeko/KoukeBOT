@@ -264,6 +264,31 @@ func TestNormalizeSettingsSupportsAIStudioRPCProviderID(t *testing.T) {
 	}
 }
 
+func TestNormalizeSettingsAllowsGeminiCLILocalMode(t *testing.T) {
+	in := Settings{
+		ProviderType: "",
+		ProviderID:   "google-gemini-cli",
+		ModelID:      "google-gemini-cli/gemini-3.1-pro-preview",
+		GeminiModel:  "gemini-3.1-pro-preview",
+	}
+	raw := map[string]json.RawMessage{
+		"provider_type": json.RawMessage(`""`),
+		"provider_id":   json.RawMessage(`"google-gemini-cli"`),
+		"model_id":      json.RawMessage(`"google-gemini-cli/gemini-3.1-pro-preview"`),
+	}
+
+	got := normalizeSettings(in, raw)
+	if got.ProviderID != "google-gemini-cli" {
+		t.Fatalf("ProviderID = %q, want %q", got.ProviderID, "google-gemini-cli")
+	}
+	if got.ProviderType != "" {
+		t.Fatalf("ProviderType = %q, want empty for local CLI mode", got.ProviderType)
+	}
+	if got.ModelID != "google-gemini-cli/gemini-3.1-pro-preview" {
+		t.Fatalf("ModelID = %q, want %q", got.ModelID, "google-gemini-cli/gemini-3.1-pro-preview")
+	}
+}
+
 func TestNormalizeSettingsBuildsFallbackChainAndRemovesPrimaryOrDuplicates(t *testing.T) {
 	in := Settings{
 		ProviderType:             ProviderOAuth,

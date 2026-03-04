@@ -395,7 +395,11 @@ export default function ProviderSection({
                   />
                 </label>
 
-                <button onClick={() => onSave("oauth")} disabled={saving} className="btn-save-bottom">
+                <button
+                  onClick={() => onSave(selectedProviderID === "google-gemini-cli" ? "auto" : "oauth")}
+                  disabled={saving}
+                  className="btn-save-bottom"
+                >
                   {saving ? "Saving..." : "Use Selected Provider"}
                 </button>
               </div>
