@@ -42,3 +42,28 @@ func TestProviderCatalogForAntigravityExcludesDeprecatedClaudeOpus46(t *testing.
 		}
 	}
 }
+
+func TestProviderCatalogForGeminiCLIIncludesGemini31Series(t *testing.T) {
+	models := staticCatalogForProvider(ProviderGoogleGeminiCLI)
+	if len(models) == 0 {
+		t.Fatalf("expected non-empty gemini-cli catalog")
+	}
+
+	ids := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		ids[model.ID] = struct{}{}
+	}
+
+	expected := []string{
+		BuildProviderModelID(ProviderGoogleGeminiCLI, "gemini-3.1-pro-preview-customtools"),
+		BuildProviderModelID(ProviderGoogleGeminiCLI, "gemini-3.1-pro-preview"),
+		BuildProviderModelID(ProviderGoogleGeminiCLI, "gemini-3.1-flash-preview"),
+		BuildProviderModelID(ProviderGoogleGeminiCLI, "gemini-3.1-flash-lite-preview"),
+		BuildProviderModelID(ProviderGoogleGeminiCLI, "gemini-3.1-flash-image-preview"),
+	}
+	for _, modelID := range expected {
+		if _, ok := ids[modelID]; !ok {
+			t.Fatalf("expected gemini-cli catalog to include %q", modelID)
+		}
+	}
+}
