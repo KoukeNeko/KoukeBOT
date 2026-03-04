@@ -103,6 +103,7 @@ export default function SettingsPage({ vm }: Props) {
             form={vm.form}
             setForm={vm.setForm}
             modelOptions={vm.modelOptions}
+            fallbackModelOptions={vm.fallbackModelOptions}
             providerTab={vm.oauth.providerTab}
             setProviderTab={vm.oauth.setProviderTab}
             oauthStatus={vm.oauth.oauthStatus}

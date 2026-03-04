@@ -77,6 +77,7 @@ function buildProps(overrides: Partial<ComponentProps<typeof ProviderSection>> =
     form: buildForm(),
     setForm: vi.fn(),
     modelOptions: [{ value: 'gemini-api-key/gemini-2.5-pro', label: 'Gemini 2.5 Pro' }],
+    fallbackModelOptions: [{ value: 'gemini-api-key/gemini-2.5-pro', label: 'gemini-api-key/gemini-2.5-pro' }],
     providerTab: 'api-key',
     setProviderTab: vi.fn(),
     oauthStatus: null,
@@ -222,8 +223,8 @@ describe('ProviderSection', () => {
     )
 
     expect(screen.getByText('新增 Anthropic Setup Token')).toBeTruthy()
-    expect(screen.getByText('Import Setup Token')).toBeTruthy()
-    expect(screen.getByText('Import from Environment')).toBeTruthy()
+    expect(screen.getAllByText('Import Setup Token').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Import from Environment').length).toBeGreaterThan(0)
   })
 
   it('renders second/third fallback selectors', () => {

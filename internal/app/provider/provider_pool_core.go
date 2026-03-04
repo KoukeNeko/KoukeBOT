@@ -602,28 +602,41 @@ func tryFallbackModelsInOrder[T any](
 	}
 
 	var fallbackErr error
-	for _, fallbackModel := range models {
+	for _, fallbackModelTarget := range models {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
 				return zero, err
 			}
 		}
 
-		fallbackProvider := switcher.WithModel(fallbackModel)
-		logPool.Logf("attempting fallback model %s via account %s", fallbackModel, email)
-
-		result, err := fn(fallbackProvider)
-		if err != nil {
-			logPool.Warnf("fallback model %s failed: %s", fallbackModel, truncateError(err, 200))
-			fallbackErr = fmt.Errorf("fallback model %s: %w", fallbackModel, err)
+		displayTarget := strings.TrimSpace(fallbackModelTarget)
+		switchTarget := displayTarget
+		if pid, mid := llm.SplitProviderModelID(fallbackModelTarget); mid != "" {
+			switchTarget = mid
+			displayTarget = mid
+			if pid != "" {
+				displayTarget = llm.BuildProviderModelID(pid, mid)
+			}
+		}
+		if switchTarget == "" {
 			continue
 		}
 
-		result = annotateFallbackResult(result, fallbackModel, reason)
-		pp.recordEffectiveState(fallbackProvider, fallbackModel, reason, true)
+		fallbackProvider := switcher.WithModel(switchTarget)
+		logPool.Logf("attempting fallback model %s via account %s", displayTarget, email)
+
+		result, err := fn(fallbackProvider)
+		if err != nil {
+			logPool.Warnf("fallback model %s failed: %s", displayTarget, truncateError(err, 200))
+			fallbackErr = fmt.Errorf("fallback model %s: %w", displayTarget, err)
+			continue
+		}
+
+		result = annotateFallbackResult(result, displayTarget, reason)
+		pp.recordEffectiveState(fallbackProvider, displayTarget, reason, true)
 		atomic.AddUint64(&pp.metricModelFallback, 1)
 		logPool.Logf("metric pool.model_fallback=1")
-		logPool.Logf("fallback model %s succeeded", fallbackModel)
+		logPool.Logf("fallback model %s succeeded", displayTarget)
 		return result, nil
 	}
 

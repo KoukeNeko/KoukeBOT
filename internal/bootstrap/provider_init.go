@@ -331,5 +331,5 @@ func resolveBootstrapProviderType(settings config.Settings, providerID string) s
 }
 
 func resolveBootstrapFallbackModels(settings config.Settings, providerID, primaryModel string) []string {
-	return config.ResolveFallbackModelChain(settings, providerID, primaryModel)
+	return config.ResolveFallbackModelIDChain(settings, providerID, primaryModel)
 }

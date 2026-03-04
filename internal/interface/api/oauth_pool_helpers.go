@@ -36,7 +36,7 @@ func configureOAuthPoolFromSettings(pool *app.ProviderPool, settings config.Sett
 
 	fallbackEnabled := settings.FallbackEnabled || settings.FallbackModelEnabled
 	_, primaryModel, _ := llm.ResolveProviderAndModel(settings.ProviderID, settings.ModelID, settings.GeminiModel)
-	fallbackModels := resolveFallbackModelChain(settings, providerID, primaryModel)
+	fallbackModels := resolveFallbackModelIDChain(settings, providerID, primaryModel)
 	if fallbackEnabled && len(fallbackModels) > 0 {
 		pool.SetFallbackModels(fallbackModels)
 	} else {

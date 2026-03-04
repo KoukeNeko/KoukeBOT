@@ -359,7 +359,7 @@ func (h *Handlers) buildOAuthPoolProvider(s config.Settings, providerID, model s
 	configureOAuthPoolFromSettings(pool, s, providerID, poolPath)
 	h.attachAIStudioOAuthFallback(pool, model)
 	fallbackEnabled := s.FallbackEnabled || s.FallbackModelEnabled
-	fallbackModels := resolveFallbackModelChain(s, providerID, model)
+	fallbackModels := resolveFallbackModelIDChain(s, providerID, model)
 
 	probeSuccess := false
 	probeNotFound := false
@@ -486,9 +486,22 @@ func (h *Handlers) handleOAuthProbeErrorWithFallback(
 		return fmt.Errorf("fallback probe requested but provider does not support model switching: %w", probeErr)
 	}
 
-	primary := llm.NormalizeModelAliasForProvider(providerID, primaryModel)
+	primaryPID := llm.NormalizeGoogleProviderID(providerID)
+	primary := llm.NormalizeModelAliasForProvider(primaryPID, primaryModel)
 	for _, candidate := range fallbackModels {
-		fallbackModel := llm.NormalizeModelAliasForProvider(providerID, candidate)
+		fallbackPID := primaryPID
+		fallbackModel := strings.TrimSpace(candidate)
+		if pid, mid := llm.SplitProviderModelID(candidate); mid != "" {
+			fallbackModel = mid
+			if pid != "" {
+				fallbackPID = pid
+			}
+		}
+		if fallbackPID != "" && primaryPID != "" && fallbackPID != primaryPID {
+			// Probe fallback switching is model-only on the same provider.
+			continue
+		}
+		fallbackModel = llm.NormalizeModelAliasForProvider(fallbackPID, fallbackModel)
 		if fallbackModel == "" {
 			continue
 		}
@@ -659,6 +672,10 @@ func resolveFallbackModelsForResponse(settings config.Settings, providerID, prim
 
 func resolveFallbackModelChain(settings config.Settings, providerID, primaryModel string) []string {
 	return config.ResolveFallbackModelChain(settings, providerID, primaryModel)
+}
+
+func resolveFallbackModelIDChain(settings config.Settings, providerID, primaryModel string) []string {
+	return config.ResolveFallbackModelIDChain(settings, providerID, primaryModel)
 }
 
 func (h *Handlers) resolveProviderObservability() (model string, endpoint string, fallbackReason string) {

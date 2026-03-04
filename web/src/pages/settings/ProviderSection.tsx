@@ -25,6 +25,7 @@ type Props = {
   form: SettingsData;
   setForm: Dispatch<SetStateAction<SettingsData>>;
   modelOptions: SelectOption[];
+  fallbackModelOptions: SelectOption[];
   providerTab: ProviderTab;
   setProviderTab: (tab: ProviderTab) => void;
   oauthStatus: OAuthStatus | null;
@@ -80,6 +81,7 @@ export default function ProviderSection({
   form,
   setForm,
   modelOptions,
+  fallbackModelOptions,
   providerTab,
   setProviderTab,
   oauthStatus,
@@ -189,9 +191,10 @@ export default function ProviderSection({
   const primaryLegacyModel = toLegacyModel(currentModelValue || "");
   const firstFallbackLegacyModel = toLegacyModel(resolvedFallbackValue || "");
   const secondFallbackLegacyModel = toLegacyModel(resolvedFallbackSecondValue || "");
+  const fallbackBaseOptions = fallbackModelOptions.length > 0 ? fallbackModelOptions : modelOptions;
   const fallbackOptions: SelectOption[] = [
     { value: "", label: "不使用備用模型" },
-    ...modelOptions,
+    ...fallbackBaseOptions,
   ];
   if (
     resolvedFallbackValue &&
@@ -204,7 +207,7 @@ export default function ProviderSection({
   }
   const fallbackSecondOptions: SelectOption[] = [
     { value: "", label: "不使用第二備用模型" },
-    ...modelOptions.filter((option) => {
+    ...fallbackBaseOptions.filter((option) => {
       const legacyModel = toLegacyModel(option.value);
       return legacyModel !== primaryLegacyModel && legacyModel !== firstFallbackLegacyModel;
     }),
@@ -220,7 +223,7 @@ export default function ProviderSection({
   }
   const fallbackThirdOptions: SelectOption[] = [
     { value: "", label: "不使用第三備用模型" },
-    ...modelOptions.filter((option) => {
+    ...fallbackBaseOptions.filter((option) => {
       const legacyModel = toLegacyModel(option.value);
       return (
         legacyModel !== primaryLegacyModel &&
@@ -396,6 +399,41 @@ export default function ProviderSection({
                   {saving ? "Saving..." : "Use Selected Provider"}
                 </button>
               </div>
+
+              {isAnthropicOAuthProvider && (
+                <div className="oauth-detect-block" style={{ marginTop: "0.75rem" }}>
+                  <p className="meta oauth-meta" style={{ marginBottom: "0.5rem" }}>
+                    直接貼上 Claude setup-token（<code>sk-ant-oat01-...</code>）即可加入 token pool。
+                  </p>
+                  <textarea
+                    value={anthropicSetupToken}
+                    onChange={(e) => setAnthropicSetupToken(e.target.value)}
+                    placeholder="sk-ant-oat01-..."
+                    rows={3}
+                    style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}
+                    disabled={importingAnthropicToken}
+                  />
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <button
+                      onClick={onImportAnthropicToken}
+                      disabled={importingAnthropicToken || !anthropicSetupToken.trim()}
+                      className="btn-primary"
+                    >
+                      {importingAnthropicToken ? "匯入中..." : "Import Setup Token"}
+                    </button>
+                    <button
+                      onClick={onImportAnthropicEnv}
+                      disabled={importingAnthropicEnv}
+                      className="btn-secondary"
+                    >
+                      {importingAnthropicEnv ? "匯入中..." : "Import from Environment"}
+                    </button>
+                  </div>
+                  <p className="meta oauth-meta" style={{ marginTop: "0.5rem" }}>
+                    環境變數優先順序：<code>CLAUDE_SETUP_TOKEN</code> → <code>ANTHROPIC_SETUP_TOKEN</code>
+                  </p>
+                </div>
+              )}
 
               {pool.length > 0 && (
                 <div className="pool-cards compact">

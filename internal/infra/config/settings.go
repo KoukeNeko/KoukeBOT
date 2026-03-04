@@ -616,7 +616,12 @@ func resolveFallbackModelCandidateForSettings(defaultProviderID, fallbackModelID
 }
 
 func buildFallbackModelChainForSettings(primaryProviderID, primaryModel string, candidates ...fallbackModelCandidate) []fallbackModelCandidate {
+	normalizedPrimaryProvider := normalizeGoogleProviderIDForSettings(primaryProviderID)
 	normalizedPrimary := normalizeModelAliasForProviderForSettings(primaryProviderID, primaryModel)
+	primaryKey := ""
+	if normalizedPrimary != "" {
+		primaryKey = normalizedPrimaryProvider + "/" + normalizedPrimary
+	}
 	seen := map[string]struct{}{}
 	chain := make([]fallbackModelCandidate, 0, len(candidates))
 
@@ -626,17 +631,17 @@ func buildFallbackModelChainForSettings(primaryProviderID, primaryModel string, 
 		if model == "" {
 			continue
 		}
-		if normalizedPrimary != "" && model == normalizedPrimary {
-			continue
-		}
-		if _, exists := seen[model]; exists {
-			continue
-		}
-		seen[model] = struct{}{}
-
 		if providerID == "" {
 			providerID = "google-gemini-cli"
 		}
+		key := providerID + "/" + model
+		if primaryKey != "" && key == primaryKey {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
 		chain = append(chain, fallbackModelCandidate{
 			providerID: providerID,
 			model:      model,

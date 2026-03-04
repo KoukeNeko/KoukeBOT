@@ -107,6 +107,7 @@ const defaultSettings: SettingsData = {
 export function useSettingsData() {
   const [form, setForm] = useState<SettingsData>(defaultSettings)
   const [models, setModels] = useState<ModelEntry[]>([])
+  const [fallbackModels, setFallbackModels] = useState<ModelEntry[]>([])
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
   const [status, setStatus] = useState<ProviderStatus | null>(null)
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null)
@@ -134,6 +135,37 @@ export function useSettingsData() {
     if (form.provider_type === 'api-key') return 'gemini-api-key'
     return 'google-antigravity'
   }, [form.provider_id, form.provider_type])
+
+  const refreshFallbackModels = useCallback(async () => {
+    const providers = [
+      'google-antigravity',
+      'google-gemini-cli',
+      'aistudio-rpc',
+      'gemini-api-key',
+      'openai-api-key',
+      'anthropic-api-key',
+      'anthropic-setup-token',
+    ]
+    const lists = await Promise.all(
+      providers.map(async (providerID) => {
+        try {
+          return await listModels(providerID)
+        } catch {
+          return [] as ModelEntry[]
+        }
+      }),
+    )
+    const seen = new Set<string>()
+    const merged: ModelEntry[] = []
+    for (const list of lists) {
+      for (const entry of list) {
+        if (!entry?.id || seen.has(entry.id)) continue
+        seen.add(entry.id)
+        merged.push(entry)
+      }
+    }
+    setFallbackModels(merged)
+  }, [])
 
   useEffect(() => {
     Promise.all([
@@ -173,6 +205,7 @@ export function useSettingsData() {
       .then((modelList) => {
         setModels(modelList)
       })
+      .then(() => refreshFallbackModels())
       .catch((error) => setMessage({ type: 'err', text: error instanceof Error ? error.message : 'Failed to load settings' }))
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -276,6 +309,14 @@ export function useSettingsData() {
     return [{ value: fallback, label: fallback }]
   }, [form.gemini_model, form.model_id, models, selectedProviderID])
 
+  const fallbackModelOptions = useMemo(() => {
+    const source = fallbackModels.length > 0 ? fallbackModels : models
+    return source.map((model) => ({
+      value: model.id,
+      label: `${model.id}${model.reasoning ? ' · Reasoning' : ''}${model.supports_multimodal ? ' · MM' : ''}${model.supports_tools ? ' · Tools' : ''}`,
+    }))
+  }, [fallbackModels, models])
+
   const personaOptions = useMemo(
     () => personas.map((persona) => ({ value: persona.id, label: `${persona.name} (${persona.id})` })),
     [personas],
@@ -292,6 +333,7 @@ export function useSettingsData() {
     saving,
     message,
     modelOptions,
+    fallbackModelOptions,
     personaOptions,
     handleSave,
     oauth,

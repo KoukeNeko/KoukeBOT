@@ -184,13 +184,7 @@ func (pp *ProviderPool) SetFallbackModels(models []string) {
 	seen := map[string]struct{}{}
 	normalized := make([]string, 0, 3)
 	for _, model := range models {
-		trimmed := llm.NormalizeModelID(strings.TrimSpace(model))
-		switch trimmed {
-		case "gemini-3-pro":
-			trimmed = "gemini-3-pro-preview"
-		case "gemini-3-flash":
-			trimmed = "gemini-3-flash-preview"
-		}
+		trimmed := normalizeFallbackModelTarget(strings.TrimSpace(model))
 		if trimmed == "" {
 			continue
 		}
@@ -205,6 +199,27 @@ func (pp *ProviderPool) SetFallbackModels(models []string) {
 	}
 
 	pp.fallbackModels = normalized
+}
+
+func normalizeFallbackModelTarget(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if pid, mid := llm.SplitProviderModelID(raw); mid != "" {
+		if pid != "" {
+			return llm.BuildProviderModelID(pid, mid)
+		}
+		return mid
+	}
+	normalized := llm.NormalizeModelID(raw)
+	switch normalized {
+	case "gemini-3-pro":
+		return "gemini-3-pro-preview"
+	case "gemini-3-flash":
+		return "gemini-3-flash-preview"
+	default:
+		return normalized
+	}
 }
 
 // SetOAuthExhaustionFallback configures a provider that will be used only when
