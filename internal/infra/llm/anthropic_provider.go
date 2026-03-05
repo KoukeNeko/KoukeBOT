@@ -301,7 +301,8 @@ func (a *AnthropicProvider) requestMessages(
 	if generation.Temperature > 0 {
 		reqBody.Temperature = &generation.Temperature
 	}
-	if generation.TopP > 0 {
+	// Anthropic does not allow both temperature and top_p simultaneously.
+	if generation.TopP > 0 && reqBody.Temperature == nil {
 		reqBody.TopP = &generation.TopP
 	}
 	if toolMode != ToolModeDisabled && len(a.tools) > 0 {
@@ -330,7 +331,8 @@ func (a *AnthropicProvider) requestMessagesMultimodal(
 	if generation.Temperature > 0 {
 		reqBody.Temperature = &generation.Temperature
 	}
-	if generation.TopP > 0 {
+	// Anthropic does not allow both temperature and top_p simultaneously.
+	if generation.TopP > 0 && reqBody.Temperature == nil {
 		reqBody.TopP = &generation.TopP
 	}
 	return a.postAnthropic(ctx, reqBody)
