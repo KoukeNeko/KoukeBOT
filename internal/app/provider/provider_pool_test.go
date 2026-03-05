@@ -790,6 +790,77 @@ func TestProviderPoolFallbackModelDisabledReturnsError(t *testing.T) {
 	}
 }
 
+func TestProviderPoolCrossProviderFallbackSucceeds(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	pool.SetFallbackModels([]string{"anthropic-setup-token/claude-opus-4-6"})
+
+	// Primary provider is Gemini-like (with model switching, but fails on capacity).
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	primary := &switchableErrProvider{
+		errProvider: errProvider{err: capErr},
+		fallbackID:  "should-not-use-this",
+	}
+	pool.AddOrReplace(primary, "gemini@example.com")
+
+	// Register a cross-provider fallback for Anthropic.
+	anthropicProvider := &stubProvider{id: "anthropic-opus-ok"}
+	pool.SetFallbackProvider("anthropic-setup-token", anthropicProvider)
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected cross-provider fallback success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "anthropic-opus-ok") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Content, "[Model fallback] switched to anthropic-setup-token/claude-opus-4-6") {
+		t.Fatalf("expected cross-provider fallback annotation, got: %q", resp.Content)
+	}
+	if metrics := pool.MetricsSnapshot(); metrics.ModelFallback != 1 {
+		t.Fatalf("expected model fallback metric=1, got %+v", metrics)
+	}
+}
+
+func TestProviderPoolCrossProviderFallbackChain(t *testing.T) {
+	pool := NewProviderPool()
+	pool.SetAutoRetryCount(0)
+	// Chain: Anthropic (fails) → same-provider Gemini model (succeeds)
+	pool.SetFallbackModels([]string{
+		"anthropic-setup-token/claude-opus-4-6",
+		"gemini-2.0-flash",
+	})
+
+	capErr := errors.New("code assist HTTP 429: No capacity available for model gemini-3-pro-preview")
+	primary := newScriptedSwitchProvider("gemini-3-pro-preview", map[string]scriptedModelResult{
+		"gemini-3-pro-preview": {err: capErr},
+		"gemini-2.0-flash":     {content: "gemini-flash-ok"},
+	})
+	pool.AddOrReplace(primary, "gemini@example.com")
+
+	// Cross-provider Anthropic fallback that also fails.
+	anthropicErr := errors.New("HTTP 529 overloaded")
+	anthropicProvider := &errProvider{err: anthropicErr}
+	pool.SetFallbackProvider("anthropic-setup-token", anthropicProvider)
+
+	resp, err := pool.Chat(context.Background(), llm.ChatRequest{
+		SystemPrompt: "x",
+		Messages:     []domain.Message{{Role: domain.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected second fallback success, got error: %v", err)
+	}
+	if resp == nil || !strings.Contains(resp.Content, "gemini-flash-ok") {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if !strings.Contains(resp.Content, "[Model fallback] switched to gemini-2.0-flash") {
+		t.Fatalf("expected gemini fallback annotation, got: %q", resp.Content)
+	}
+}
+
 func TestRequestQueueEnqueueAndDrain(t *testing.T) {
 	q := newRequestQueue(2, 2*time.Second)
 

@@ -102,6 +102,10 @@ type ProviderPool struct {
 	// Fallback models: tried in order when primary model has no capacity.
 	fallbackModels []string
 
+	// Cross-provider fallback: keyed by normalized provider ID (e.g. "anthropic-setup-token").
+	// Used when a fallback model belongs to a different provider than the primary.
+	fallbackProviders map[string]llm.Provider
+
 	// OAuth exhaustion fallback provider (AI Studio RPC).
 	// Triggered only when all OAuth accounts are quota-exhausted.
 	oauthExhaustionFallback llm.Provider
@@ -219,6 +223,42 @@ func normalizeFallbackModelTarget(raw string) string {
 		return "gemini-3-flash-preview"
 	default:
 		return normalized
+	}
+}
+
+// SetFallbackProvider registers an external provider for cross-provider model fallback.
+// providerID should be a normalized provider ID (e.g. "anthropic-setup-token").
+func (pp *ProviderPool) SetFallbackProvider(providerID string, provider llm.Provider) {
+	pp.mu.Lock()
+	tools := append([]domain.Tool(nil), pp.tools...)
+	if pp.fallbackProviders == nil {
+		pp.fallbackProviders = make(map[string]llm.Provider)
+	}
+	if provider == nil {
+		delete(pp.fallbackProviders, providerID)
+	} else {
+		pp.fallbackProviders[providerID] = provider
+	}
+	pp.mu.Unlock()
+
+	if provider != nil && len(tools) > 0 {
+		provider.RegisterTools(tools)
+	}
+}
+
+// SetFallbackProviderMap replaces all cross-provider fallback providers at once.
+func (pp *ProviderPool) SetFallbackProviderMap(providers map[string]llm.Provider) {
+	pp.mu.Lock()
+	tools := append([]domain.Tool(nil), pp.tools...)
+	pp.fallbackProviders = providers
+	pp.mu.Unlock()
+
+	if len(tools) > 0 {
+		for _, p := range providers {
+			if p != nil {
+				p.RegisterTools(tools)
+			}
+		}
 	}
 }
 

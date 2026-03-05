@@ -207,6 +207,7 @@ func initOAuthProvider(
 	)
 	if fallbackModels := resolveBootstrapFallbackModels(settings, providerID, model); len(fallbackModels) > 0 && (settings.FallbackEnabled || settings.FallbackModelEnabled) {
 		pool.SetFallbackModels(fallbackModels)
+		attachCrossProviderFallbacks(pool, tokens, providerID, fallbackModels, logs)
 	}
 	if settings.RequestQueueEnabled {
 		capacity := settings.RequestQueueCapacity
@@ -281,6 +282,99 @@ func initOAuthProvider(
 	pm.Update(pool)
 	logs.LLM.Logf("OAuth pool: %d account(s) (model: %s)", pool.Size(), model)
 	return true
+}
+
+func attachCrossProviderFallbacks(
+	pool *app.ProviderPool,
+	tokens []*llm.OAuthTokenData,
+	primaryProviderID string,
+	fallbackModels []string,
+	logs Loggers,
+) {
+	if pool == nil || len(fallbackModels) == 0 {
+		return
+	}
+
+	primaryNormalized := llm.NormalizeGoogleProviderID(primaryProviderID)
+	if primaryNormalized == "" {
+		primaryNormalized = llm.ProviderGoogleGeminiCLI
+	}
+
+	// Collect unique cross-provider IDs from fallback models.
+	needed := map[string]string{} // providerID -> first model name (for default)
+	for _, modelTarget := range fallbackModels {
+		pid, mid := llm.SplitProviderModelID(modelTarget)
+		if pid == "" || mid == "" {
+			continue
+		}
+		normalizedPID := llm.NormalizeGoogleProviderID(pid)
+		if normalizedPID == primaryNormalized {
+			continue // Same provider, handled by ModelSwitcher
+		}
+		if _, exists := needed[normalizedPID]; !exists {
+			needed[normalizedPID] = mid
+		}
+	}
+
+	if len(needed) == 0 {
+		return
+	}
+
+	for providerID, defaultModel := range needed {
+		provider := buildCrossProviderFromTokens(tokens, providerID, defaultModel, logs)
+		if provider != nil {
+			pool.SetFallbackProvider(providerID, provider)
+			logs.LLM.Logf("cross-provider fallback registered: %s (model: %s)", providerID, defaultModel)
+		}
+	}
+}
+
+// buildCrossProviderFromTokens creates a provider for the given provider ID
+// using token data from the OAuth pool.
+func buildCrossProviderFromTokens(
+	tokens []*llm.OAuthTokenData,
+	providerID string,
+	defaultModel string,
+	logs Loggers,
+) llm.Provider {
+	switch providerID {
+	case llm.ProviderAnthropicSetupToken:
+		for _, tokenData := range tokens {
+			tokenPID := llm.NormalizeGoogleProviderID(tokenData.ProviderID)
+			if tokenPID != llm.ProviderAnthropicSetupToken {
+				continue
+			}
+			if err := llm.ValidateAnthropicSetupToken(tokenData.AccessToken); err != nil {
+				logs.LLM.Warnf("cross-provider fallback: invalid Anthropic setup token for %s: %v", tokenData.Email, err)
+				continue
+			}
+			provider, err := llm.NewAnthropicSetupTokenProvider(tokenData.AccessToken, defaultModel)
+			if err != nil {
+				logs.LLM.Warnf("cross-provider fallback: failed to create Anthropic provider for %s: %v", tokenData.Email, err)
+				continue
+			}
+			return provider
+		}
+		logs.LLM.Warnf("cross-provider fallback: no valid Anthropic setup token found in OAuth pool")
+
+	case llm.ProviderAnthropicAPIKey:
+		apiKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+		if apiKey == "" {
+			logs.LLM.Warnf("cross-provider fallback: no Anthropic API key available")
+			return nil
+		}
+		provider, err := llm.NewAnthropicAPIProvider(apiKey, defaultModel)
+		if err != nil {
+			logs.LLM.Warnf("cross-provider fallback: failed to create Anthropic API provider: %v", err)
+			return nil
+		}
+		return provider
+
+	default:
+		logs.LLM.Warnf("cross-provider fallback: unsupported provider ID %s", providerID)
+	}
+
+	return nil
 }
 
 func attachAIStudioFallbackProvider(pool *app.ProviderPool, sessionPath, model string, logs Loggers) {

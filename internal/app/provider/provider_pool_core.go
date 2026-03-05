@@ -261,6 +261,11 @@ func (pp *ProviderPool) RegisterTools(tools []domain.Tool) {
 	if pp.oauthExhaustionFallback != nil {
 		pp.oauthExhaustionFallback.RegisterTools(tools)
 	}
+	for _, p := range pp.fallbackProviders {
+		if p != nil {
+			p.RegisterTools(tools)
+		}
+	}
 }
 
 // tryPool is a generic failover function.
@@ -592,14 +597,14 @@ func tryFallbackModelsInOrder[T any](
 		pp.mu.RUnlock()
 		return zero, fmt.Errorf("no providers available for fallback")
 	}
-	provider := pp.entries[0].provider
-	email := pp.entries[0].email
-	pp.mu.RUnlock()
-
-	switcher, ok := provider.(llm.ModelSwitcher)
-	if !ok {
-		return zero, fmt.Errorf("provider %s does not support model switching", email)
+	primaryProvider := pp.entries[0].provider
+	primaryEmail := pp.entries[0].email
+	// Snapshot the cross-provider fallback map under the same lock.
+	crossProviders := make(map[string]llm.Provider, len(pp.fallbackProviders))
+	for k, v := range pp.fallbackProviders {
+		crossProviders[k] = v
 	}
+	pp.mu.RUnlock()
 
 	var fallbackErr error
 	for _, fallbackModelTarget := range models {
@@ -611,7 +616,9 @@ func tryFallbackModelsInOrder[T any](
 
 		displayTarget := strings.TrimSpace(fallbackModelTarget)
 		switchTarget := displayTarget
+		targetProviderID := ""
 		if pid, mid := llm.SplitProviderModelID(fallbackModelTarget); mid != "" {
+			targetProviderID = pid
 			switchTarget = mid
 			displayTarget = mid
 			if pid != "" {
@@ -622,8 +629,17 @@ func tryFallbackModelsInOrder[T any](
 			continue
 		}
 
-		fallbackProvider := switcher.WithModel(switchTarget)
-		logPool.Logf("attempting fallback model %s via account %s", displayTarget, email)
+		// Resolve the provider to use for this fallback model.
+		fallbackProvider, resolveErr := resolveFallbackProvider(
+			primaryProvider, primaryEmail, crossProviders, targetProviderID, switchTarget,
+		)
+		if resolveErr != nil {
+			logPool.Warnf("fallback model %s: %s", displayTarget, resolveErr)
+			fallbackErr = fmt.Errorf("fallback model %s: %w", displayTarget, resolveErr)
+			continue
+		}
+
+		logPool.Logf("attempting fallback model %s via account %s", displayTarget, primaryEmail)
 
 		result, err := fn(fallbackProvider)
 		if err != nil {
@@ -644,6 +660,72 @@ func tryFallbackModelsInOrder[T any](
 		return zero, fallbackErr
 	}
 	return zero, fmt.Errorf("fallback model attempt failed")
+}
+
+// resolveFallbackProvider determines which provider to use for a fallback model.
+// If the model's provider ID matches the primary or is empty, it uses the primary
+// provider's ModelSwitcher. Otherwise it looks up a registered cross-provider.
+func resolveFallbackProvider(
+	primaryProvider llm.Provider,
+	primaryEmail string,
+	crossProviders map[string]llm.Provider,
+	targetProviderID string,
+	modelName string,
+) (llm.Provider, error) {
+	// Same-provider fallback: use primary provider's ModelSwitcher.
+	if targetProviderID == "" {
+		switcher, ok := primaryProvider.(llm.ModelSwitcher)
+		if !ok {
+			return nil, fmt.Errorf("provider %s does not support model switching", primaryEmail)
+		}
+		return switcher.WithModel(modelName), nil
+	}
+
+	// Check if the target provider ID matches the primary provider.
+	primaryInfo := primaryProvider.ModelInfo()
+	if isPrimarySameProvider(primaryInfo.ProviderName, targetProviderID) {
+		switcher, ok := primaryProvider.(llm.ModelSwitcher)
+		if !ok {
+			return nil, fmt.Errorf("provider %s does not support model switching", primaryEmail)
+		}
+		return switcher.WithModel(modelName), nil
+	}
+
+	// Cross-provider fallback: look up in registered fallback providers.
+	crossProvider, exists := crossProviders[targetProviderID]
+	if !exists || crossProvider == nil {
+		return nil, fmt.Errorf("no fallback provider registered for %s", targetProviderID)
+	}
+
+	// If the cross-provider supports model switching, use WithModel to ensure
+	// the correct model is used (the registered provider may have a default model).
+	if switcher, ok := crossProvider.(llm.ModelSwitcher); ok {
+		return switcher.WithModel(modelName), nil
+	}
+
+	// Otherwise use the provider as-is (its model was set at registration time).
+	return crossProvider, nil
+}
+
+// isPrimarySameProvider checks if a provider name corresponds to the given provider ID.
+func isPrimarySameProvider(providerName, targetProviderID string) bool {
+	lowerName := strings.ToLower(providerName)
+	lowerTarget := strings.ToLower(targetProviderID)
+
+	// Direct substring match covers most cases (e.g. "pool (2 accounts) — gemini-cli" contains "gemini-cli").
+	if strings.Contains(lowerName, lowerTarget) {
+		return true
+	}
+
+	// Map common provider name patterns to known provider IDs.
+	googleAliases := []string{"gemini", "google", "oauth", "antigravity"}
+	for _, alias := range googleAliases {
+		if strings.Contains(lowerName, alias) && strings.Contains(lowerTarget, alias) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (pp *ProviderPool) fallbackModelsSnapshot(includeSecond bool) []string {
